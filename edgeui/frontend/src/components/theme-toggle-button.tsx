@@ -23,7 +23,7 @@ export function ThemeToggleButton() {
 			<Button
 				variant="ghost"
 				size="icon"
-				className="h-9 w-9 text-slate-100 hover:bg-white/10"
+				className="h-9 w-9 text-slate-100 dark:hover:bg-white/10 light:hover:bg-black/10"
 				aria-label="Toggle color scheme"
 				disabled
 			>
@@ -40,8 +40,12 @@ export function ThemeToggleButton() {
 			onClick={() => setTheme(isDark ? "light" : "dark")}
 			aria-label={label}
 		>
-			<Sun className={`size-4 transition-opacity ${isDark ? "opacity-0" : "opacity-100"}`} />
-			<Moon className={`absolute size-4 transition-opacity ${isDark ? "opacity-100" : "opacity-0"}`} />
+			<Sun
+				className={`size-4 transition-opacity ${isDark ? "opacity-0" : "opacity-100"}`}
+			/>
+			<Moon
+				className={`absolute size-4 transition-opacity ${isDark ? "opacity-100" : "opacity-0"}`}
+			/>
 		</Button>
 	);
 }

@@ -27,6 +27,7 @@ func main() {
 			"status":  "ok",
 			"uptime":  time.Since(startedAt).String(),
 			"service": "edge-api",
+			"version": "0.0.1",
 		})
 	})
 
