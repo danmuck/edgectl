@@ -1,48 +1,23 @@
-import { fetchHealth } from "@/lib/health";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import Link from "next/link";
+import { HealthStatusCard } from "@/components/health-status-card";
+import { parseHealthTargets } from "@/lib/health";
 
-export default async function HomePage() {
-	let health;
-
-	try {
-		health = await fetchHealth();
-	} catch (err) {
-		console.error("fetchHealth failed:", err);
-		health = { status: "down" };
-	}
-
-	const isUp = health.status === "ok";
+export default function HomePage() {
+	const apiTarget =
+		process.env.EDGECTL_API_URL ?? process.env.NEXT_PUBLIC_EDGECTL_API_URL;
+	const apiTargetList =
+		process.env.EDGECTL_API_URLS ?? process.env.NEXT_PUBLIC_EDGECTL_API_URLS;
+	const targets = parseHealthTargets(apiTargetList, apiTarget);
 
 	return (
 		<main className="p-8">
-			<Card className="max-w-md">
-				<CardHeader>
-					<CardTitle>API Health</CardTitle>
-				</CardHeader>
-				<CardContent className="space-y-2">
-					<div className="flex items-center gap-2">
-						<span>Status:</span>
-						<Badge variant={isUp ? "default" : "destructive"}>
-							{isUp ? "Healthy" : "Down"}
-						</Badge>
-					</div>
-
-					{health.version && (
-						<div className="text-sm text-muted-foreground">
-							Version: {health.version}
-						</div>
-					)}
-
-					{health.uptime && (
-						<div className="text-sm text-muted-foreground">
-							Uptime: {health.uptime}
-						</div>
-					)}
-				</CardContent>
-			</Card>
+			<div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
+				<HealthStatusCard
+					variant="card"
+					targets={targets}
+					intervalMs={5_000}
+					cycleMs={15_000}
+				/>
+			</div>
 		</main>
 	);
 }

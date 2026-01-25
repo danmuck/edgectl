@@ -8,16 +8,32 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Seeds are server nodes on the network
+// Ghost can execute commands on registered seeds
 type Seed struct {
-	commands map[string]*services.Service
+	host     string
+	addr     string
+	registry *services.ServiceRegistry
+	exec     bool
+	group    string
+	auth     string
+	appeared time.Time
 }
 
-// edgectl main brain
+// // Services registered with a Seed
+// type ServiceRegistry struct {
+// 	repo map[string]*services.Service
+// }
+
+// Ghost:edgectl -- main system brain
 type Ghost struct {
-	name       string
-	netedge    any
+	Name       string
+	addr       string
 	httpRouter *gin.Engine
 	appeared   time.Time
+
+	// local repo
+	seedBank map[string]Seed
 }
 
 func Appear() *Ghost {
@@ -32,12 +48,42 @@ func Appear() *Ghost {
 		AllowHeaders: []string{"Origin", "Content-Type"},
 		MaxAge:       12 * time.Hour,
 	}))
-
 	g := &Ghost{
-		name:       "edge-ctl",
-		netedge:    nil,
+		Name:       "edge-ctl",
+		addr:       ":9000",
 		httpRouter: r,
 		appeared:   time.Now(),
 	}
 	return g
+}
+
+func (g *Ghost) Serve() error {
+	g.RegisterRoutesTMP()
+	err := g.httpRouter.Run(g.addr)
+	return err
+}
+
+// refresh Seeds, update local repo
+func (g *Ghost) RefreshSeeds() error {
+	// tmp := g.seedBank
+	g.seedBank = map[string]Seed{
+		"edge-ctl": {
+			host:     "local",
+			addr:     g.addr,
+			registry: services.NewServiceRegistry(),
+			auth:     "temp-auth-key",
+			group:    "root",
+			exec:     true,
+		},
+		"pihole": {
+			host:     "dps-server",
+			addr:     "dps-server",
+			registry: nil,
+			auth:     "temp-auth-pihole-key",
+			group:    "root",
+			exec:     true,
+		},
+	}
+	g.seedBank["edge-ctl"].registry.Register(&services.AdminCommands{})
+	return nil
 }

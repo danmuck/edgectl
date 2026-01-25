@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -10,7 +11,7 @@ func (g *Ghost) RegisterRoutesTMP() {
 	g.httpRouter.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"status":  "ok",
-			"uptime":  g.appeared,
+			"uptime":  time.Since(g.appeared).String(),
 			"service": "edge-api",
 			"version": "0.0.1",
 		})
@@ -20,7 +21,7 @@ func (g *Ghost) RegisterRoutesTMP() {
 		service := c.Param("service")
 		c.JSON(http.StatusOK, gin.H{
 			"status":  "ok",
-			"uptime":  g.appeared,
+			"uptime":  time.Since(g.appeared).String(),
 			"service": service,
 			"version": "0.0.1",
 		})
