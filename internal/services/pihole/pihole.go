@@ -1,29 +1,43 @@
 package pihole
 
 import (
-	"os/exec"
+	"os"
 
-	"github.com/danmuck/edgectl/internal/plugins"
+	"github.com/danmuck/edgectl/internal/services"
 )
 
-type Plugin struct{}
+type Pihole struct {
+	Runner services.Runner
+}
 
-func (Plugin) Name() string {
+func (Pihole) Name() string {
 	return "pihole"
 }
 
-func (Plugin) Status() (any, error) {
-	out, err := exec.Command("pihole", "status").Output()
-	return string(out), err
+func (p Pihole) Status() (any, error) {
+	out, err := p.runner().Run("pihole", "status")
+	return out, err
 }
 
-func (Plugin) Actions() map[string]plugins.Action {
-	return map[string]plugins.Action{
+func (p Pihole) Actions() map[string]services.Action {
+	return map[string]services.Action{
 		"restart": func() error {
-			return exec.Command("pihole", "restartdns").Run()
+			_, err := p.runner().Run("pihole", "restartdns")
+			return err
 		},
 		"gravity": func() error {
-			return exec.Command("pihole", "-g").Run()
+			_, err := p.runner().Run("pihole", "-g")
+			return err
+		},
+		"stream-log": func() error {
+			return p.runner().RunStreaming("pihole", []string{"-t"}, os.Stdout, os.Stderr)
 		},
 	}
+}
+
+func (p Pihole) runner() services.Runner {
+	if p.Runner != nil {
+		return p.Runner
+	}
+	return services.LocalRunner{}
 }

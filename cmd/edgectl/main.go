@@ -31,5 +31,21 @@ func main() {
 		})
 	})
 
+	r.GET("/health/:service", func(c *gin.Context) {
+		service := c.Param("service")
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "ok",
+			"uptime":  time.Since(startedAt).String(),
+			"service": service,
+			"version": "0.0.1",
+		})
+	})
+
+	r.GET("/reboot", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status": "success",
+		})
+	})
+
 	r.Run(":9000") // default, explicit for clarity
 }

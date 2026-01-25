@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { fetchHealth, type HealthResponse } from "@/lib/health";
 import { ThemeToggleButton } from "@/components/theme-toggle-button";
+import { formatGoDuration } from "@/lib/format-go-duration";
 
 const navLinks: Array<{ href: string; label: string }> = [
 	{ href: "/", label: "Status" },
@@ -40,8 +41,11 @@ export default async function DevNav() {
 	}
 
 	const isHealthy = health?.status === "ok";
-	const uptimeLabel = health?.uptime ?? "Uptime unavailable";
+	const uptimeLabel = health?.uptime
+		? formatGoDuration(health.uptime)
+		: "Uptime unavailable";
 	const versionLabel = health?.version ? `v${health.version}` : null;
+	const serviceLabel = health?.service ? `${health.service}` : null;
 	const apiHost = apiTarget ? formatApiTarget(apiTarget) : null;
 
 	return (
@@ -101,17 +105,21 @@ export default async function DevNav() {
 							}
 						>
 							<Activity className="size-3" />
-							{isHealthy ? "DisplaAPI Healthy" : "DisplaAPI Down"}
+							{isHealthy
+								? `${serviceLabel}: Healthy`
+								: `${serviceLabel}: Down`}
 						</Badge>
+					</div>
+					<div className="flex items-center justify-between w-full">
 						{versionLabel && (
 							<span className="font-mono text-[11px] text-slate-300">
 								{versionLabel}
 							</span>
 						)}
+						<span className="shrink-0 text-muted-foreground">
+							{uptimeLabel}
+						</span>
 					</div>
-					<span className="text-[11px] uppercase tracking-wide text-slate-400">
-						{uptimeLabel}
-					</span>
 				</div>
 				<ThemeToggleButton />
 			</div>
