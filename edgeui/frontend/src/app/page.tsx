@@ -1,4 +1,5 @@
 import { HealthStatusCard } from "@/components/health-status-card";
+import { PageTabs } from "@/components/page-tabs";
 import { parseHealthTargets } from "@/lib/health";
 
 export default function HomePage() {
@@ -9,15 +10,21 @@ export default function HomePage() {
 	const targets = parseHealthTargets(apiTargetList, apiTarget);
 
 	return (
-		<main className="p-8">
-			<div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
-				<HealthStatusCard
-					variant="card"
-					targets={targets}
-					intervalMs={5_000}
-					cycleMs={15_000}
-				/>
-			</div>
-		</main>
+		<PageTabs
+			tabs={[
+				{
+					value: "overview",
+					label: "Overview",
+					content: (
+						<HealthStatusCard
+							variant="card"
+							targets={targets}
+							intervalMs={5_000}
+							cycleMs={15_000}
+						/>
+					),
+				},
+			]}
+		/>
 	);
 }

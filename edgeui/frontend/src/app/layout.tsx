@@ -5,6 +5,8 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import DevNav from "@/components/dev-nav";
 import { ThemeProvider } from "@/components/theme-provider";
+import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
+import { AppSidebar } from "@/components/app-sidebar";
 
 const geistSans = Geist({
 	variable: "--font-geist-sans",
@@ -64,8 +66,15 @@ export default async function RootLayout({
 					enableSystem={false}
 					disableTransitionOnChange
 				>
-					<DevNav />
-					<main>{children}</main>
+					<SidebarProvider defaultOpen={false}>
+						<AppSidebar />
+						<SidebarInset>
+							<DevNav />
+							<main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 py-8">
+								{children}
+							</main>
+						</SidebarInset>
+					</SidebarProvider>
 				</ThemeProvider>
 			</body>
 		</html>
