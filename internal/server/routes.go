@@ -120,7 +120,8 @@ func (g *Ghost) RegisterRoutesTMP() {
 		actionName := c.Param("action")
 
 		if local, ok := g.LocalSeed(seedID); ok {
-			if err := local.ExecuteAction(serviceName, actionName); err != nil {
+			out, err := local.ExecuteAction(serviceName, actionName)
+			if err != nil {
 				status := http.StatusInternalServerError
 				if errors.Is(err, seed.ErrServiceNotFound) || errors.Is(err, seed.ErrActionNotFound) {
 					status = http.StatusNotFound
@@ -128,7 +129,7 @@ func (g *Ghost) RegisterRoutesTMP() {
 				c.JSON(status, gin.H{"error": err.Error()})
 				return
 			}
-			c.JSON(http.StatusOK, gin.H{"status": "ok"})
+			c.JSON(http.StatusOK, gin.H{"status": "ok", "output": out})
 			return
 		}
 

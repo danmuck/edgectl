@@ -115,7 +115,8 @@ func (s *Seed) RegisterRoutes() {
 		serviceName := c.Param("service")
 		actionName := c.Param("action")
 
-		if err := s.ExecuteAction(serviceName, actionName); err != nil {
+		out, err := s.ExecuteAction(serviceName, actionName)
+		if err != nil {
 			status := http.StatusInternalServerError
 			if errors.Is(err, ErrServiceNotFound) || errors.Is(err, ErrActionNotFound) {
 				status = http.StatusNotFound
@@ -124,7 +125,7 @@ func (s *Seed) RegisterRoutes() {
 			return
 		}
 
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "output": out})
 	})
 }
 
@@ -133,26 +134,27 @@ var (
 	ErrActionNotFound  = errors.New("action not found")
 )
 
-func (s *Seed) ExecuteAction(serviceName, actionName string) error {
+func (s *Seed) ExecuteAction(serviceName, actionName string) (string, error) {
 	registry := s.registry()
 	service, ok := registry.Get(serviceName)
 	if !ok || service == nil {
-		return ErrServiceNotFound
+		return "", ErrServiceNotFound
 	}
 
-	action, ok := (*service).Actions()[actionName]
+	action, ok := service.Actions()[actionName]
 	if !ok {
-		return ErrActionNotFound
+		return "", ErrActionNotFound
 	}
 
-	if err := action(); err != nil {
+	out, err := action()
+	if err != nil {
 		log.Error().
 			Str("seed", s.ID).
 			Str("service", serviceName).
 			Str("action", actionName).
 			Err(err).
 			Msg("service action failed")
-		return err
+		return "", err
 	}
 
 	log.Info().
@@ -160,7 +162,7 @@ func (s *Seed) ExecuteAction(serviceName, actionName string) error {
 		Str("service", serviceName).
 		Str("action", actionName).
 		Msg("service action executed")
-	return nil
+	return out, nil
 }
 
 func (s *Seed) ListServices() []ServiceInfo {
@@ -194,8 +196,8 @@ func listServices(registry *services.ServiceRegistry) []ServiceInfo {
 		if service == nil {
 			continue
 		}
-		actions := make([]string, 0, len((*service).Actions()))
-		for action := range (*service).Actions() {
+		actions := make([]string, 0, len(service.Actions()))
+		for action := range service.Actions() {
 			actions = append(actions, action)
 		}
 		sort.Strings(actions)

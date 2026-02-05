@@ -21,16 +21,15 @@ func (p Pihole) Status() (any, error) {
 
 func (p Pihole) Actions() map[string]services.Action {
 	return map[string]services.Action{
-		"restart": func() error {
-			_, err := p.runner().Run("pihole", "restartdns")
-			return err
+		"restart": func() (string, error) {
+			return p.runner().Run("pihole", "restartdns")
 		},
-		"gravity": func() error {
-			_, err := p.runner().Run("pihole", "-g")
-			return err
+		"gravity": func() (string, error) {
+			return p.runner().Run("pihole", "-g")
 		},
-		"stream-log": func() error {
-			return p.runner().RunStreaming("pihole", []string{"-t"}, os.Stdout, os.Stderr)
+		"stream-log": func() (string, error) {
+			err := p.runner().RunStreaming("pihole", []string{"-t"}, os.Stdout, os.Stderr)
+			return "", err
 		},
 	}
 }

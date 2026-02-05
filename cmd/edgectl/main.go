@@ -24,6 +24,7 @@ func main() {
 	log.Info().Int("count", len(cfg.Seeds)).Msg("loaded seeds from config")
 	localSeed := ghost.CreateLocalSeed(cfg.Name, "/local/"+cfg.Name)
 	localSeed.Registry.Register(&services.AdminCommands{})
+	localSeed.Registry.Register(&services.FlowService{})
 
 	log.Info().Str("name", ghost.Name).Str("addr", cfg.Addr).Msg("ghost started")
 	if err := ghost.Serve(); err != nil {

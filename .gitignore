@@ -35,3 +35,4 @@ cmd/*/config.toml
 # .vscode/
 
 tmp/
+.trash/
