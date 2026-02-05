@@ -75,6 +75,9 @@ func (g *Ghost) CreateLocalSeed(id string, basePath string) *seed.Seed {
 	if g.local == nil {
 		g.local = map[string]*seed.Seed{}
 	}
+	if g.seedBank == nil {
+		g.seedBank = map[string]seed.Seed{}
+	}
 	if existing, ok := g.local[id]; ok {
 		return existing
 	}

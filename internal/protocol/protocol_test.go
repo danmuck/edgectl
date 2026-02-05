@@ -5,9 +5,12 @@ import (
 	"encoding/binary"
 	"errors"
 	"testing"
+
+	logs "github.com/danmuck/smplog"
 )
 
 func TestRoundTripEncodeDecode(t *testing.T) {
+	logProtocolf("protocol/round-trip: begin")
 	msg := &Message{
 		Header: Header{
 			MessageID:   42,
@@ -40,9 +43,11 @@ func TestRoundTripEncodeDecode(t *testing.T) {
 	if !bytes.Equal(buf.Bytes(), buf2.Bytes()) {
 		t.Fatalf("round-trip mismatch")
 	}
+	logProtocolf("protocol/round-trip: success message_id=%d", decoded.Header.MessageID)
 }
 
 func TestDecodeInvalidMagic(t *testing.T) {
+	logProtocolf("protocol/decode-invalid-magic: begin")
 	payload := buildFieldPayload(NewFieldUint8(1, 7))
 	head := headerBytes(uint64(len(payload)), 0)
 	head[0] = 0
@@ -55,9 +60,11 @@ func TestDecodeInvalidMagic(t *testing.T) {
 	if !errors.Is(err, ErrInvalidMagic) {
 		t.Fatalf("expected ErrInvalidMagic, got %v", err)
 	}
+	logProtocolf("protocol/decode-invalid-magic: observed expected error=%v", err)
 }
 
 func TestDecodeTruncatedPayload(t *testing.T) {
+	logProtocolf("protocol/decode-truncated: begin")
 	msg := &Message{
 		Header: Header{MessageID: 1, MessageType: MessageEvent},
 		Fields: []Field{NewFieldString(1, "abc")},
@@ -76,9 +83,11 @@ func TestDecodeTruncatedPayload(t *testing.T) {
 	if !errors.Is(err, ErrTruncated) {
 		t.Fatalf("expected ErrTruncated, got %v", err)
 	}
+	logProtocolf("protocol/decode-truncated: observed expected error=%v", err)
 }
 
 func TestDecodeInvalidFieldLength(t *testing.T) {
+	logProtocolf("protocol/decode-invalid-field-length: begin")
 	payload := make([]byte, fieldHeaderSize+1)
 	binary.BigEndian.PutUint16(payload[0:2], 1)
 	payload[2] = byte(FieldBytes)
@@ -91,9 +100,11 @@ func TestDecodeInvalidFieldLength(t *testing.T) {
 	if !errors.Is(err, ErrInvalidLength) {
 		t.Fatalf("expected ErrInvalidLength, got %v", err)
 	}
+	logProtocolf("protocol/decode-invalid-field-length: observed expected error=%v", err)
 }
 
 func TestSemanticUnknownFieldsIgnored(t *testing.T) {
+	logProtocolf("protocol/semantic-unknown-fields: begin")
 	msg := &Message{
 		Header: Header{MessageID: 1, MessageType: MessageIntent},
 		Fields: []Field{
@@ -119,9 +130,11 @@ func TestSemanticUnknownFieldsIgnored(t *testing.T) {
 	if len(parsed.Unknown) != 1 {
 		t.Fatalf("expected 1 unknown field, got %d", len(parsed.Unknown))
 	}
+	logProtocolf("protocol/semantic-unknown-fields: known=%d unknown=%d", len(parsed.Fields), len(parsed.Unknown))
 }
 
 func TestSemanticMissingField(t *testing.T) {
+	logProtocolf("protocol/semantic-missing-required: begin")
 	msg := &Message{
 		Header: Header{MessageID: 1, MessageType: MessageIntent},
 		Fields: []Field{},
@@ -141,6 +154,7 @@ func TestSemanticMissingField(t *testing.T) {
 	if !errors.As(err, &missing) {
 		t.Fatalf("expected MissingFieldError, got %v", err)
 	}
+	logProtocolf("protocol/semantic-missing-required: observed expected error=%v", err)
 }
 
 func headerBytes(payloadLen uint64, flags uint32) []byte {
@@ -165,4 +179,8 @@ func buildFieldPayload(field Field) []byte {
 	buf = append(buf, header...)
 	buf = append(buf, field.Value...)
 	return buf
+}
+
+func logProtocolf(format string, v ...any) {
+	logs.Logf(format, v...)
 }

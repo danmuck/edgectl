@@ -4,6 +4,7 @@ go 1.25.6
 
 require (
 	github.com/gin-contrib/cors v1.7.6
+	github.com/danmuck/smplog v0.0.0-20260205211023-45ad103f0644
 	github.com/gin-gonic/gin v1.11.0
 	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/prometheus/client_golang v1.19.1
@@ -48,3 +49,5 @@ require (
 	golang.org/x/tools v0.34.0 // indirect
 	google.golang.org/protobuf v1.36.9 // indirect
 )
+
+replace github.com/danmuck/smplog => ./third_party/smplog
