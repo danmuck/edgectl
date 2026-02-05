@@ -4,9 +4,11 @@ import (
 	"time"
 
 	"github.com/danmuck/edgectl/internal/node"
+	"github.com/danmuck/edgectl/internal/observability"
 	"github.com/danmuck/edgectl/internal/seed"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/rs/zerolog/log"
 )
 
 // Ghost:edgectl -- main system brain
@@ -22,17 +24,20 @@ type Ghost struct {
 }
 
 func Appear(name, addr string, corsOrigins []string) *Ghost {
+	observability.RegisterMetrics()
 	r := gin.New()
 
 	// Middleware: keep it lean
 	r.Use(gin.Recovery())
-	r.Use(gin.Logger())
+	r.Use(observability.RequestLogger(log.Logger))
+	r.Use(observability.RequestMetricsMiddleware(name))
 	r.Use(cors.New(cors.Config{
 		AllowOrigins: normalizeOrigins(corsOrigins),
-		AllowMethods: []string{"GET"},
+		AllowMethods: []string{"GET", "POST"},
 		AllowHeaders: []string{"Origin", "Content-Type"},
 		MaxAge:       12 * time.Hour,
 	}))
+	_ = r.SetTrustedProxies([]string{"127.0.0.1", "::1"})
 	g := &Ghost{
 		Name:       name,
 		addr:       addr,
@@ -43,9 +48,6 @@ func Appear(name, addr string, corsOrigins []string) *Ghost {
 }
 
 func (g *Ghost) Serve() error {
-	if len(g.seedBank) == 0 {
-		_ = g.RefreshSeeds()
-	}
 	g.RegisterRoutesTMP()
 	err := g.httpRouter.Run(g.addr)
 	return err
@@ -53,27 +55,6 @@ func (g *Ghost) Serve() error {
 
 // refresh Seeds, update local repo
 func (g *Ghost) RefreshSeeds() error {
-	// tmp := g.seedBank
-	g.seedBank = map[string]seed.Seed{
-		"edge-ctl": {
-			ID:       "edge-ctl",
-			Host:     "localhost",
-			Addr:     "localhost:9000",
-			Auth:     "temp-auth-key",
-			Group:    "root",
-			Exec:     true,
-			Appeared: time.Now(),
-		},
-		"infra": {
-			ID:       "infra",
-			Host:     "localhost",
-			Addr:     "localhost:8080",
-			Auth:     "temp-auth-infra-key",
-			Group:    "root",
-			Exec:     true,
-			Appeared: time.Now(),
-		},
-	}
 	return nil
 }
 
@@ -98,10 +79,32 @@ func (g *Ghost) CreateLocalSeed(id string, basePath string) *seed.Seed {
 		return existing
 	}
 	localSeed := seed.Attach(id, g.httpRouter, basePath, nil)
-	localSeed.Host = "localhost"
-	localSeed.Addr = g.addr
+	if registered, ok := g.seedBank[id]; ok {
+		localSeed.Host = registered.Host
+		localSeed.Addr = registered.Addr
+		localSeed.Group = registered.Group
+		localSeed.Exec = registered.Exec
+		localSeed.Services = registered.Services
+		localSeed.Auth = registered.Auth
+	} else {
+		localSeed.Host = "localhost"
+		localSeed.Addr = g.addr
+	}
 	g.local[id] = localSeed
+	g.seedBank[id] = *localSeed
+	log.Info().
+		Str("seed", localSeed.ID).
+		Str("base_path", basePath).
+		Msg("local seed attached")
 	return localSeed
+}
+
+func (g *Ghost) LocalSeed(id string) (*seed.Seed, bool) {
+	if g.local == nil {
+		return nil, false
+	}
+	local, ok := g.local[id]
+	return local, ok
 }
 
 func (g *Ghost) NodeID() string {
@@ -124,6 +127,12 @@ func (g *Ghost) LoadSeeds(seeds []seed.Seed) {
 	}
 	for _, seed := range seeds {
 		g.seedBank[seed.ID] = seed
+		log.Info().
+			Str("seed", seed.ID).
+			Str("addr", seed.Addr).
+			Str("host", seed.Host).
+			Bool("exec", seed.Exec).
+			Msg("seed registered")
 	}
 }
 

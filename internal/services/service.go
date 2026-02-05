@@ -69,9 +69,6 @@ func (ac *AdminCommands) Actions() map[string]Action {
 			_, err := ac.runner().Run("ls", "-al")
 			return err
 		},
-		// "stream-log": func() error {
-		// 	return ac.runner().RunStreaming("pihole", []string{"-t"}, os.Stdout, os.Stderr)
-		// },
 	}
 }
 

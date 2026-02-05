@@ -1,14 +1,18 @@
 package seed
 
 import (
+	"errors"
 	"net/http"
 	"sort"
 	"time"
 
 	"github.com/danmuck/edgectl/internal/node"
+	"github.com/danmuck/edgectl/internal/observability"
 	"github.com/danmuck/edgectl/internal/services"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/rs/zerolog/log"
 )
 
 type Seed struct {
@@ -29,15 +33,18 @@ type Seed struct {
 var _ node.Node = (*Seed)(nil)
 
 func Appear(id, addr string, corsOrigins []string) *Seed {
+	observability.RegisterMetrics()
 	r := gin.New()
 	r.Use(gin.Recovery())
-	r.Use(gin.Logger())
+	r.Use(observability.RequestLogger(log.Logger))
+	r.Use(observability.RequestMetricsMiddleware(id))
 	r.Use(cors.New(cors.Config{
 		AllowOrigins: normalizeOrigins(corsOrigins),
 		AllowMethods: []string{"GET", "POST"},
 		AllowHeaders: []string{"Origin", "Content-Type"},
 		MaxAge:       12 * time.Hour,
 	}))
+	_ = r.SetTrustedProxies([]string{"127.0.0.1", "::1"})
 
 	return &Seed{
 		ID:       id,
@@ -86,6 +93,8 @@ func (s *Seed) RegisterRoutes() {
 		})
 	})
 
+	routes.GET("/metrics", gin.WrapH(promhttp.Handler()))
+
 	routes.GET("/ready", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"ready":   true,
@@ -96,7 +105,7 @@ func (s *Seed) RegisterRoutes() {
 	})
 
 	routes.GET("/services", func(c *gin.Context) {
-		servicesList := listServices(s.registry())
+		servicesList := s.ListServices()
 		c.JSON(http.StatusOK, gin.H{
 			"services": servicesList,
 		})
@@ -106,26 +115,56 @@ func (s *Seed) RegisterRoutes() {
 		serviceName := c.Param("service")
 		actionName := c.Param("action")
 
-		registry := s.registry()
-		service, ok := registry.Get(serviceName)
-		if !ok || service == nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "service not found"})
-			return
-		}
-
-		action, ok := (*service).Actions()[actionName]
-		if !ok {
-			c.JSON(http.StatusNotFound, gin.H{"error": "action not found"})
-			return
-		}
-
-		if err := action(); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		if err := s.ExecuteAction(serviceName, actionName); err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, ErrServiceNotFound) || errors.Is(err, ErrActionNotFound) {
+				status = http.StatusNotFound
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
 			return
 		}
 
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+}
+
+var (
+	ErrServiceNotFound = errors.New("service not found")
+	ErrActionNotFound  = errors.New("action not found")
+)
+
+func (s *Seed) ExecuteAction(serviceName, actionName string) error {
+	registry := s.registry()
+	service, ok := registry.Get(serviceName)
+	if !ok || service == nil {
+		return ErrServiceNotFound
+	}
+
+	action, ok := (*service).Actions()[actionName]
+	if !ok {
+		return ErrActionNotFound
+	}
+
+	if err := action(); err != nil {
+		log.Error().
+			Str("seed", s.ID).
+			Str("service", serviceName).
+			Str("action", actionName).
+			Err(err).
+			Msg("service action failed")
+		return err
+	}
+
+	log.Info().
+		Str("seed", s.ID).
+		Str("service", serviceName).
+		Str("action", actionName).
+		Msg("service action executed")
+	return nil
+}
+
+func (s *Seed) ListServices() []ServiceInfo {
+	return listServices(s.registry())
 }
 
 func (s *Seed) Serve() error {

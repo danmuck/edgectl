@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -45,6 +46,9 @@ func LoadGhostConfig(path string) (GhostConfig, error) {
 	if cfg.Addr == "" {
 		cfg.Addr = ":9000"
 	}
+	if err := ValidateGhostConfig(cfg); err != nil {
+		return GhostConfig{}, err
+	}
 	return cfg, nil
 }
 
@@ -59,6 +63,9 @@ func LoadSeedConfig(path string) (SeedNodeConfig, error) {
 	if cfg.Addr == "" {
 		cfg.Addr = ":9100"
 	}
+	if err := ValidateSeedConfig(cfg); err != nil {
+		return SeedNodeConfig{}, err
+	}
 	return cfg, nil
 }
 
@@ -69,6 +76,49 @@ func loadToml(path string, out any) error {
 	}
 	if err := toml.Unmarshal(data, out); err != nil {
 		return fmt.Errorf("config parse failed (%s): %w", path, err)
+	}
+	return nil
+}
+
+func ValidateGhostConfig(cfg GhostConfig) error {
+	if strings.TrimSpace(cfg.Name) == "" {
+		return fmt.Errorf("ghost config missing name")
+	}
+	if strings.TrimSpace(cfg.Addr) == "" {
+		return fmt.Errorf("ghost config missing addr")
+	}
+	for i, seedCfg := range cfg.Seeds {
+		if err := ValidateSeedEntry(seedCfg); err != nil {
+			return fmt.Errorf("seed[%d] invalid: %w", i, err)
+		}
+	}
+	return nil
+}
+
+func ValidateSeedConfig(cfg SeedNodeConfig) error {
+	if strings.TrimSpace(cfg.ID) == "" {
+		return fmt.Errorf("seed config missing id")
+	}
+	if strings.TrimSpace(cfg.Addr) == "" {
+		return fmt.Errorf("seed config missing addr")
+	}
+	if strings.HasPrefix(strings.TrimSpace(cfg.Addr), ":") &&
+		strings.TrimSpace(cfg.Host) == "" {
+		return fmt.Errorf("seed config host required when addr is a port")
+	}
+	return nil
+}
+
+func ValidateSeedEntry(cfg SeedConfig) error {
+	if strings.TrimSpace(cfg.ID) == "" {
+		return fmt.Errorf("id is required")
+	}
+	if strings.TrimSpace(cfg.Addr) == "" {
+		return fmt.Errorf("addr is required")
+	}
+	if strings.HasPrefix(strings.TrimSpace(cfg.Addr), ":") &&
+		strings.TrimSpace(cfg.Host) == "" {
+		return fmt.Errorf("host required when addr is a port")
 	}
 	return nil
 }
