@@ -1,0 +1,18 @@
+flowchart LR
+    U["User"]
+    M["Mirage"]
+    G["Ghost"]
+    S["Seed"]
+
+    U -->|"issue(IntentEnvelope)"| M
+    M -->|"report(ReportEnvelope)"| U
+
+    M -->|"command(CommandEnvelope)"| G
+    G -->|"event(EventEnvelope)"| M
+
+    G -->|"execute(SeedCommandEnvelope)"| S
+    S -->|"result(SeedResultEnvelope)"| G
+
+    P["Binary TLV Wire Contract<br/>header + optional auth + TLV fields"]
+    P -. "applies to control-plane links" .- M
+    P -. "applies to control-plane links" .- G

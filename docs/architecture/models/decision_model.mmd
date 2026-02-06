@@ -1,0 +1,11 @@
+flowchart TD
+    A["Intent exists in Mirage desired state"] --> B["Mirage reconcile()"]
+    B --> C{"Desired == Observed ?"}
+    C -- "Yes" --> D["Emit report: satisfied"]
+    C -- "No" --> E["Derive command set"]
+    E --> F["Send command(s) to Ghost(s)"]
+    F --> G["Ghost reconcile() to local seed actions"]
+    G --> H["Execute seed command(s)"]
+    H --> I["Ghost emits event(s) to Mirage"]
+    I --> J["Mirage updates observed state"]
+    J --> B

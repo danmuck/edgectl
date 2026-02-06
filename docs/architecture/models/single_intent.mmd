@@ -1,0 +1,23 @@
+sequenceDiagram
+    autonumber
+    participant User
+    participant Mirage
+    participant Ghost as GhostZ
+    participant Seed
+
+    User->>Mirage: issue(intent)
+    Note over Mirage: Persist desired state (intent)
+
+    loop Reconciliation loop
+        Mirage->>Mirage: reconcile()
+        Mirage->>Ghost: command(imperative step)
+
+        Ghost->>Ghost: reconcile(local mapping)
+        Ghost->>Seed: execute(seed.command)
+
+        Seed-->>Ghost: result(stdout/stderr/status)
+        Ghost-->>Mirage: event(observed state delta)
+
+        Mirage->>Mirage: update observed state
+        Mirage-->>User: report(progress/outcome)
+    end

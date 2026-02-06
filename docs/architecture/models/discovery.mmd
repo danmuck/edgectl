@@ -1,0 +1,18 @@
+sequenceDiagram
+    autonumber
+    participant Mirage
+    participant Ghost as GhostZ
+    participant Seed
+
+    Mirage->>Mirage: appear()
+    Mirage->>Mirage: shimmer()
+    Mirage->>Mirage: seed()
+
+    Ghost->>Ghost: appear()
+    Ghost->>Ghost: radiate()
+
+    Ghost->>Seed: discover/register local services
+    Seed-->>Ghost: service metadata + command surface
+
+    Ghost->>Mirage: seed(registration payload)
+    Mirage->>Mirage: register Ghost + seed registry
