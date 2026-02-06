@@ -37,6 +37,8 @@ func (g *Ghost) RegisterRoutesTMP() {
 
 	g.httpRouter.GET("/health/:service", func(c *gin.Context) {
 		service := c.Param("service")
+		// needs to issue health commands to the service
+		// ie. ping a mongodb conn or issue health commands to services that support them
 		c.JSON(http.StatusOK, gin.H{
 			"status":  "ok",
 			"uptime":  time.Since(g.appeared).String(),
