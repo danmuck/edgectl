@@ -3,22 +3,22 @@ package config
 import (
 	"time"
 
-	"github.com/danmuck/edgectl/internal/seed"
+	"github.com/danmuck/edgectl/internal/ghost"
 )
 
-func GhostSeeds(entries []SeedConfig) []seed.Seed {
-	seeds := make([]seed.Seed, 0, len(entries))
+func MirageGhosts(entries []GhostConfigEntry) []ghost.Ghost {
+	ghosts := make([]ghost.Ghost, 0, len(entries))
 	for _, entry := range entries {
-		seeds = append(seeds, seed.Seed{
+		ghosts = append(ghosts, ghost.Ghost{
 			ID:       entry.ID,
 			Host:     entry.Host,
 			Addr:     entry.Addr,
 			Group:    entry.Group,
 			Exec:     entry.Exec,
-			Services: entry.Services,
+			Seeds:    entry.Seeds,
 			Auth:     entry.Auth,
 			Appeared: time.Now(),
 		})
 	}
-	return seeds
+	return ghosts
 }

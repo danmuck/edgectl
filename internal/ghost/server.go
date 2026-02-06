@@ -1,4 +1,4 @@
-package seed
+package ghost
 
 import (
 	"errors"
@@ -8,31 +8,31 @@ import (
 
 	"github.com/danmuck/edgectl/internal/node"
 	"github.com/danmuck/edgectl/internal/observability"
-	"github.com/danmuck/edgectl/internal/services"
+	"github.com/danmuck/edgectl/internal/seeds"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog/log"
 )
 
-type Seed struct {
-	ID       string                    `json:"id"`
-	Host     string                    `json:"host"`
-	Addr     string                    `json:"addr"`
-	Group    string                    `json:"group"`
-	Exec     bool                      `json:"exec"`
-	Services []string                  `json:"services,omitempty"`
-	Appeared time.Time                 `json:"appeared"`
-	Auth     string                    `json:"-"`
-	Registry *services.ServiceRegistry `json:"-"`
+type Ghost struct {
+	ID       string              `json:"id"`
+	Host     string              `json:"host"`
+	Addr     string              `json:"addr"`
+	Group    string              `json:"group"`
+	Exec     bool                `json:"exec"`
+	Seeds    []string            `json:"seeds,omitempty"`
+	Appeared time.Time           `json:"appeared"`
+	Auth     string              `json:"-"`
+	Registry *seeds.SeedRegistry `json:"-"`
 
 	router   *gin.Engine
 	basePath string
 }
 
-var _ node.Node = (*Seed)(nil)
+var _ node.Node = (*Ghost)(nil)
 
-func Appear(id, addr string, corsOrigins []string) *Seed {
+func Appear(id, addr string, corsOrigins []string) *Ghost {
 	observability.RegisterMetrics()
 	r := gin.New()
 	r.Use(gin.Recovery())
@@ -46,21 +46,21 @@ func Appear(id, addr string, corsOrigins []string) *Seed {
 	}))
 	_ = r.SetTrustedProxies([]string{"127.0.0.1", "::1"})
 
-	return &Seed{
+	return &Ghost{
 		ID:       id,
 		Addr:     addr,
 		Exec:     true,
 		router:   r,
-		Registry: services.NewServiceRegistry(),
+		Registry: seeds.NewSeedRegistry(),
 		Appeared: time.Now(),
 	}
 }
 
-func Attach(id string, router *gin.Engine, basePath string, registry *services.ServiceRegistry) *Seed {
+func Attach(id string, router *gin.Engine, basePath string, registry *seeds.SeedRegistry) *Ghost {
 	if registry == nil {
-		registry = services.NewServiceRegistry()
+		registry = seeds.NewSeedRegistry()
 	}
-	return &Seed{
+	return &Ghost{
 		ID:       id,
 		Exec:     true,
 		router:   router,
@@ -70,25 +70,25 @@ func Attach(id string, router *gin.Engine, basePath string, registry *services.S
 	}
 }
 
-func (s *Seed) NodeID() string {
+func (s *Ghost) NodeID() string {
 	return s.ID
 }
 
-func (s *Seed) Kind() string {
-	return "seed"
+func (s *Ghost) Kind() string {
+	return "ghost"
 }
 
-func (s *Seed) HTTPRouter() *gin.Engine {
+func (s *Ghost) HTTPRouter() *gin.Engine {
 	return s.router
 }
 
-func (s *Seed) RegisterRoutes() {
+func (s *Ghost) RegisterRoutes() {
 	routes := s.routes()
 	routes.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"status":  "ok",
 			"uptime":  time.Since(s.Appeared).String(),
-			"service": s.ID,
+			"ghost":   s.ID,
 			"version": "0.0.1",
 		})
 	})
@@ -99,26 +99,26 @@ func (s *Seed) RegisterRoutes() {
 		c.JSON(http.StatusOK, gin.H{
 			"ready":   true,
 			"uptime":  time.Since(s.Appeared).String(),
-			"service": s.ID,
+			"ghost":   s.ID,
 			"version": "0.0.1",
 		})
 	})
 
-	routes.GET("/services", func(c *gin.Context) {
-		servicesList := s.ListServices()
+	routes.GET("/seeds", func(c *gin.Context) {
+		seedsList := s.ListSeeds()
 		c.JSON(http.StatusOK, gin.H{
-			"services": servicesList,
+			"seeds": seedsList,
 		})
 	})
 
-	routes.POST("/services/:service/actions/:action", func(c *gin.Context) {
-		serviceName := c.Param("service")
+	routes.POST("/seeds/:seed/actions/:action", func(c *gin.Context) {
+		seedName := c.Param("seed")
 		actionName := c.Param("action")
 
-		out, err := s.ExecuteAction(serviceName, actionName)
+		out, err := s.ExecuteAction(seedName, actionName)
 		if err != nil {
 			status := http.StatusInternalServerError
-			if errors.Is(err, ErrServiceNotFound) || errors.Is(err, ErrActionNotFound) {
+			if errors.Is(err, ErrSeedNotFound) || errors.Is(err, ErrActionNotFound) {
 				status = http.StatusNotFound
 			}
 			c.JSON(status, gin.H{"error": err.Error()})
@@ -130,18 +130,18 @@ func (s *Seed) RegisterRoutes() {
 }
 
 var (
-	ErrServiceNotFound = errors.New("service not found")
-	ErrActionNotFound  = errors.New("action not found")
+	ErrSeedNotFound   = errors.New("seed not found")
+	ErrActionNotFound = errors.New("action not found")
 )
 
-func (s *Seed) ExecuteAction(serviceName, actionName string) (string, error) {
+func (s *Ghost) ExecuteAction(seedName, actionName string) (string, error) {
 	registry := s.registry()
-	service, ok := registry.Get(serviceName)
-	if !ok || service == nil {
-		return "", ErrServiceNotFound
+	seed, ok := registry.Get(seedName)
+	if !ok || seed == nil {
+		return "", ErrSeedNotFound
 	}
 
-	action, ok := service.Actions()[actionName]
+	action, ok := seed.Actions()[actionName]
 	if !ok {
 		return "", ErrActionNotFound
 	}
@@ -149,59 +149,59 @@ func (s *Seed) ExecuteAction(serviceName, actionName string) (string, error) {
 	out, err := action()
 	if err != nil {
 		log.Error().
-			Str("seed", s.ID).
-			Str("service", serviceName).
+			Str("ghost", s.ID).
+			Str("seed", seedName).
 			Str("action", actionName).
 			Err(err).
-			Msg("service action failed")
+			Msg("seed action failed")
 		return "", err
 	}
 
 	log.Info().
-		Str("seed", s.ID).
-		Str("service", serviceName).
+		Str("ghost", s.ID).
+		Str("seed", seedName).
 		Str("action", actionName).
-		Msg("service action executed")
+		Msg("seed action executed")
 	return out, nil
 }
 
-func (s *Seed) ListServices() []ServiceInfo {
-	return listServices(s.registry())
+func (s *Ghost) ListSeeds() []SeedInfo {
+	return listSeeds(s.registry())
 }
 
-func (s *Seed) Serve() error {
+func (s *Ghost) Serve() error {
 	s.RegisterRoutes()
 	return s.router.Run(s.Addr)
 }
 
-func (s *Seed) routes() gin.IRoutes {
+func (s *Ghost) routes() gin.IRoutes {
 	if s.basePath == "" {
 		return s.router
 	}
 	return s.router.Group(s.basePath)
 }
 
-type ServiceInfo struct {
+type SeedInfo struct {
 	Name    string   `json:"name"`
 	Actions []string `json:"actions"`
 }
 
-func listServices(registry *services.ServiceRegistry) []ServiceInfo {
+func listSeeds(registry *seeds.SeedRegistry) []SeedInfo {
 	if registry == nil {
 		return nil
 	}
 	entries := registry.All()
-	list := make([]ServiceInfo, 0, len(entries))
-	for name, service := range entries {
-		if service == nil {
+	list := make([]SeedInfo, 0, len(entries))
+	for name, seed := range entries {
+		if seed == nil {
 			continue
 		}
-		actions := make([]string, 0, len(service.Actions()))
-		for action := range service.Actions() {
+		actions := make([]string, 0, len(seed.Actions()))
+		for action := range seed.Actions() {
 			actions = append(actions, action)
 		}
 		sort.Strings(actions)
-		list = append(list, ServiceInfo{
+		list = append(list, SeedInfo{
 			Name:    name,
 			Actions: actions,
 		})
@@ -212,9 +212,9 @@ func listServices(registry *services.ServiceRegistry) []ServiceInfo {
 	return list
 }
 
-func (s *Seed) registry() *services.ServiceRegistry {
+func (s *Ghost) registry() *seeds.SeedRegistry {
 	if s.Registry == nil {
-		s.Registry = services.NewServiceRegistry()
+		s.Registry = seeds.NewSeedRegistry()
 	}
 	return s.Registry
 }

@@ -5,40 +5,40 @@ import (
 	"os"
 	"strings"
 
-	"github.com/pelletier/go-toml/v2"
+	"github.com/BurntSushi/toml"
 )
 
-type GhostConfig struct {
-	Name        string       `toml:"name"`
-	Addr        string       `toml:"addr"`
-	CorsOrigins []string     `toml:"cors_origins"`
-	Seeds       []SeedConfig `toml:"seeds"`
+type MirageConfig struct {
+	Name        string             `toml:"name"`
+	Addr        string             `toml:"addr"`
+	CorsOrigins []string           `toml:"cors_origins"`
+	Ghosts      []GhostConfigEntry `toml:"ghosts"`
 }
 
-type SeedConfig struct {
-	ID       string   `toml:"id"`
-	Host     string   `toml:"host"`
-	Addr     string   `toml:"addr"`
-	Group    string   `toml:"group"`
-	Exec     bool     `toml:"exec"`
-	Auth     string   `toml:"auth"`
-	Services []string `toml:"services"`
+type GhostConfigEntry struct {
+	ID    string   `toml:"id"`
+	Host  string   `toml:"host"`
+	Addr  string   `toml:"addr"`
+	Group string   `toml:"group"`
+	Exec  bool     `toml:"exec"`
+	Auth  string   `toml:"auth"`
+	Seeds []string `toml:"seeds"`
 }
 
-type SeedNodeConfig struct {
+type GhostNodeConfig struct {
 	ID          string   `toml:"id"`
 	Host        string   `toml:"host"`
 	Addr        string   `toml:"addr"`
 	Group       string   `toml:"group"`
 	Exec        bool     `toml:"exec"`
 	CorsOrigins []string `toml:"cors_origins"`
-	Services    []string `toml:"services"`
+	Seeds       []string `toml:"seeds"`
 }
 
-func LoadGhostConfig(path string) (GhostConfig, error) {
-	var cfg GhostConfig
+func LoadMirageConfig(path string) (MirageConfig, error) {
+	var cfg MirageConfig
 	if err := loadToml(path, &cfg); err != nil {
-		return GhostConfig{}, err
+		return MirageConfig{}, err
 	}
 	if cfg.Name == "" {
 		cfg.Name = "edge-ctl"
@@ -46,25 +46,25 @@ func LoadGhostConfig(path string) (GhostConfig, error) {
 	if cfg.Addr == "" {
 		cfg.Addr = ":9000"
 	}
-	if err := ValidateGhostConfig(cfg); err != nil {
-		return GhostConfig{}, err
+	if err := ValidateMirageConfig(cfg); err != nil {
+		return MirageConfig{}, err
 	}
 	return cfg, nil
 }
 
-func LoadSeedConfig(path string) (SeedNodeConfig, error) {
-	var cfg SeedNodeConfig
+func LoadGhostConfig(path string) (GhostNodeConfig, error) {
+	var cfg GhostNodeConfig
 	if err := loadToml(path, &cfg); err != nil {
-		return SeedNodeConfig{}, err
+		return GhostNodeConfig{}, err
 	}
 	if cfg.ID == "" {
-		cfg.ID = "seedctl"
+		cfg.ID = "ghostctl"
 	}
 	if cfg.Addr == "" {
 		cfg.Addr = ":9100"
 	}
-	if err := ValidateSeedConfig(cfg); err != nil {
-		return SeedNodeConfig{}, err
+	if err := ValidateGhostConfig(cfg); err != nil {
+		return GhostNodeConfig{}, err
 	}
 	return cfg, nil
 }
@@ -80,36 +80,36 @@ func loadToml(path string, out any) error {
 	return nil
 }
 
-func ValidateGhostConfig(cfg GhostConfig) error {
+func ValidateMirageConfig(cfg MirageConfig) error {
 	if strings.TrimSpace(cfg.Name) == "" {
-		return fmt.Errorf("ghost config missing name")
+		return fmt.Errorf("mirage config missing name")
 	}
 	if strings.TrimSpace(cfg.Addr) == "" {
-		return fmt.Errorf("ghost config missing addr")
+		return fmt.Errorf("mirage config missing addr")
 	}
-	for i, seedCfg := range cfg.Seeds {
-		if err := ValidateSeedEntry(seedCfg); err != nil {
-			return fmt.Errorf("seed[%d] invalid: %w", i, err)
+	for i, ghostCfg := range cfg.Ghosts {
+		if err := ValidateGhostEntry(ghostCfg); err != nil {
+			return fmt.Errorf("ghost[%d] invalid: %w", i, err)
 		}
 	}
 	return nil
 }
 
-func ValidateSeedConfig(cfg SeedNodeConfig) error {
+func ValidateGhostConfig(cfg GhostNodeConfig) error {
 	if strings.TrimSpace(cfg.ID) == "" {
-		return fmt.Errorf("seed config missing id")
+		return fmt.Errorf("ghost config missing id")
 	}
 	if strings.TrimSpace(cfg.Addr) == "" {
-		return fmt.Errorf("seed config missing addr")
+		return fmt.Errorf("ghost config missing addr")
 	}
 	if strings.HasPrefix(strings.TrimSpace(cfg.Addr), ":") &&
 		strings.TrimSpace(cfg.Host) == "" {
-		return fmt.Errorf("seed config host required when addr is a port")
+		return fmt.Errorf("ghost config host required when addr is a port")
 	}
 	return nil
 }
 
-func ValidateSeedEntry(cfg SeedConfig) error {
+func ValidateGhostEntry(cfg GhostConfigEntry) error {
 	if strings.TrimSpace(cfg.ID) == "" {
 		return fmt.Errorf("id is required")
 	}

@@ -1,4 +1,4 @@
-package services
+package seeds
 
 import (
 	"fmt"
@@ -34,20 +34,20 @@ func (r *fakeRunner) RunStreaming(cmd string, args []string, stdout, stderr io.W
 	return nil
 }
 
-func TestServiceRegistrySnapshotSemantics(t *testing.T) {
-	registry := NewServiceRegistry()
-	service := fakeService{
+func TestSeedRegistrySnapshotSemantics(t *testing.T) {
+	registry := NewSeedRegistry()
+	seed := fakeService{
 		name: "svc-a",
 		actions: map[string]Action{
 			"ping": func() (string, error) { return "pong", nil },
 		},
 	}
-	registry.Register(service)
-	logs.Logf("services/registry: registered service=%s", service.Name())
+	registry.Register(seed)
+	logs.Logf("seeds/registry: registered seed=%s", seed.Name())
 
 	got, ok := registry.Get("svc-a")
 	if !ok || got == nil {
-		t.Fatalf("expected service svc-a to exist")
+		t.Fatalf("expected seed svc-a to exist")
 	}
 
 	out, err := got.Actions()["ping"]()
@@ -57,14 +57,14 @@ func TestServiceRegistrySnapshotSemantics(t *testing.T) {
 	if out != "pong" {
 		t.Fatalf("expected pong output, got %q", out)
 	}
-	logs.Logf("services/registry: action ping returned=%q", out)
+	logs.Logf("seeds/registry: action ping returned=%q", out)
 
 	snapshot := registry.All()
 	delete(snapshot, "svc-a")
 	if _, stillThere := registry.Get("svc-a"); !stillThere {
 		t.Fatalf("expected registry to be unaffected by snapshot mutation")
 	}
-	logs.Logf("services/registry: snapshot mutation did not alter source map")
+	logs.Logf("seeds/registry: snapshot mutation did not alter source map")
 }
 
 func TestAdminCommandsUsesRunnerAndReturnsOutput(t *testing.T) {
@@ -75,7 +75,7 @@ func TestAdminCommandsUsesRunnerAndReturnsOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status failed: %v", err)
 	}
-	logs.Logf("services/admin: status output=%v", status)
+	logs.Logf("seeds/admin: status output=%v", status)
 
 	actions := admin.Actions()
 	for _, name := range []string{"net", "repo"} {
@@ -87,7 +87,7 @@ func TestAdminCommandsUsesRunnerAndReturnsOutput(t *testing.T) {
 		if err != nil {
 			t.Fatalf("action %q failed: %v", name, err)
 		}
-		logs.Logf("services/admin: action=%s output=%q", name, out)
+		logs.Logf("seeds/admin: action=%s output=%q", name, out)
 	}
 
 	if len(runner.calls) < 3 {

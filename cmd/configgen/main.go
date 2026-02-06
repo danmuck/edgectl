@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	kind := flag.String("kind", "ghost", "config kind: ghost|seed")
+	kind := flag.String("kind", "mirage", "config kind: mirage|ghost")
 	output := flag.String("output", "", "output path for config template")
 	validate := flag.Bool("validate", false, "validate an existing config file")
 	input := flag.String("input", "", "config path for validation (defaults to per-kind cmd path)")
@@ -19,22 +19,22 @@ func main() {
 		path := *input
 		if path == "" {
 			switch *kind {
+			case "mirage":
+				path = "cmd/miragectl/config.toml"
 			case "ghost":
-				path = "cmd/edgectl/config.toml"
-			case "seed":
-				path = "cmd/seedctl/config.toml"
+				path = "cmd/ghostctl/config.toml"
 			default:
 				log.Fatalf("unknown kind: %s", *kind)
 			}
 		}
 
 		switch *kind {
-		case "ghost":
-			if _, err := config.LoadGhostConfig(path); err != nil {
+		case "mirage":
+			if _, err := config.LoadMirageConfig(path); err != nil {
 				log.Fatal(err)
 			}
-		case "seed":
-			if _, err := config.LoadSeedConfig(path); err != nil {
+		case "ghost":
+			if _, err := config.LoadGhostConfig(path); err != nil {
 				log.Fatal(err)
 			}
 		default:
@@ -47,10 +47,10 @@ func main() {
 	target := *output
 	if target == "" {
 		switch *kind {
+		case "mirage":
+			target = "cmd/miragectl/config.toml"
 		case "ghost":
-			target = "cmd/edgectl/config.toml"
-		case "seed":
-			target = "cmd/seedctl/config.toml"
+			target = "cmd/ghostctl/config.toml"
 		default:
 			log.Fatalf("unknown kind: %s", *kind)
 		}

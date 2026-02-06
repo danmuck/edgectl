@@ -1,4 +1,4 @@
-package services
+package seeds
 
 import (
 	"fmt"
@@ -10,13 +10,13 @@ import (
 	logs "github.com/danmuck/smplog"
 )
 
-func TestFlowServiceDetailedControlFlow(t *testing.T) {
-	flow := &FlowService{}
+func TestFlowSeedDetailedControlFlow(t *testing.T) {
+	flow := &FlowSeed{}
 	logShape("flow_contract", map[string]any{
 		"topology": map[string]any{
 			"ghost_servers": 1,
 			"seed_servers":  1,
-			"flow_path":     "ghost -> seed.flow_service",
+			"flow_path":     "mirage -> ghost.flow_seed",
 		},
 		"protocol": map[string]any{
 			"magic_label":  "EDGE",
@@ -24,8 +24,8 @@ func TestFlowServiceDetailedControlFlow(t *testing.T) {
 			"version":      protocol.Version,
 			"header_bytes": protocol.HeaderSize,
 		},
-		"service_interface": map[string]any{
-			"name": "services.Service",
+		"seed_interface": map[string]any{
+			"name": "seeds.Seed",
 			"methods": map[string]any{
 				"name":    "() -> string",
 				"status":  "() -> any,error",
@@ -79,8 +79,8 @@ func TestFlowServiceDetailedControlFlow(t *testing.T) {
 		t.Fatalf("intent action failed: %v", err)
 	}
 	logShape("flow_step", map[string]any{
-		"from":   "ghost",
-		"to":     "seed.flow",
+		"from":   "mirage",
+		"to":     "ghost.flow",
 		"action": "intent",
 		"result": intentOut,
 	})
@@ -92,8 +92,8 @@ func TestFlowServiceDetailedControlFlow(t *testing.T) {
 		t.Fatalf("command action failed: %v", err)
 	}
 	logShape("flow_step", map[string]any{
-		"from":   "ghost",
-		"to":     "seed.flow",
+		"from":   "mirage",
+		"to":     "ghost.flow",
 		"action": "command",
 		"result": commandOut,
 	})
@@ -105,8 +105,8 @@ func TestFlowServiceDetailedControlFlow(t *testing.T) {
 		t.Fatalf("event action failed: %v", err)
 	}
 	logShape("flow_step", map[string]any{
-		"from":   "ghost",
-		"to":     "seed.flow",
+		"from":   "mirage",
+		"to":     "ghost.flow",
 		"action": "event",
 		"result": eventOut,
 	})
@@ -127,8 +127,8 @@ func TestFlowServiceDetailedControlFlow(t *testing.T) {
 	}
 }
 
-func TestFlowServiceErrorPathsThenRecovery(t *testing.T) {
-	flow := &FlowService{}
+func TestFlowSeedErrorPathsThenRecovery(t *testing.T) {
+	flow := &FlowSeed{}
 	actions := flow.Actions()
 
 	if _, err := actions["command"](); err == nil {

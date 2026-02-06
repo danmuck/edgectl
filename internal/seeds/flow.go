@@ -1,4 +1,4 @@
-package services
+package seeds
 
 import (
 	"bytes"
@@ -55,8 +55,8 @@ var (
 	errNoCommand = errors.New("flow: no command available")
 )
 
-// FlowService demonstrates an intent -> command -> event flow using the protocol.
-type FlowService struct {
+// FlowSeed demonstrates an intent -> command -> event flow using the protocol.
+type FlowSeed struct {
 	mu sync.RWMutex
 
 	nextID uint64
@@ -98,13 +98,13 @@ type FlowSnapshot struct {
 	Event   *MessageShape
 }
 
-// Name returns the service identifier.
-func (s *FlowService) Name() string {
+// Name returns the seed identifier.
+func (s *FlowSeed) Name() string {
 	return "flow"
 }
 
 // Status returns the current flow status snapshot.
-func (s *FlowService) Status() (any, error) {
+func (s *FlowSeed) Status() (any, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return FlowStatus{
@@ -117,7 +117,7 @@ func (s *FlowService) Status() (any, error) {
 }
 
 // Snapshot returns a readable snapshot of the current flow state.
-func (s *FlowService) Snapshot() FlowSnapshot {
+func (s *FlowSeed) Snapshot() FlowSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return FlowSnapshot{
@@ -135,7 +135,7 @@ func (s *FlowService) Snapshot() FlowSnapshot {
 }
 
 // Actions returns the flow demo actions keyed by name.
-func (s *FlowService) Actions() map[string]Action {
+func (s *FlowSeed) Actions() map[string]Action {
 	return map[string]Action{
 		"intent":    s.emitIntent,
 		"command":   s.emitCommand,
@@ -145,7 +145,7 @@ func (s *FlowService) Actions() map[string]Action {
 }
 
 // emitIntent builds and validates an intent message and stores it.
-func (s *FlowService) emitIntent() (string, error) {
+func (s *FlowSeed) emitIntent() (string, error) {
 	msg := s.newMessage(protocol.MessageIntent, []protocol.Field{
 		protocol.NewFieldString(fieldIntentName, "sync-state"),
 		protocol.NewFieldString(fieldIntentTarget, "edge-ctl"),
@@ -164,7 +164,7 @@ func (s *FlowService) emitIntent() (string, error) {
 }
 
 // emitCommand builds and validates a command correlated to the last intent.
-func (s *FlowService) emitCommand() (string, error) {
+func (s *FlowSeed) emitCommand() (string, error) {
 	intentID, err := s.intentID()
 	if err != nil {
 		return "", err
@@ -189,7 +189,7 @@ func (s *FlowService) emitCommand() (string, error) {
 }
 
 // emitEvent builds and validates an event correlated to the last command.
-func (s *FlowService) emitEvent() (string, error) {
+func (s *FlowSeed) emitEvent() (string, error) {
 	_, correlationID, err := s.commandID()
 	if err != nil {
 		return "", err
@@ -214,7 +214,7 @@ func (s *FlowService) emitEvent() (string, error) {
 }
 
 // runFlow executes the intent -> command -> event sequence.
-func (s *FlowService) runFlow() (string, error) {
+func (s *FlowSeed) runFlow() (string, error) {
 	if _, err := s.emitIntent(); err != nil {
 		return "", err
 	}
@@ -228,7 +228,7 @@ func (s *FlowService) runFlow() (string, error) {
 }
 
 // newMessage constructs a message with a fresh ID and provided fields.
-func (s *FlowService) newMessage(messageType protocol.MessageType, fields []protocol.Field) *protocol.Message {
+func (s *FlowSeed) newMessage(messageType protocol.MessageType, fields []protocol.Field) *protocol.Message {
 	return &protocol.Message{
 		Header: protocol.Header{
 			MessageID:   s.nextMessageID(),
@@ -239,7 +239,7 @@ func (s *FlowService) newMessage(messageType protocol.MessageType, fields []prot
 }
 
 // nextMessageID increments and returns the next message ID.
-func (s *FlowService) nextMessageID() uint64 {
+func (s *FlowSeed) nextMessageID() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.nextID++
@@ -247,14 +247,14 @@ func (s *FlowService) nextMessageID() uint64 {
 }
 
 // recordIntent stores the last intent message.
-func (s *FlowService) recordIntent(msg *protocol.Message) {
+func (s *FlowSeed) recordIntent(msg *protocol.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastIntent = msg
 }
 
 // recordCommand stores the last command message and correlation ID.
-func (s *FlowService) recordCommand(msg *protocol.Message, correlationID uint64) {
+func (s *FlowSeed) recordCommand(msg *protocol.Message, correlationID uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastCommand = msg
@@ -262,7 +262,7 @@ func (s *FlowService) recordCommand(msg *protocol.Message, correlationID uint64)
 }
 
 // recordEvent stores the last event message and correlation ID.
-func (s *FlowService) recordEvent(msg *protocol.Message, correlationID uint64) {
+func (s *FlowSeed) recordEvent(msg *protocol.Message, correlationID uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastEvent = msg
@@ -270,7 +270,7 @@ func (s *FlowService) recordEvent(msg *protocol.Message, correlationID uint64) {
 }
 
 // intentID returns the last intent message ID.
-func (s *FlowService) intentID() (uint64, error) {
+func (s *FlowSeed) intentID() (uint64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.lastIntent == nil {
@@ -280,7 +280,7 @@ func (s *FlowService) intentID() (uint64, error) {
 }
 
 // commandID returns the last command ID and correlation ID.
-func (s *FlowService) commandID() (uint64, uint64, error) {
+func (s *FlowSeed) commandID() (uint64, uint64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.lastCommand == nil {

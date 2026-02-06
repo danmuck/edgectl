@@ -30,30 +30,30 @@ var (
 		},
 		[]string{"node", "method", "path", "status"},
 	)
-	seedProxyRequests = prometheus.NewCounterVec(
+	ghostProxyRequests = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "edgectl",
-			Subsystem: "seed_proxy",
+			Subsystem: "ghost_proxy",
 			Name:      "requests_total",
-			Help:      "Seed proxy requests from Ghost.",
+			Help:      "Ghost proxy requests from Mirage.",
 		},
-		[]string{"node", "seed", "method", "path", "status", "success"},
+		[]string{"node", "ghost", "method", "path", "status", "success"},
 	)
-	seedProxyDuration = prometheus.NewHistogramVec(
+	ghostProxyDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "edgectl",
-			Subsystem: "seed_proxy",
+			Subsystem: "ghost_proxy",
 			Name:      "request_duration_seconds",
-			Help:      "Seed proxy request duration in seconds.",
+			Help:      "Ghost proxy request duration in seconds.",
 			Buckets:   prometheus.DefBuckets,
 		},
-		[]string{"node", "seed", "method", "path", "status", "success"},
+		[]string{"node", "ghost", "method", "path", "status", "success"},
 	)
 )
 
 func RegisterMetrics() {
 	registerOnce.Do(func() {
-		prometheus.MustRegister(httpRequests, httpDuration, seedProxyRequests, seedProxyDuration)
+		prometheus.MustRegister(httpRequests, httpDuration, ghostProxyRequests, ghostProxyDuration)
 	})
 }
 
@@ -64,11 +64,11 @@ func RecordHTTPRequest(node, method, path string, status int, duration time.Dura
 	httpDuration.WithLabelValues(node, method, path, statusLabel).Observe(duration.Seconds())
 }
 
-func RecordSeedProxy(node, seed, method, path string, status int, duration time.Duration, success bool) {
+func RecordGhostProxy(node, ghost, method, path string, status int, duration time.Duration, success bool) {
 	RegisterMetrics()
 	statusLabel := strconv.Itoa(status)
 	successLabel := strconv.FormatBool(success)
-	seedProxyRequests.WithLabelValues(node, seed, method, path, statusLabel, successLabel).Inc()
-	seedProxyDuration.WithLabelValues(node, seed, method, path, statusLabel, successLabel).
+	ghostProxyRequests.WithLabelValues(node, ghost, method, path, statusLabel, successLabel).Inc()
+	ghostProxyDuration.WithLabelValues(node, ghost, method, path, statusLabel, successLabel).
 		Observe(duration.Seconds())
 }

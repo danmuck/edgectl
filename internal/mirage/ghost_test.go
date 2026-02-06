@@ -1,4 +1,4 @@
-package server
+package mirage
 
 import (
 	"encoding/json"
@@ -9,24 +9,24 @@ import (
 	"strings"
 	"testing"
 
+	seedpkg "github.com/danmuck/edgectl/internal/ghost"
 	"github.com/danmuck/edgectl/internal/protocol"
-	seedpkg "github.com/danmuck/edgectl/internal/seed"
-	"github.com/danmuck/edgectl/internal/services"
+	"github.com/danmuck/edgectl/internal/seeds"
 	logs "github.com/danmuck/smplog"
 )
 
 func TestGhostToSeedControlFlowLocalService(t *testing.T) {
-	ghost := Appear("ghost_srv", ":9000", nil)
-	local := ghost.CreateLocalSeed("seed_srv", "/local/seed_srv")
-	flow := &services.FlowService{}
+	mirage := Appear("ghost_srv", ":9000", nil)
+	local := mirage.CreateLocalGhost("seed_srv", "/local/seed_srv")
+	flow := &seeds.FlowSeed{}
 	local.Registry.Register(flow)
-	ghost.RegisterRoutesTMP()
+	mirage.RegisterRoutesTMP()
 
 	logShape("ghost_contract", map[string]any{
 		"topology": map[string]any{
 			"ghost_servers": 1,
 			"seed_servers":  1,
-			"flow_path":     "ghost -> seed.flow_service",
+			"flow_path":     "mirage -> ghost.flow_seed",
 		},
 		"protocol": map[string]any{
 			"magic_label": "EDGE",
@@ -34,7 +34,7 @@ func TestGhostToSeedControlFlowLocalService(t *testing.T) {
 			"version":     protocol.Version,
 		},
 		"ghost_struct": map[string]any{
-			"name": ghost.Name,
+			"name": mirage.Name,
 			"local": map[string]any{
 				local.ID: local.ID,
 			},
@@ -55,17 +55,17 @@ func TestGhostToSeedControlFlowLocalService(t *testing.T) {
 	}
 
 	for _, step := range steps {
-		path := "/seeds/seed_srv/services/flow/actions/" + step.action
+		path := "/ghosts/seed_srv/seeds/flow/actions/" + step.action
 		logShape("ghost_request", map[string]any{
 			"method": "POST",
 			"path":   path,
-			"from":   "ghost",
-			"to":     "seed(seed_srv).flow",
+			"from":   "mirage",
+			"to":     "ghost(seed_srv).flow",
 		})
 
 		req := httptest.NewRequest(http.MethodPost, path, nil)
 		rr := httptest.NewRecorder()
-		ghost.HTTPRouter().ServeHTTP(rr, req)
+		mirage.HTTPRouter().ServeHTTP(rr, req)
 
 		if rr.Code != http.StatusOK {
 			t.Fatalf("expected 200 for %s, got %d body=%s", step.action, rr.Code, rr.Body.String())
@@ -93,30 +93,30 @@ func TestGhostToSeedControlFlowLocalService(t *testing.T) {
 
 func TestGhostProxyToRemoteSeedRoute(t *testing.T) {
 	remote := newTestServerOrSkip(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/services" {
+		if r.URL.Path != "/seeds" {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"services":[{"name":"flow","actions":["intent","command","event"]}]}`))
+		_, _ = w.Write([]byte(`{"seeds":[{"name":"flow","actions":["intent","command","event"]}]}`))
 	}))
 	defer remote.Close()
 
-	ghost := Appear("ghost_srv", ":9000", nil)
-	ghost.LoadSeeds([]seedpkg.Seed{{ID: "seed_remote", Addr: remote.URL}})
-	ghost.RegisterRoutesTMP()
+	mirage := Appear("ghost_srv", ":9000", nil)
+	mirage.LoadGhosts([]seedpkg.Ghost{{ID: "seed_remote", Addr: remote.URL}})
+	mirage.RegisterRoutesTMP()
 
 	logShape("ghost_proxy_request", map[string]any{
-		"topology": "ghost_servers=1 seed_servers=1 (proxy to remote seed)",
+		"topology": "ghost_servers=1 seed_servers=1 (proxy to remote ghost)",
 		"method":   "GET",
-		"path":     "/seeds/seed_remote/services",
-		"from":     "ghost",
-		"to":       "seed(seed_remote)",
+		"path":     "/ghosts/seed_remote/seeds",
+		"from":     "mirage",
+		"to":       "ghost(seed_remote)",
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/seeds/seed_remote/services", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ghosts/seed_remote/seeds", nil)
 	rr := httptest.NewRecorder()
-	ghost.HTTPRouter().ServeHTTP(rr, req)
+	mirage.HTTPRouter().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200 from proxy, got %d body=%s", rr.Code, rr.Body.String())
@@ -126,13 +126,13 @@ func TestGhostProxyToRemoteSeedRoute(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode proxy response: %v", err)
 	}
-	if _, ok := body["services"]; !ok {
-		t.Fatalf("expected services key in proxied payload")
+	if _, ok := body["seeds"]; !ok {
+		t.Fatalf("expected seeds key in proxied payload")
 	}
 
 	logShape("ghost_proxy_response", map[string]any{
 		"status_code": rr.Code,
-		"services":    servicesListShape(body["services"]),
+		"seeds":       servicesListShape(body["seeds"]),
 	})
 }
 
@@ -153,7 +153,7 @@ func newTestServerOrSkip(t *testing.T, handler http.Handler) *httptest.Server {
 	return server
 }
 
-func snapshotShape(snap services.FlowSnapshot) map[string]any {
+func snapshotShape(snap seeds.FlowSnapshot) map[string]any {
 	return map[string]any{
 		"status": map[string]any{
 			"next_message_id":     snap.Status.NextMessageID,
@@ -168,7 +168,7 @@ func snapshotShape(snap services.FlowSnapshot) map[string]any {
 	}
 }
 
-func messageShapeMap(msg *services.MessageShape) map[string]any {
+func messageShapeMap(msg *seeds.MessageShape) map[string]any {
 	if msg == nil {
 		return map[string]any{"value": "nil"}
 	}

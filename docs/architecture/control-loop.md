@@ -1,8 +1,8 @@
-# Ghost Control Loop
+# Mirage Control Loop
 
 Example deployment used in this flow:
-- Ghost control plane runs locally with a local `raft-node` service.
-- One seed server exposes `mongodb` and `raft-node` services.
+- Mirage control plane runs locally with a local `raft-node` seed.
+- One ghost server exposes `mongodb` and `raft-node` seeds.
 
 ```mermaid
 flowchart LR
@@ -12,13 +12,13 @@ flowchart LR
     C["Command/Event Loop"]
     S["State Update"]
 
-    subgraph G["Ghost (Local)"]
-        GR["raft-node service"]
+    subgraph G["Mirage (Local)"]
+        GR["raft-node seed"]
     end
 
-    subgraph SEED["Seed Server"]
-        SM["mongodb service"]
-        SR["raft-node service"]
+    subgraph SEED["Ghost Server"]
+        SM["mongodb seed"]
+        SR["raft-node seed"]
     end
 
     U --> I

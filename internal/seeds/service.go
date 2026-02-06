@@ -1,53 +1,53 @@
-package services
+package seeds
 
 import (
 	"sync"
 )
 
-// Service defines a runnable service with status and actions.
-type Service interface {
+// Seed defines a runnable seed with status and actions.
+type Seed interface {
 	Name() string
 	Status() (any, error)
 	Actions() map[string]Action
 }
 
-// Action executes a service command.
+// Action executes a seed command.
 type Action func() (string, error)
 
-// ServiceRegistry stores services by name.
-type ServiceRegistry struct {
-	repo map[string]Service
+// SeedRegistry stores seeds by name.
+type SeedRegistry struct {
+	repo map[string]Seed
 	mu   sync.RWMutex
 }
 
-// NewServiceRegistry initializes an empty service registry.
-func NewServiceRegistry() *ServiceRegistry {
-	return &ServiceRegistry{
-		repo: make(map[string]Service),
+// NewSeedRegistry initializes an empty seed registry.
+func NewSeedRegistry() *SeedRegistry {
+	return &SeedRegistry{
+		repo: make(map[string]Seed),
 		mu:   sync.RWMutex{},
 	}
 }
 
-// Register adds a service to the registry by name.
-func (sr *ServiceRegistry) Register(p Service) {
+// Register adds a seed to the registry by name.
+func (sr *SeedRegistry) Register(p Seed) {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
 	sr.repo[p.Name()] = p
 }
 
-// All returns a snapshot of all registered services.
-func (sr *ServiceRegistry) All() map[string]Service {
+// All returns a snapshot of all registered seeds.
+func (sr *SeedRegistry) All() map[string]Seed {
 	sr.mu.RLock()
 	defer sr.mu.RUnlock()
-	out := make(map[string]Service, len(sr.repo))
+	out := make(map[string]Seed, len(sr.repo))
 	for name, svc := range sr.repo {
 		out[name] = svc
 	}
 	return out
 }
 
-// Get returns a service by name.
-func (sr *ServiceRegistry) Get(name string) (Service, bool) {
+// Get returns a seed by name.
+func (sr *SeedRegistry) Get(name string) (Seed, bool) {
 	sr.mu.RLock()
 	defer sr.mu.RUnlock()
 	p, ok := sr.repo[name]
@@ -61,12 +61,12 @@ type AdminCommands struct {
 	Runner Runner
 }
 
-// Name returns the service identifier.
+// Name returns the seed identifier.
 func (ac *AdminCommands) Name() string {
 	return "admin"
 }
 
-// Status returns the service status output.
+// Status returns the seed status output.
 func (ac *AdminCommands) Status() (any, error) {
 	out, err := ac.runner().Run("ls", "-al")
 	return out, err

@@ -1,0 +1,303 @@
+
+
+[[ CHAIN OF CUSTODY ]]
+
+
+User
+  ↓ (intent)
+Mirage
+  ↓ (commands)
+Ghost
+  ↓ (execution)
+Seed
+  ↑ (events)
+Ghost
+  ↑ (aggregation)
+Mirage
+
+
+[[ mirage ]]		# Represents the cloud control center (cloud execution via ghosts)
+commands = [
+	# host interface
+	appear = "Initialize Mirage cloud controller"
+	shimmer = "Represents assuming control of a command registry ( --> routes intents <-- )"
+	seed = "Register Seeds -- Initiate contact with Seeds, apply/map their services to registry"
+
+	# 			<[User → Mirage (intent)]>
+	issue = "Issue intent to Mirage, ordered command schedule (user interface | chron jobs)"
+
+	# controller interface
+	reconcile = "Reconcile an intent into commands, can reconcile over multiple ghosts (initialize command/event loop)"
+	# 			<[Mirage → Ghost (imperative)]>
+	command = "Execute commands on Ghosts ( execute command | expect event --> )"
+	# 			<[Mirage → Aggregate Observer (observational)]>
+	report = "Reconcile and emit reconciled event log for intent (log issue | notify host)"
+]
+
+
+[[ ghost ]]  		# Represent gateway nodes for seed registries (host execution)
+commands = [
+	# host interface
+	appear = "Initialize Ghost server adapter"
+	radiate = "Represents serving its service registry ( --> routes commands <-- )"
+	seed = "Register Seeds -- Initiate contact with Mirage, offer service registry"
+
+	# controller interface
+	reconcile = "Reconcile a command over local state"
+	# 			<[Ghost → Mirage (observational)]>
+	event = "Event log that results from command execution ( --> modify state | emit event )"
+]
+
+
+[[ seed ]]			# Represent microservices (stateful/stateless)
+metadata = [		# Type qualifiers for the service interface
+	id = "Unique identifier for the service",
+	name = "Name of the service",
+	description = "Description of the service"
+]
+commands = [
+	# service interface
+	restart = "Restart the seed"
+	status = "Ping the seed"
+
+	# example commands (target service APIs)
+	reboot = "reboot"
+	mongo_restart = "systemctl restart mongod"
+	mongo_status = "systemctl status mongod"
+]
+
+
+[[ EXAMPLES ]]
+
+
+[[ seed ]]
+# Represents a generic managed node
+metadata = [
+	id = "node.system",
+	name = "System Control",
+	description = "Core system-level control and diagnostics"
+]
+commands = [
+	# service interface
+	restart = "Restart system services",
+	status  = "Check system health",
+
+	# concrete commands
+	reboot          = "reboot",
+	shutdown        = "shutdown -h now",
+	uptime          = "uptime",
+	disk_usage      = "df -h",
+	memory_usage    = "free -m",
+	process_list    = "ps aux"
+]
+
+
+[[ seed ]]
+# Represents a MongoDB instance
+metadata = [
+	id = "service.mongodb",
+	name = "MongoDB",
+	description = "MongoDB database service"
+]
+commands = [
+	# service interface
+	restart = "Restart MongoDB service",
+	status  = "Check MongoDB service status",
+
+	# lifecycle
+	mongo_start   = "systemctl start mongod",
+	mongo_stop    = "systemctl stop mongod",
+	mongo_restart = "systemctl restart mongod",
+	mongo_status  = "systemctl status mongod",
+
+	# health / ops
+	mongo_ping = "mongosh --eval 'db.adminCommand({ ping: 1 })'",
+	mongo_rs_status = "mongosh --eval 'rs.status()'"
+]
+
+
+[[ seed ]]
+# Represents Docker as a runtime
+metadata = [
+	id = "runtime.docker",
+	name = "Docker",
+	description = "Container runtime interface"
+]
+commands = [
+	# service interface
+	restart = "Restart Docker daemon",
+	status  = "Check Docker daemon status",
+
+	# daemon control
+	docker_start   = "systemctl start docker",
+	docker_stop    = "systemctl stop docker",
+	docker_restart = "systemctl restart docker",
+	docker_status  = "systemctl status docker",
+
+	# container operations
+	container_list = "docker ps -a",
+	container_logs = "docker logs {{container}}",
+	container_start = "docker start {{container}}",
+	container_stop  = "docker stop {{container}}",
+	container_rm    = "docker rm {{container}}"
+]
+
+
+[[ seed ]]
+# Represents Kubernetes CLI interaction
+metadata = [
+	id = "runtime.kubernetes",
+	name = "Kubernetes",
+	description = "Kubernetes control interface via kubectl"
+]
+commands = [
+	# service interface
+	restart = "Restart Kubernetes workloads",
+	status  = "Check cluster status",
+
+	# cluster inspection
+	kube_nodes = "kubectl get nodes -o wide",
+	kube_pods  = "kubectl get pods -A",
+
+	# workload control
+	kube_apply = "kubectl apply -f {{manifest}}",
+	kube_scale = "kubectl scale deployment {{name}} --replicas={{count}}",
+	kube_restart = "kubectl rollout restart deployment {{name}}"
+]
+
+
+[[ seed ]]
+# Represents Traefik reverse proxy
+metadata = [
+	id = "service.traefik",
+	name = "Traefik",
+	description = "Edge router and reverse proxy"
+]
+commands = [
+	# service interface
+	restart = "Restart Traefik",
+	status  = "Check Traefik status",
+
+	# lifecycle
+	traefik_start   = "systemctl start traefik",
+	traefik_stop    = "systemctl stop traefik",
+	traefik_restart = "systemctl restart traefik",
+	traefik_status  = "systemctl status traefik",
+
+	# observability
+	traefik_routers = "curl http://localhost:8080/api/http/routers",
+	traefik_services = "curl http://localhost:8080/api/http/services"
+]
+
+
+[[ seed ]]
+# Represents a Node.js-based frontend service
+metadata = [
+	id = "service.frontend",
+	name = "Frontend Service",
+	description = "Next.js / Vite frontend application"
+]
+commands = [
+	# service interface
+	restart = "Restart frontend service",
+	status  = "Check frontend status",
+
+	# build & run
+	install_deps = "npm install",
+	build        = "npm run build",
+	start_dev    = "npm run dev -- --host",
+	start_prod   = "npm start",
+
+	# diagnostics
+	version = "node --version"
+]
+
+
+[[ seed ]]
+# Represents Pi-hole DNS service
+metadata = [
+	id = "service.pihole",
+	name = "Pi-hole",
+	description = "DNS filtering and ad-blocking service"
+]
+commands = [
+	# service interface
+	restart = "Restart Pi-hole DNS",
+	status  = "Check Pi-hole status",
+
+	# control
+	pihole_restart = "pihole restartdns",
+	pihole_status  = "pihole status",
+	pihole_enable  = "pihole enable",
+	pihole_disable = "pihole disable",
+
+	# maintenance
+	update_gravity = "pihole -g"
+]
+
+
+[[ DESCRIPTION ]]
+
+
+[[ CHAIN OF CUSTODY — CANONICAL CONTROL FLOW ]]
+
+────────────────────────────────────────────────────────
+BOOTSTRAP / DISCOVERY PHASE
+────────────────────────────────────────────────────────
+
+mirage <|> appear
+mirage <|> shimmer
+mirage <|> seed
+
+ghostZ <|> appear
+ghostZ <|> radiate
+ghostZ <|> seed
+
+mirage <| register {ghostZ}          # Mirage receives Ghost registration + seed registry
+
+
+────────────────────────────────────────────────────────
+INTENT INGESTION PHASE
+────────────────────────────────────────────────────────
+
+user   |> intent
+mirage <| issue {user}             # Mirage accepts issue and persists desired state
+
+
+────────────────────────────────────────────────────────
+RECONCILIATION PHASE (CONTROL LOOP)
+────────────────────────────────────────────────────────
+
+mirage <|> reconcile
+mirage |> command          # Derive imperative commands for Ghost(s)
+
+
+────────────────────────────────────────────────────────
+COMMAND EXECUTION PHASE (PER GHOST)
+────────────────────────────────────────────────────────
+
+ghostZ <| command {mirage}            # Ghost receives command
+ghostZ <|> reconcile         # Map command to local state + seed
+ghostZ |> seed.restart      # Execute concrete seed command
+
+
+────────────────────────────────────────────────────────
+OBSERVATION / EVENT EMISSION PHASE
+────────────────────────────────────────────────────────
+
+ghostZ |> event             # Emit execution result
+mirage <| event {ghostZ}            # Mirage ingests event and updates observed state
+
+
+────────────────────────────────────────────────────────
+RECONCILIATION LOOP (IMPLICIT, CONTINUOUS)
+────────────────────────────────────────────────────────
+
+mirage |> report {user} 	        # Re-evaluate intent vs observed state
+
+# Outcomes:
+# - no command  -> intent satisfied
+# - more commands -> partial satisfaction
+# - corrective commands -> drift detected
+
+# Loop continues until intent is withdrawn

@@ -3,11 +3,11 @@ package pihole
 import (
 	"os"
 
-	"github.com/danmuck/edgectl/internal/services"
+	"github.com/danmuck/edgectl/internal/seeds"
 )
 
 type Pihole struct {
-	Runner services.Runner
+	Runner seeds.Runner
 }
 
 func (Pihole) Name() string {
@@ -19,8 +19,8 @@ func (p Pihole) Status() (any, error) {
 	return out, err
 }
 
-func (p Pihole) Actions() map[string]services.Action {
-	return map[string]services.Action{
+func (p Pihole) Actions() map[string]seeds.Action {
+	return map[string]seeds.Action{
 		"restart": func() (string, error) {
 			return p.runner().Run("pihole", "restartdns")
 		},
@@ -34,9 +34,9 @@ func (p Pihole) Actions() map[string]services.Action {
 	}
 }
 
-func (p Pihole) runner() services.Runner {
+func (p Pihole) runner() seeds.Runner {
 	if p.Runner != nil {
 		return p.Runner
 	}
-	return services.LocalRunner{}
+	return seeds.LocalRunner{}
 }
