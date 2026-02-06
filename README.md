@@ -1,8 +1,7 @@
 # edgectl
 
-Local control plane
+Local control plane.
 
-    - internet
-        - DisplAPI
-            - EdgeCtl
+## Docs
 
+- Architecture: `docs/architecture/control-loop.md`
