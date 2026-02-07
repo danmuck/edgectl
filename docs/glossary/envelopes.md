@@ -1,65 +1,111 @@
+# EdgeCTL Envelope Shapes (Copy/Paste Units)
+
+This file provides minimal Go-native semantic envelope definitions.
+Canonical required fields and ID mapping remain in:
+
+- `../architecture/definitions/protocol.toml`
+- `../architecture/definitions/tlv.toml`
+
+## Common Validation Error
+
 ```go
-// Semantic envelope: issue (User -> Mirage)
-struct IssueEnvelope {
-  IntentID    string
-  Actor       string
-  TargetScope string
-  Objective   string
+var ErrMissingRequiredField = errors.New("missing required field")
+```
+
+## Issue Envelope (User -> Mirage)
+
+```go
+type IssueEnv struct {
+	IntentID    string
+	Actor       string
+	TargetScope string
+	Objective   string
 }
 ```
 
 ```go
-// Semantic envelope: command (Mirage -> Ghost)
-struct CommandEnvelope {
-  CommandID    string
-  IntentID     string
-  GhostID      string
-  SeedSelector string
-  Operation    string
+func (e IssueEnv) Validate() error
+```
+
+## Command Envelope (Mirage -> Ghost)
+
+```go
+type CommandEnv struct {
+	CommandID    string
+	IntentID     string
+	GhostID      string
+	SeedSelector string
+	Operation    string
+	Args         map[string]string
 }
 ```
 
 ```go
-// Semantic envelope: seed_execute (Ghost -> Seed)
-struct SeedExecuteEnvelope {
-  ExecutionID string
-  CommandID   string
-  SeedID      string
-  Operation   string
-  Args        map[string]string
+func (e CommandEnv) Validate() error
+```
+
+## Seed Execute Envelope (Ghost -> Seed)
+
+```go
+type SeedExecuteEnv struct {
+	ExecutionID string
+	CommandID   string
+	SeedID      string
+	Operation   string
+	Args        map[string]string
 }
 ```
 
 ```go
-// Semantic envelope: seed_result (Seed -> Ghost)
-struct SeedResultEnvelope {
-  ExecutionID string
-  SeedID      string
-  Status      string
-  Stdout      []byte
-  Stderr      []byte
-  ExitCode    int
+func (e SeedExecuteEnv) Validate() error
+```
+
+## Seed Result Envelope (Seed -> Ghost)
+
+```go
+type SeedResultEnv struct {
+	ExecutionID string
+	SeedID      string
+	Status      string
+	Stdout      []byte
+	Stderr      []byte
+	ExitCode    int32
 }
 ```
 
 ```go
-// Semantic envelope: event (Ghost -> Mirage)
-struct EventEnvelope {
-  EventID   string
-  CommandID string
-  IntentID  string
-  GhostID   string
-  SeedID    string
-  Outcome   string
+func (e SeedResultEnv) Validate() error
+```
+
+## Event Envelope (Ghost -> Mirage)
+
+```go
+type EventEnv struct {
+	EventID     string
+	CommandID   string
+	IntentID    string
+	GhostID     string
+	SeedID      string
+	Outcome     string
+	TimestampMS uint64
 }
 ```
 
 ```go
-// Semantic envelope: report (Mirage -> User)
-struct ReportEnvelope {
-  IntentID        string
-  Phase           string // satisfied | in_progress | corrective
-  Summary         string
-  CompletionState string
+func (e EventEnv) Validate() error
+```
+
+## Report Envelope (Mirage -> User)
+
+```go
+type ReportEnv struct {
+	IntentID        string
+	Phase           string
+	Summary         string
+	CompletionState string
 }
+```
+
+```go
+func (e ReportEnv) Validate() error
 ```

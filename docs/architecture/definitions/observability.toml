@@ -1,0 +1,44 @@
+
+[[ observability_contract ]]
+metadata = [
+	name = "EdgeCTL Observability Contract"
+	version = "v1"
+	scope = "logs, correlation, and custody reconstruction"
+]
+
+
+[[ required_log_fields ]]
+fields = [
+	component = "required"
+	peer = "required"
+	direction = "required"
+	trace_id = "required"
+	request_id = "required"
+	message_id = "required"
+	message_type = "required"
+	intent_id = "optional"
+	command_id = "optional"
+	execution_id = "optional"
+	event_id = "optional"
+	status = "required"
+	timestamp_ms = "required"
+]
+
+
+[[ correlation_rules ]]
+rules = [
+	issue_to_command = "intent_id"
+	command_to_seed_execute = "command_id"
+	seed_execute_to_seed_result = "execution_id"
+	command_to_event = "command_id"
+	intent_to_report = "intent_id"
+]
+
+
+[[ ordering ]]
+rules = [
+	event_order_scope = "per ghost session"
+	global_order = "not guaranteed"
+	deduplication_key = "event_id"
+]
+

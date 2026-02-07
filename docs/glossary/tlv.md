@@ -1,157 +1,88 @@
-# EdgeCTL TLV Specification (Pseudocode)
+# EdgeCTL TLV Protocol Guide
 
-This file defines the control-plane TLV mapping used by all envelopes.
-It is a documentation contract for field layout and field sections.
+This file documents how to implement and use the TLV protocol contract defined in [`../architecture/definitions/tlv.toml`](../architecture/definitions/tlv.toml).
+It intentionally avoids duplicating numeric/type tables from TOML.
 
-## Payload Layout
+## References
 
-```go
-// Payload = zero or more flat TLV fields
-struct TLVField {
-  FieldID uint16
-  Type    uint8
-  Length  uint32
-  Value   []byte
-}
-```
+- Canonical TLV contract: [`../architecture/definitions/tlv.toml`](../architecture/definitions/tlv.toml)
+- Wire/header contract: [`../architecture/definitions/protocol.toml`](../architecture/definitions/protocol.toml)
+- Canonical envelope vocabulary: [`definitions.md`](definitions.md)
+- Envelope shapes: [`envelopes.md`](envelopes.md)
 
-## Primitive Types
+## Purpose
 
-```go
-// Canonical FieldType IDs
-const (
-  TYPE_U8     uint8 = 1
-  TYPE_U16    uint8 = 2
-  TYPE_U32    uint8 = 3
-  TYPE_U64    uint8 = 4
-  TYPE_BOOL   uint8 = 5
-  TYPE_STRING uint8 = 6
-  TYPE_BYTES  uint8 = 7
-)
-```
+- `definitions/tlv.toml` is the source of truth for:
+  - primitive type IDs
+  - message type IDs
+  - field ID/type mapping
+  - required fields per envelope
+  - decoder/parser rules
+- This guide defines runtime behavior expected by Mirage and Ghost when applying that contract.
 
-## MessageType IDs
+## Runtime Model
 
-```go
-// MessageType drives semantic parsing only
-const (
-  MSG_INTENT      	uint32 = 1
-  MSG_COMMAND     	uint32 = 2
-  MSG_EVENT       	uint32 = 3
-  MSG_STREAM_OPEN		uint32 = 4
-  MSG_STREAM_DATA		uint32 = 5
-  MSG_STREAM_CLOSE	uint32 = 6
-  MSG_ERROR       	uint32 = 7
-)
-```
+- The frame format (`header + optional auth + payload`) is defined in `definitions/protocol.toml`.
+- The payload is a flat sequence of TLV fields.
+- `message_type` in the frame header selects semantic validation rules from `definitions/tlv.toml`.
 
-## Field Sections
+## Encoder Behavior
 
-```go
-// Section A: common correlation fields (shared across envelopes)
-const (
-  F_INTENT_ID    uint16 = 1  // TYPE_STRING
-  F_COMMAND_ID   uint16 = 2  // TYPE_STRING
-  F_EXECUTION_ID uint16 = 3  // TYPE_STRING
-  F_EVENT_ID     uint16 = 4  // TYPE_STRING
-  F_PHASE        uint16 = 5  // TYPE_STRING
-  F_TIMESTAMP_MS uint16 = 6  // TYPE_U64
-)
-```
+- Encoder MUST use field IDs and types exactly as defined in `definitions/tlv.toml`.
+- Encoder MUST include all required fields for the selected message type.
+- Encoder SHOULD include common correlation fields whenever available.
+- Encoder MUST emit each TLV field as:
+  - `field_id:uint16`
+  - `type:uint8`
+  - `length:uint32`
+  - `value:[]byte`
+- Encoder MAY include additional non-required fields if they use defined IDs or extension IDs reserved by future policy.
 
-```go
-// Section B: issue envelope fields (User -> Mirage)
-const (
-  F_ACTOR        uint16 = 100 // TYPE_STRING
-  F_TARGET_SCOPE uint16 = 101 // TYPE_STRING
-  F_OBJECTIVE    uint16 = 102 // TYPE_STRING
-)
-```
+## Decoder Behavior
 
-```go
-// Section C: command envelope fields (Mirage -> Ghost)
-const (
-  F_GHOST_ID      uint16 = 200 // TYPE_STRING
-  F_SEED_SELECTOR uint16 = 201 // TYPE_STRING
-  F_OPERATION     uint16 = 202 // TYPE_STRING
-  F_ARGS_JSON     uint16 = 203 // TYPE_BYTES
-)
-```
+- Decoder MUST parse TLV fields without branching on `message_type` during binary decode.
+- Decoder MUST reject malformed field lengths.
+- Decoder MUST produce a raw field map/list before semantic validation.
+- Decoder SHOULD preserve unknown fields in raw form for observability and re-encode paths.
 
-```go
-// Section D: seed_execute envelope fields (Ghost -> Seed)
-const (
-  F_SEED_ID        uint16 = 300 // TYPE_STRING
-  F_EXEC_OPERATION uint16 = 301 // TYPE_STRING
-  F_EXEC_ARGS_JSON uint16 = 302 // TYPE_BYTES
-)
-```
+## Semantic Validation Behavior
 
-```go
-// Section E: seed_result envelope fields (Seed -> Ghost)
-const (
-  F_STATUS    uint16 = 400 // TYPE_STRING
-  F_STDOUT    uint16 = 401 // TYPE_BYTES
-  F_STDERR    uint16 = 402 // TYPE_BYTES
-  F_EXIT_CODE uint16 = 403 // TYPE_U32
-)
-```
+- Semantic parser MUST branch on header `message_type` after decode.
+- Semantic parser MUST enforce the required field set for that message type from `definitions/tlv.toml`.
+- Semantic parser MUST type-check each required field against its declared primitive type.
+- Semantic parser MUST ignore unknown fields for forward compatibility.
+- Semantic parser MUST return deterministic validation errors for missing required fields or type mismatch.
 
-```go
-// Section F: event envelope fields (Ghost -> Mirage)
-const (
-  F_OUTCOME uint16 = 500 // TYPE_STRING
-)
-```
+## Correlation and Traceability
 
-```c
-// Section G: report envelope fields (Mirage -> User)
-const (
-  F_SUMMARY          uint16 = 600 // TYPE_STRING
-  F_COMPLETION_STATE uint16 = 601 // TYPE_STRING
-)
-```
+- Implementations SHOULD propagate these correlation fields end-to-end when relevant:
+  - `intent_id`
+  - `command_id`
+  - `execution_id`
+  - `event_id`
+  - `phase`
+  - `timestamp_ms`
+- Log records SHOULD include `message_type` and key correlation IDs to reconstruct custody flow.
 
-## Required Field Sets
+## Compatibility Rules
 
-```bash
-// Required per semantic envelope
-required[MSG_INTENT] = {
-  F_INTENT_ID, F_ACTOR, F_TARGET_SCOPE, F_OBJECTIVE
-}
+- Unknown fields: decode and ignore semantically unless promoted by a newer contract version.
+- Unknown flags: follow protocol-level behavior from `definitions/protocol.toml`.
+- Reuse of existing field IDs for different meanings in the same version is NOT allowed.
+- New fields MUST be additive and MUST NOT break older required field sets.
 
-required[MSG_COMMAND] = {
-  F_COMMAND_ID, F_INTENT_ID, F_GHOST_ID, F_SEED_SELECTOR, F_OPERATION
-}
+## Error Handling Expectations
 
-required[seed_execute] = {
-  F_EXECUTION_ID, F_COMMAND_ID, F_SEED_ID, F_EXEC_OPERATION
-}
+- Malformed TLV binary: reject frame at decode stage.
+- Missing required field: reject at semantic validation stage.
+- Wrong primitive type for known field: reject at semantic validation stage.
+- Unknown field ID: do not fail solely for unknown field.
 
-required[seed_result] = {
-  F_EXECUTION_ID, F_SEED_ID, F_STATUS, F_STDOUT, F_STDERR, F_EXIT_CODE
-}
+## Implementation Checklist
 
-required[MSG_EVENT] = {
-  F_EVENT_ID, F_COMMAND_ID, F_INTENT_ID, F_GHOST_ID, F_SEED_ID, F_OUTCOME
-}
-
-required[report] = {
-  F_INTENT_ID, F_PHASE, F_SUMMARY, F_COMPLETION_STATE
-}
-```
-
-## Decoder/Parser Rules
-
-```go
-// Decoder rules
-// - decode TLV fields without MessageType branching
-// - reject malformed lengths
-// - preserve unknown FieldID values for re-encode
-// - ignore unknown flags
-
-// Semantic parser rules
-// - use MessageType to validate required fields
-// - map known fields into typed envelope structs
-// - ignore unknown fields
-```
+- [ ] Load and parse `definitions/tlv.toml` as contract input for tests and generated constants.
+- [ ] Generate or maintain a single constant source for message types, field IDs, and primitive types.
+- [ ] Implement decode -> semantic-validate as two explicit steps.
+- [ ] Add test vectors for each message type required field set.
+- [ ] Add malformed length/type mismatch/missing-field negative tests.
+- [ ] Add compatibility tests covering unknown-field ignore behavior.

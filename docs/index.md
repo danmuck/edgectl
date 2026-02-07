@@ -5,8 +5,10 @@ This index is the navigation root for architecture and protocol documentation.
 ## Architecture
 
 - Control loop overview: [`architecture/control-loop.md`](architecture/control-loop.md)
-- High-level design contract: [`architecture/design.toml`](architecture/design.toml)
-- Protocol/package boundary contract: [`architecture/protocol.toml`](architecture/protocol.toml)
+- High-level design contract: [`architecture/definitions/design.toml`](architecture/definitions/design.toml)
+- Protocol/package boundary contract: [`architecture/definitions/protocol.toml`](architecture/definitions/protocol.toml)
+- Mirage-Ghost transport contract: [`architecture/transport.md`](architecture/transport.md)
+- Mirage-Ghost framing contract: [`architecture/framing.md`](architecture/framing.md)
 
 ## Architecture Diagrams
 
@@ -21,14 +23,45 @@ This index is the navigation root for architecture and protocol documentation.
 
 - Definitions and canonical vocabulary: [`glossary/definitions.md`](glossary/definitions.md)
 - Object and interface shapes: [`glossary/shapes.md`](glossary/shapes.md)
-- TLV contract and field sections: [`glossary/tlv.md`](glossary/tlv.md)
-- Envelope shape reference: [`glossary/envelopes.md`](glossary/envelopes.md)
+- Envelope Go shapes: [`glossary/envelopes.md`](glossary/envelopes.md)
+- TLV protocol guide (implementation behavior): [`glossary/tlv.md`](glossary/tlv.md)
+- Glossary slice index: [`glossary/README.md`](glossary/README.md)
+- Progress tracker: [`glossary/progress.md`](glossary/progress.md)
+- Transport slice definitions: [`glossary/transport.md`](glossary/transport.md)
+- Frame codec slice definitions: [`glossary/frame.md`](glossary/frame.md)
+- TLV codec slice (stub): [`glossary/tlv_codec.md`](glossary/tlv_codec.md)
+- Semantic validation slice (stub): [`glossary/semantic_validation.md`](glossary/semantic_validation.md)
+- Mirage reconcile slice (stub): [`glossary/mirage_reconcile.md`](glossary/mirage_reconcile.md)
+- Ghost dispatch slice (stub): [`glossary/ghost_dispatch.md`](glossary/ghost_dispatch.md)
+- Observability slice (stub): [`glossary/observability.md`](glossary/observability.md)
+
+## Canonical TOML Definitions
+
+- System design sandbox: [`architecture/definitions/design.toml`](architecture/definitions/design.toml)
+- Protocol boundary contract: [`architecture/definitions/protocol.toml`](architecture/definitions/protocol.toml)
+- TLV IDs and required field sets: [`architecture/definitions/tlv.toml`](architecture/definitions/tlv.toml)
+- Transport security policy: [`architecture/definitions/transport_security.toml`](architecture/definitions/transport_security.toml)
+- Session handshake sequence: [`architecture/definitions/handshake.toml`](architecture/definitions/handshake.toml)
+- Timeout/retry/idempotency: [`architecture/definitions/reliability.toml`](architecture/definitions/reliability.toml)
+- Error taxonomy and wire codes: [`architecture/definitions/errors.toml`](architecture/definitions/errors.toml)
+- Observability and correlation: [`architecture/definitions/observability.toml`](architecture/definitions/observability.toml)
 
 ## Intended Read Order
 
-1. [`architecture/design.toml`](architecture/design.toml)
-2. [`architecture/protocol.toml`](architecture/protocol.toml)
-3. [`glossary/definitions.md`](glossary/definitions.md)
-4. [`glossary/tlv.md`](glossary/tlv.md)
-5. [`glossary/shapes.md`](glossary/shapes.md)
-6. [`architecture/control-loop.md`](architecture/control-loop.md)
+1. [`architecture/definitions/design.toml`](architecture/definitions/design.toml)
+2. [`architecture/definitions/protocol.toml`](architecture/definitions/protocol.toml)
+3. [`architecture/transport.md`](architecture/transport.md)
+4. [`architecture/framing.md`](architecture/framing.md)
+5. [`glossary/definitions.md`](glossary/definitions.md)
+6. [`architecture/definitions/tlv.toml`](architecture/definitions/tlv.toml)
+7. [`architecture/definitions/transport_security.toml`](architecture/definitions/transport_security.toml)
+8. [`architecture/definitions/handshake.toml`](architecture/definitions/handshake.toml)
+9. [`architecture/definitions/reliability.toml`](architecture/definitions/reliability.toml)
+10. [`architecture/definitions/errors.toml`](architecture/definitions/errors.toml)
+11. [`architecture/definitions/observability.toml`](architecture/definitions/observability.toml)
+12. [`glossary/tlv.md`](glossary/tlv.md)
+13. [`glossary/shapes.md`](glossary/shapes.md)
+14. [`glossary/progress.md`](glossary/progress.md)
+15. [`glossary/transport.md`](glossary/transport.md)
+16. [`glossary/frame.md`](glossary/frame.md)
+17. [`architecture/control-loop.md`](architecture/control-loop.md)

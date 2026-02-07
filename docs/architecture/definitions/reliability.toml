@@ -1,0 +1,46 @@
+
+[[ reliability_contract ]]
+metadata = [
+	name = "EdgeCTL Timeout Retry Idempotency Contract"
+	version = "v1"
+	scope = "mirage-ghost command/event reliability behavior"
+]
+
+
+[[ timeouts ]]
+fields = [
+	connect_timeout_ms = "default:5000"
+	handshake_timeout_ms = "default:5000"
+	read_timeout_ms = "default:15000"
+	write_timeout_ms = "default:15000"
+	heartbeat_interval_ms = "default:5000"
+	session_dead_after_ms = "default:15000"
+]
+
+
+[[ retry_policy ]]
+rules = [
+	issue = "caller-managed"
+	command = "retryable when no terminal event observed"
+	event = "retryable until acknowledged"
+	report = "best-effort"
+]
+
+
+[[ backoff ]]
+fields = [
+	initial_delay_ms = "250"
+	multiplier = "2.0"
+	max_delay_ms = "5000"
+	jitter = "required"
+]
+
+
+[[ idempotency ]]
+rules = [
+	command_key = "command_id"
+	seed_execute_key = "execution_id"
+	replay_same_key = "must not cause duplicate mutation"
+	duplicate_window = "minimum 15m"
+]
+

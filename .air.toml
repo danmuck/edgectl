@@ -2,7 +2,7 @@ root = "."
 tmp_dir = "tmp"
 
 [build]
-  cmd = "go build -o ./tmp/edgectl ./cmd/edgectl"
+  cmd = "go build -o ./tmp/edgectl ./cmd/miragectl"
   bin = "./tmp/edgectl"
   full_bin = ""
   include_ext = ["go"]
@@ -19,4 +19,3 @@ tmp_dir = "tmp"
 
 [log]
   time = true
-

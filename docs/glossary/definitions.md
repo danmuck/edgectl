@@ -5,11 +5,23 @@ This file is the canonical vocabulary for Phase 0 (Contract Freeze).
 ## Scope
 
 - Source of truth:
-  - `/Users/macbook/local/edgectl/docs/architecture/design.toml`
-  - `/Users/macbook/local/edgectl/docs/architecture/protocol.toml`
+  - `../architecture/definitions/design.toml`
+  - `../architecture/definitions/protocol.toml`
+  - `../architecture/definitions/tlv.toml`
 - Purpose:
   - persist naming conventions across docs, interfaces, tests, and implementation
   - remove ambiguous terms before deeper implementation
+
+## Contract Ownership
+
+- `../architecture/definitions/design.toml`:
+  - system roles, authority boundaries, lifecycle vocabulary
+- `../architecture/definitions/protocol.toml`:
+  - chain of custody, wire header fields, boundary links, envelope catalog
+- `../architecture/definitions/tlv.toml`:
+  - primitive type IDs, message type IDs, field IDs/types, required field sets
+- `definitions.md`:
+  - canonical terms and naming rules only (no numeric ID tables)
 
 ## Core Roles
 
@@ -51,45 +63,6 @@ This file is the canonical vocabulary for Phase 0 (Contract Freeze).
 - `report`:
   - Mirage -> User
   - reconciled status/progress summary
-
-## Required Envelope Fields
-
-- `issue`:
-  - `intent_id`, `actor`, `target_scope`, `objective`
-- `command`:
-  - `command_id`, `intent_id`, `ghost_id`, `seed_selector`, `operation`
-- `seed_execute`:
-  - `execution_id`, `command_id`, `seed_id`, `operation`, `args`
-- `seed_result`:
-  - `execution_id`, `seed_id`, `status`, `stdout`, `stderr`, `exit_code`
-- `event`:
-  - `event_id`, `command_id`, `intent_id`, `ghost_id`, `seed_id`, `outcome`
-- `report`:
-  - `intent_id`, `phase`, `summary`, `completion_state`
-
-## Protocol (Wire-Level) Terms
-
-- `Control Plane Protocol`:
-  - binary, message-oriented protocol for control-plane boundaries
-- `Header` (fixed-size):
-  - `magic`, `version`, `header_len`, `message_id`, `message_type`, `flags`, `payload_len`
-- `Auth Block`:
-  - optional opaque bytes when `has_auth` flag is set
-- `TLV`:
-  - payload field encoding: `field_id`, `type`, `length`, `value`
-- `Message Type`:
-  - semantic category of message (e.g., intent/command/event)
-- `Field Type`:
-  - primitive type of TLV value (uint/string/bytes/etc.)
-
-## Protocol Flags
-
-- `has_auth` (`0x01`):
-  - message includes auth block
-- `is_response` (`0x02`):
-  - message is a response shape
-- `is_error` (`0x04`):
-  - message communicates an error condition
 
 ## Reconciliation Terms
 
@@ -156,7 +129,7 @@ This file is the canonical vocabulary for Phase 0 (Contract Freeze).
 ## Phase 0 Done Criteria (Vocabulary)
 
 - All docs and tests use canonical envelope names.
-- Package/runtime references match the canonical names in `protocol.toml`.
+- Package/runtime references match the canonical names in `definitions/protocol.toml`.
 - Ownership language is consistent:
   - Mirage = orchestration and state aggregation
   - Ghost = execution and dispatch

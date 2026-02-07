@@ -1,99 +1,126 @@
-# EdgeCTL Object Shapes (Pseudocode)
+# EdgeCTL Go Shapes (Copy/Paste Units)
 
-This file defines pseudocode shapes for protocol objects, interface boundaries, and state ownership.
-These shapes mirror `design.toml` and `protocol.toml`.
-TLV and wire-level shapes are defined in `/Users/macbook/local/edgectl/docs/glossary/tlv.md`.
+This file provides minimal Go-native definitions for core control-plane shapes.
+Canonical contract ownership remains in:
 
-```go
-// Package boundary map (conceptual)
-package internal/protocol // wire contract + semantic field helpers
-package internal/mirage   // orchestration authority
-package internal/ghost    // execution authority
-package internal/seeds    // service interfaces exposed by ghosts
-package cmd/miragectl     // Mirage runtime
-package cmd/ghostctl      // Ghost runtime
-```
+- `../architecture/definitions/design.toml`
+- `../architecture/definitions/protocol.toml`
+- `../architecture/definitions/tlv.toml`
+
+## Runtime Config
 
 ```go
-// Mirage authority surface
-interface Mirage {
-  Appear(cfg MirageConfig) error
-  Shimmer() error
-  Seed(reg GhostSeedRegistry) error
-
-  Issue(intent IssueEnvelope) error
-  Reconcile(intentID string) ([]CommandEnvelope, error)
-  Report(intentID string) (ReportEnvelope, error)
+type MirageConfig struct {
+	NodeID string
 }
 ```
 
 ```go
-// Ghost authority surface
-interface Ghost {
-  Appear(cfg GhostConfig) error
-  Radiate() error
-  Seed(reg LocalSeedRegistry) error
+type GhostConfig struct {
+	GhostID string
+}
+```
 
-  Reconcile(command CommandEnvelope) (EventEnvelope, error)
+## Seed Metadata and Registries
+
+```go
+type SeedMetadata struct {
+	ID          string
+	Name        string
+	Description string
 }
 ```
 
 ```go
-// Seed service boundary (owned by ghost runtime)
-interface Seed {
-  Metadata() SeedMetadata
-  Execute(req SeedExecuteEnvelope) (SeedResultEnvelope, error)
-}
-
-struct SeedMetadata {
-  ID          string
-  Name        string
-  Description string
+type GhostSeedRegistry struct {
+	GhostID string
+	Seeds   []SeedMetadata
 }
 ```
 
 ```go
-// Registry shapes
-struct GhostSeedRegistry {
-  GhostID string
-  Seeds   []SeedMetadata
-}
-
-struct LocalSeedRegistry {
-  Seeds map[string]Seed // key: SeedMetadata.ID
+type LocalSeedRegistry struct {
+	Seeds map[string]Seed
 }
 ```
 
 ```go
-// State ownership shapes
-struct DesiredState {
-  Owner    string // Mirage
-  IntentID string
-  Objective string
-}
+func NewLocalSeedRegistry() LocalSeedRegistry
+```
 
-struct ExecutionState {
-  Owner      string // Ghost
-  CommandID  string
-  SeedID     string
-  LastResult SeedResultEnvelope
-}
+```go
+func (r *LocalSeedRegistry) Register(seed Seed) error
+```
 
-struct ObservedState {
-  Owner   string // Mirage (aggregated from events)
-  IntentID string
-  Events  []EventEnvelope
+```go
+func (r *LocalSeedRegistry) Resolve(seedID string) (Seed, bool)
+```
+
+## Service Interface
+
+```go
+type Seed interface {
+	Metadata() SeedMetadata
+	Execute(req SeedExecuteEnv) (SeedResultEnv, error)
+}
+```
+
+## Authority Interfaces
+
+```go
+type Mirage interface {
+	Appear(cfg MirageConfig) error
+	Shimmer() error
+	Seed(reg GhostSeedRegistry) error
+
+	Issue(issue IssueEnv) error
+	Reconcile(intentID string) ([]CommandEnv, error)
+	Report(intentID string) (ReportEnv, error)
 }
 ```
 
 ```go
-// Control loop snapshot (single intent)
-struct FlowSnapshot {
-  Issue       IssueEnvelope
-  Commands    []CommandEnvelope
-  SeedCalls   []SeedExecuteEnvelope
-  SeedResults []SeedResultEnvelope
-  Events      []EventEnvelope
-  Report      ReportEnvelope
+type Ghost interface {
+	Appear(cfg GhostConfig) error
+	Radiate() error
+	Seed(reg LocalSeedRegistry) error
+
+	Reconcile(command CommandEnv) (EventEnv, error)
+}
+```
+
+## State Ownership Shapes
+
+```go
+type DesiredState struct {
+	IntentID    string
+	Objective   string
+	TargetScope string
+}
+```
+
+```go
+type ExecutionState struct {
+	CommandID  string
+	SeedID     string
+	LastResult SeedResultEnv
+}
+```
+
+```go
+type ObservedState struct {
+	IntentID string
+	Events   []EventEnv
+}
+```
+
+```go
+type FlowSnapshot struct {
+	Issue       IssueEnv
+	Commands    []CommandEnv
+	SeedCalls   []SeedExecuteEnv
+	SeedResults []SeedResultEnv
+	Events      []EventEnv
+	Report      ReportEnv
 }
 ```

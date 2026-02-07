@@ -1,0 +1,35 @@
+
+[[ handshake_contract ]]
+metadata = [
+	name = "EdgeCTL Mirage-Ghost Handshake Contract"
+	version = "v1"
+	scope = "session start and registration sequence"
+]
+
+
+[[ sequence ]]
+steps = [
+	step_1 = "ghost dials mirage"
+	step_2 = "transport security handshake completes"
+	step_3 = "mirage binds peer identity to ghost_id"
+	step_4 = "ghost sends seed registration payload"
+	step_5 = "mirage acknowledges registration"
+	step_6 = "session enters ready state"
+]
+
+
+[[ required_registration_fields ]]
+fields = [
+	ghost_id = "required"
+	seed_list = "required"
+	seed_list_item = "id,name,description"
+]
+
+
+[[ failure_behavior ]]
+rules = [
+	identity_bind_failure = "close session"
+	registration_validation_failure = "reject registration and close session"
+	timeout_during_handshake = "close session"
+]
+
