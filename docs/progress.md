@@ -34,6 +34,23 @@ Status: `Done`
 - [x] `go test ./...` passes with skeletons
 - [x] Package docs describe ownership boundaries clearly
 
+## Phase 2 — Protocol Core (No Runtime Coupling)
+
+Status: `Done`
+
+### Tasks
+
+- [x] Implement fixed header + optional auth + TLV encoder/decoder
+- [x] Implement semantic schema validation layer
+- [x] Define schemas for all boundary envelopes
+- [x] Add tests: round-trip, malformed input, unknown fields, missing required fields
+
+### Acceptance Checks
+
+- [x] Protocol tests pass independently of Mirage/Ghost runtime
+- [x] Unknown fields preserved/ignored per contract
+- [x] Invalid wire data fails deterministically
+
 ## Baseline Contracts (Locked)
 
 - [x] Lock canonical vocabulary: `issue`, `command`, `seed.execute`, `seed.result`, `event`, `report`
@@ -41,28 +58,108 @@ Status: `Done`
 - [x] Lock required envelope fields and message type IDs
 - [x] Lock supporting contracts: transport security, handshake, reliability, errors, observability
 
-## Slice Status
+## Phase 3 — Seed Interface Layer
+
+**Status:** `Not Started`
+
+### Tasks
+
+- [ ] Define seed metadata contract: `id`, `name`, `description`
+- [ ] Implement seed registry API
+- [ ] Implement one deterministic seed (`flow`) returning stable results
+- [ ] Add tests for registry and seed action behavior
+
+### Acceptance Checks
+
+- [ ] Ghost can invoke seed actions locally with deterministic output
+- [ ] Seed metadata is available and validated
+
+- [x] 1. Lock seed interfaces in code (minimal, explicit)
+- [x] Define `SeedMetadata` with `id`, `name`, `description`
+- [ ] Define `Seed` interface with:
+- [x] `Metadata() SeedMetadata`
+- [x] `Execute(action string, args map[string]string) (SeedResult, error)`
+- [x] Define `SeedResult` with deterministic fields: `status`, `stdout`, `stderr`, `exit_code`
+
+- [ ] 2. Implement registry as pure in-memory contract
+- [ ] `Register(seed Seed) error` (reject duplicate `id`)
+- [ ] `Resolve(id string) (Seed, bool)`
+- [ ] `ListMetadata() []SeedMetadata` (stable sort by `id` for deterministic tests)
+- [ ] `ValidateMetadata(meta SeedMetadata) error` (non-empty fields + id format guard)
+
+- [ ] 3. Implement deterministic `flow` seed
+- [ ] Seed id: `seed.flow`
+- [ ] Supported action set:
+- [ ] `status` -> always success, stable stdout payload
+- [ ] `echo` -> returns deterministic render from `args` (canonical key ordering)
+- [ ] `step` -> deterministic pseudo-step output from fixed mapping
+- [ ] Unknown action -> deterministic error result (`status=error`, stable message, non-zero exit)
+
+- [ ] 4. Add unit tests (no runtime coupling)
+- [ ] Registry:
+- [ ] register success
+- [ ] duplicate register failure
+- [ ] resolve/list behavior
+- [ ] metadata validation failures
+- [ ] Flow seed:
+- [ ] metadata correctness
+- [ ] supported actions return byte-for-byte stable output
+- [ ] unknown action deterministic failure
+- [ ] arg-order independence test for `echo`
+
+- [ ] 5. Update progress tracking
+- [ ] Add Phase 3 section to `docs/progress.md` (mirror your checklist)
+- [ ] Mark items as they pass
+- [ ] Run `go test ./...` and close acceptance checks only when green
+
+## Why this shape is best
+
+- [ ] Keeps Phase 3 independent from transport/runtime orchestration.
+- [ ] Produces a stable local execution API for Phase 4 Ghost execution layer.
+- [ ] Gives deterministic fixtures you can reuse for protocol/e2e tests later.
+- [ ] Minimizes redesign risk by locking seed contracts before distributed wiring.
+
+## Suggested concrete file targets
+
+- [ ] `internal/seeds/types.go` (metadata/result/contracts)
+- [ ] `internal/seeds/registry.go` (registry + validation)
+- [ ] `internal/seeds/flow.go` (deterministic seed)
+- [ ] `internal/seeds/registry_test.go`
+- [ ] `internal/seeds/flow_test.go`
+- [ ] `docs/progress.md` (Phase 3 mirror + status)
+
+### Verify smplog interface is clean, and is able to run zerolog naked
+
+- [ ] No bugs in smplog
+- [ ] Add smplog output throughout all tests
+- [ ] Add smplog output to describe actions and state change for all functions
+- [ ] Everything happening should be logged via smplog
+- [ ] Use them like colors, rather than heuristical titles for nice output
+
+---
+
+# Slice Status
 
 - [x] Slice docs created: `transport`, `frame`, `tlv_codec`, `semantic_validation`, `mirage_reconcile`, `ghost_dispatch`, `observability`
-- [ ] Code implementation started under `internal/*`
+- [x] Code implementation started under `internal/*`
 
 ## Implementation Slices (Code)
 
 - [ ] 1. Transport package skeleton (`dial`, `listen`, session lifecycle, heartbeat hooks)
-- [ ] 2. Protocol frame codec (`header`, `read_frame`, `write_frame`)
-- [ ] 3. TLV codec (`encode_field`, `decode_fields`, typed getters)
-- [ ] 4. Semantic validation (`validate_by_message_type`)
+- [x] 2. Protocol frame codec (`header`, `read_frame`, `write_frame`)
+- [x] 3. TLV codec (`encode_field`, `decode_fields`, typed getters)
+- [x] 4. Semantic validation (`validate_by_message_type`)
 - [ ] 5. Mirage reconcile interfaces + in-memory stores
 - [ ] 6. Ghost command dispatch + seed registry execution path
 - [ ] 7. Structured logging/event schema (`component`, `peer`, `trace_id`, correlation IDs)
 
 ## MVP Build Plan
 
-- [ ] Milestone 1: Protocol core compiles
-- [ ] Implement `internal/protocol/frame` (header + frame reader/writer)
-- [ ] Implement `internal/protocol/tlv` (field reader/writer + typed accessors)
-- [ ] Implement `internal/protocol/semantic` (required field validation by `message_type`)
-- [ ] Add unit tests for malformed header, malformed tlv length, missing required fields
+- [x] Milestone 1: Protocol core compiles
+- [x] Implement `internal/protocol/frame` (header + frame reader/writer)
+- [x] Implement `internal/protocol/tlv` (field reader/writer + typed accessors)
+- [x] Implement `internal/protocol/semantic` (required field validation by `message_type`)
+- [x] Add unit tests for malformed header, malformed tlv length, missing required fields
 
 - [ ] Milestone 2: Session path works
 - [ ] Implement Ghost outbound session manager (`dial`, handshake, heartbeat, reconnect)
@@ -85,10 +182,10 @@ Status: `Done`
 
 ## Immediate Next Sprint
 
-- [ ] Create `internal/protocol/frame` package skeleton with tests
-- [ ] Create `internal/protocol/tlv` package skeleton with tests
-- [ ] Create `internal/protocol/semantic` package skeleton with tests
-- [ ] Define fixture vectors for one `issue` and one `command` frame
+- [x] Create `internal/protocol/frame` package skeleton with tests
+- [x] Create `internal/protocol/tlv` package skeleton with tests
+- [x] Create `internal/protocol/semantic` package skeleton with tests
+- [x] Define fixture vectors for one `issue` and one `command` frame
 
 ## Notes
 

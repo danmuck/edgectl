@@ -4,11 +4,6 @@ import "errors"
 
 var ErrSeedExists = errors.New("seed already exists")
 
-// Seed describes a single executable seed surface.
-type Seed interface {
-	ID() string
-}
-
 // Registry stores seeds by stable identifier.
 type Registry struct {
 	items map[string]Seed
@@ -21,7 +16,7 @@ func NewRegistry() *Registry {
 
 // Register adds a seed to the registry.
 func (r *Registry) Register(seed Seed) error {
-	id := seed.ID()
+	id := seed.Metadata().ID
 	if _, ok := r.items[id]; ok {
 		return ErrSeedExists
 	}
