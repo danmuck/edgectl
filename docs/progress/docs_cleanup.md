@@ -37,5 +37,5 @@ Status: `In Progress`
 - [x] Repository-level governance file added at `AGENTS.md` with canonical-source and change-control requirements.
 - [x] Package `doc.go` stubs updated to reference canonical contracts before implementation changes.
 - [x] Buildlog policy, naming scheme, and TOML template added under `docs/progress/buildlog/` with scope-based log rollover and follow-up append rules.
-- [ ] `2026-02-07` verification + implementation passes completed; `go test ./...` passes, P1 is closed, and P2 runtime now includes session primitives, minimal Mirage endpoint, Ghost client, config/policy wiring, and reconnect baseline tests. Remaining gaps: TLS/mTLS enforcement and final step-3 resilience scenarios (ack-timeout + replay-across-reconnect coverage).  
+- [ ] `2026-02-07` verification + implementation passes completed; `go test ./...` passes, P1 is closed, and P2 runtime now includes session primitives, minimal Mirage endpoint, Ghost client, config/policy wiring, reconnect baseline tests, and step-3 resilience scenarios (ack-timeout + replay-across-reconnect coverage). Remaining gap: TLS/mTLS enforcement.  
   Source: `p4_conformance_report.md`.

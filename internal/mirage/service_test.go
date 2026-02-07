@@ -133,3 +133,134 @@ func TestServiceRegistrationIdentityMismatchRejected(t *testing.T) {
 		t.Fatalf("serve exit err: %v", err)
 	}
 }
+
+func TestServiceEventAckReplayAcrossReconnect(t *testing.T) {
+	testlog.Start(t)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	cfg := DefaultServiceConfig()
+	cfg.RequireIdentityBinding = true
+	cfg.Session.ReadTimeout = 2 * time.Second
+	cfg.Session.WriteTimeout = 2 * time.Second
+	cfg.Session.HandshakeTimeout = 2 * time.Second
+	svc := NewServiceWithConfig(cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- svc.Serve(ctx, ln)
+	}()
+
+	clientCfg := ghost.MirageClientConfig{
+		Address:      ln.Addr().String(),
+		GhostID:      "ghost.alpha",
+		PeerIdentity: "ghost.alpha",
+		SeedList: []session.SeedInfo{
+			{ID: "seed.flow", Name: "Flow", Description: "Deterministic control-flow seed"},
+		},
+		Session: session.Config{
+			ConnectTimeout:   2 * time.Second,
+			HandshakeTimeout: 2 * time.Second,
+			ReadTimeout:      2 * time.Second,
+			WriteTimeout:     2 * time.Second,
+			AckTimeout:       3 * time.Second,
+			Backoff:          session.DefaultConfig().Backoff,
+		},
+	}
+	client, err := ghost.NewMirageClient(clientCfg)
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	connectCtxA, connectCancelA := context.WithTimeout(ctx, 3*time.Second)
+	defer connectCancelA()
+	gsA, err := client.ConnectAndRegister(connectCtxA)
+	if err != nil {
+		t.Fatalf("connect and register (A): %v", err)
+	}
+
+	event := ghost.EventEnv{
+		EventID:     "evt.reconnect.1",
+		CommandID:   "cmd.reconnect.1",
+		IntentID:    "intent.reconnect.1",
+		GhostID:     "ghost.alpha",
+		SeedID:      "seed.flow",
+		Outcome:     ghost.OutcomeSuccess,
+		TimestampMS: uint64(time.Now().UnixMilli()),
+	}
+	ackA, err := gsA.SendEventWithAck(connectCtxA, event)
+	if err != nil {
+		_ = gsA.Close()
+		t.Fatalf("send event (A): %v", err)
+	}
+	if err := gsA.Close(); err != nil {
+		t.Fatalf("close session (A): %v", err)
+	}
+
+	if !waitForGhostState(2*time.Second, 20*time.Millisecond, svc, "ghost.alpha", func(g RegisteredGhost) bool {
+		return !g.Connected && g.EventCount == 1
+	}) {
+		t.Fatalf("ghost state did not transition to disconnected with preserved event count")
+	}
+
+	connectCtxB, connectCancelB := context.WithTimeout(ctx, 3*time.Second)
+	defer connectCancelB()
+	gsB, err := client.ConnectAndRegister(connectCtxB)
+	if err != nil {
+		t.Fatalf("connect and register (B): %v", err)
+	}
+	defer gsB.Close()
+
+	ackB, err := gsB.SendEventWithAck(connectCtxB, event)
+	if err != nil {
+		t.Fatalf("send event replay (B): %v", err)
+	}
+	if ackA.AckStatus != ackB.AckStatus {
+		t.Fatalf("ack status mismatch across reconnect: a=%q b=%q", ackA.AckStatus, ackB.AckStatus)
+	}
+	if ackA.AckCode != ackB.AckCode {
+		t.Fatalf("ack code mismatch across reconnect: a=%d b=%d", ackA.AckCode, ackB.AckCode)
+	}
+	if ackA.TimestampMS != ackB.TimestampMS {
+		t.Fatalf("ack timestamp mismatch across reconnect: a=%d b=%d", ackA.TimestampMS, ackB.TimestampMS)
+	}
+
+	if !waitForGhostState(2*time.Second, 20*time.Millisecond, svc, "ghost.alpha", func(g RegisteredGhost) bool {
+		return g.Connected && g.EventCount == 1
+	}) {
+		t.Fatalf("ghost state did not preserve idempotent event count after replay")
+	}
+
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("serve exit err: %v", err)
+	}
+}
+
+func waitForGhostState(
+	timeout time.Duration,
+	interval time.Duration,
+	svc *Service,
+	ghostID string,
+	match func(RegisteredGhost) bool,
+) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		for _, g := range svc.SnapshotRegisteredGhosts() {
+			if g.GhostID == ghostID && match(g) {
+				return true
+			}
+		}
+		time.Sleep(interval)
+	}
+	for _, g := range svc.SnapshotRegisteredGhosts() {
+		if g.GhostID == ghostID && match(g) {
+			return true
+		}
+	}
+	return false
+}

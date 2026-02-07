@@ -38,6 +38,7 @@ type RegisteredGhost struct {
 	RegisteredAt time.Time
 	LastEventAt  time.Time
 	EventCount   uint64
+	Connected    bool
 }
 
 type registeredGhostState struct {
@@ -209,17 +210,27 @@ func (s *Service) handleRegistration(
 	}
 
 	registered := RegisteredGhost{
-		GhostID:      reg.GhostID,
-		RemoteAddr:   conn.RemoteAddr().String(),
-		SeedList:     copySeedList(reg.SeedList),
-		RegisteredAt: time.Now(),
+		GhostID:    reg.GhostID,
+		RemoteAddr: conn.RemoteAddr().String(),
+		SeedList:   copySeedList(reg.SeedList),
+		Connected:  true,
 	}
 
 	s.mu.Lock()
-	s.registry[reg.GhostID] = &registeredGhostState{
-		meta:       registered,
-		ackByEvent: make(map[string]session.EventAck),
+	state, ok := s.registry[reg.GhostID]
+	if !ok {
+		state = &registeredGhostState{
+			ackByEvent: make(map[string]session.EventAck),
+		}
+		s.registry[reg.GhostID] = state
 	}
+	if state.meta.RegisteredAt.IsZero() {
+		state.meta.RegisteredAt = time.Now()
+	}
+	registered.RegisteredAt = state.meta.RegisteredAt
+	registered.LastEventAt = state.meta.LastEventAt
+	registered.EventCount = state.meta.EventCount
+	state.meta = registered
 	s.mu.Unlock()
 
 	return reg, session.RegistrationAck{
@@ -274,7 +285,12 @@ func copySeedList(in []session.SeedInfo) []session.SeedInfo {
 func (s *Service) unregisterGhost(ghostID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.registry, ghostID)
+	state, ok := s.registry[ghostID]
+	if !ok {
+		return
+	}
+	state.meta.Connected = false
+	state.meta.RemoteAddr = ""
 }
 
 func (s *Service) trackConn(conn net.Conn) {

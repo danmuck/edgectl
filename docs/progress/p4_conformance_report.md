@@ -1,7 +1,7 @@
 # P4 Conformance Report
 
 Date: `2026-02-07`
-Pass: `docs cleanup conformance verify + P2 step1/step2 runtime implementation`
+Pass: `docs cleanup conformance verify + P2 step1/step2 runtime implementation + step3 resilience scenarios`
 
 Scope:
 - verify current code behavior against canonical protocol/design docs
@@ -33,6 +33,8 @@ Scope:
 - `PASS`: Ghost-side Mirage session client now supports connect/register retry and event delivery retry-until-ack.
 - `PASS`: Ghost service runtime is now wired behind explicit config/policy (`headless`, `auto`, `required`) to establish Mirage session registration during runtime.
 - `PASS`: reconnect/liveness baseline is implemented and tested (`auto` reconnect after Mirage restart, `required` policy startup failure when Mirage is unavailable).
+- `PASS`: explicit ack-timeout behavior is covered by integration test (`ErrAckTimeout` after retry-until-deadline against a no-ack endpoint).
+- `PASS`: duplicate event replay across reconnect now returns idempotent prior `event.ack` while preserving event count.
 - `PARTIAL`: full protocol/runtime conformance is not complete due to remaining security/runtime integration gaps.
 
 ## Conformance Gaps
@@ -44,16 +46,6 @@ Scope:
      - current Mirage/Ghost session implementation is TCP-only and does not enforce TLS/mTLS certificate-based identity.
    - Impact:
      - production-mode contract (`MUST` TLS + mTLS + peer identity binding) is not yet satisfied.
-
-2. `[P2] Remaining step-3 resilience scenarios are not fully covered`
-   - Contract:
-     - `docs/architecture/transport.md`
-     - `docs/architecture/definitions/handshake.toml`
-     - `docs/architecture/definitions/reliability.toml`
-   - Code:
-     - reconnect baseline exists, but scenario matrix is still incomplete: explicit ack-timeout failure handling and duplicate event replay behavior across reconnect are not yet covered by dedicated integration tests.
-   - Impact:
-     - runtime resilience coverage is strong but not exhaustive against all reliability contract cases.
 
 ## Closed In This Pass
 
@@ -68,8 +60,9 @@ Scope:
 - [x] Add integration coverage for registration acceptance/rejection and event.ack idempotency (`internal/mirage/service_test.go`).
 - [x] Wire Ghost service runtime to use Mirage session client behind config/policy (`internal/ghost/service.go`, `cmd/ghostctl/config.go`).
 - [x] Add reconnect/liveness service tests (`internal/ghost/service_test.go`) for auto reconnect on Mirage restart and required-policy failure on startup.
+- [x] Add explicit ack-timeout integration coverage in Ghost client runtime (`internal/ghost/mirage_client_test.go`).
+- [x] Preserve Mirage idempotency state across reconnect and verify replayed `event.ack` semantics (`internal/mirage/service.go`, `internal/mirage/service_test.go`).
 
 ## Recommended Fix Order
 
 - [ ] Add TLS/mTLS transport security enforcement and certificate-backed identity binding.
-- [ ] Add remaining step-3 integration scenarios (ack timeout, duplicate event replay across reconnect).
