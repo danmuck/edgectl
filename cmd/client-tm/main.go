@@ -25,6 +25,13 @@ const (
 	mirageConfigPath = "cmd/client-tm/mirage.toml"
 )
 
+var (
+	// ErrNavigateBack signals caller-intent to return to the previous menu.
+	ErrNavigateBack = errors.New("navigate back")
+	// ErrNavigateExit signals caller-intent to exit the interactive client.
+	ErrNavigateExit = errors.New("navigate exit")
+)
+
 // ghostConfigFile persists Ghost targets configured for the client.
 type ghostConfigFile struct {
 	ClearScreenAfterCommand bool                `toml:"clear_screen_after_command"`
@@ -156,8 +163,11 @@ func (a *App) Run() error {
 
 	for {
 		a.printMainMenu()
-		choice, err := a.promptInt("Choose", 1, 10)
+		choice, err := a.promptInt("Choose", 1, 10, false, true)
 		if err != nil {
+			if errors.Is(err, ErrNavigateExit) {
+				return a.exitClient()
+			}
 			return err
 		}
 		a.clearIfEnabled()
@@ -170,16 +180,31 @@ func (a *App) Run() error {
 			}
 		case 3:
 			if err := a.selectActiveTarget(); err != nil {
+				if errors.Is(err, ErrNavigateBack) {
+					continue
+				}
+				if errors.Is(err, ErrNavigateExit) {
+					return a.exitClient()
+				}
 				logs.Errf("select target failed: %v", err)
 			}
 		case 4:
 			a.showActiveTargetSummary()
 		case 5:
 			if err := a.runGhostAdminConsole(); err != nil {
+				if errors.Is(err, ErrNavigateExit) {
+					return a.exitClient()
+				}
 				logs.Errf("ghost admin console error: %v", err)
 			}
 		case 6:
 			if err := a.removeGhostTarget(); err != nil {
+				if errors.Is(err, ErrNavigateBack) {
+					continue
+				}
+				if errors.Is(err, ErrNavigateExit) {
+					return a.exitClient()
+				}
 				logs.Errf("remove target failed: %v", err)
 			}
 		case 7:
@@ -197,14 +222,19 @@ func (a *App) Run() error {
 				logs.Infof("config saved")
 			}
 		case 10:
-			if err := a.saveConfigs(); err != nil {
-				logs.Warnf("save on exit failed: %v", err)
-			}
-			a.closeTargets()
-			logs.Infof("client-tm exiting")
-			return nil
+			return a.exitClient()
 		}
 	}
+}
+
+// exitClient saves current config and closes active admin connections.
+func (a *App) exitClient() error {
+	if err := a.saveConfigs(); err != nil {
+		logs.Warnf("save on exit failed: %v", err)
+	}
+	a.closeTargets()
+	logs.Infof("client-tm exiting")
+	return nil
 }
 
 // loadOrInitConfigs loads persisted files and initializes runtime targets.
@@ -396,7 +426,7 @@ func (a *App) removeGhostTarget() error {
 		return errors.New("no targets to remove")
 	}
 	a.listTargets()
-	choice, err := a.promptInt("Remove target", 1, len(a.targets))
+	choice, err := a.promptInt("Remove target", 1, len(a.targets), true, true)
 	if err != nil {
 		return err
 	}
@@ -442,7 +472,7 @@ func (a *App) selectActiveTarget() error {
 		return errors.New("no targets available")
 	}
 	a.listTargets()
-	choice, err := a.promptInt("Select target", 1, len(a.targets))
+	choice, err := a.promptInt("Select target", 1, len(a.targets), true, true)
 	if err != nil {
 		return err
 	}
@@ -496,8 +526,11 @@ func (a *App) runGhostAdminConsole() error {
 		fmt.Println("  6) Protocol/message verification view")
 		fmt.Println("  7) Back")
 
-		choice, err := a.promptInt("Choose", 1, 7)
+		choice, err := a.promptInt("Choose", 1, 7, true, true)
 		if err != nil {
+			if errors.Is(err, ErrNavigateBack) {
+				return nil
+			}
 			return err
 		}
 		a.clearIfEnabled()
@@ -741,13 +774,28 @@ func (a *App) promptLine(label string) (string, error) {
 	return strings.TrimRight(line, "\r\n"), nil
 }
 
-func (a *App) promptInt(label string, min int, max int) (int, error) {
+func (a *App) promptInt(label string, min int, max int, allowBack bool, allowExit bool) (int, error) {
 	for {
-		line, err := a.promptLine(fmt.Sprintf("%s [%d-%d]", label, min, max))
+		rangePrompt := fmt.Sprintf("%s [%d-%d", label, min, max)
+		if allowBack {
+			rangePrompt += "|back"
+		}
+		if allowExit {
+			rangePrompt += "|exit"
+		}
+		rangePrompt += "]"
+		line, err := a.promptLine(rangePrompt)
 		if err != nil {
 			return 0, err
 		}
-		v, err := strconv.Atoi(strings.TrimSpace(line))
+		trimmed := strings.ToLower(strings.TrimSpace(line))
+		if allowBack && trimmed == "back" {
+			return 0, ErrNavigateBack
+		}
+		if allowExit && trimmed == "exit" {
+			return 0, ErrNavigateExit
+		}
+		v, err := strconv.Atoi(trimmed)
 		if err != nil || v < min || v > max {
 			fmt.Println("Invalid selection.")
 			continue
