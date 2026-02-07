@@ -158,7 +158,7 @@ Status: `In Progress`
 
 - [x] Lock Ghost execution flow in docs (`command -> seed.execute -> seed.result -> event`) and add/update a message-flow diagram in `docs/architecture/models/`
 - [x] Define minimal Ghost contracts in `internal/ghost` for executor, event emitter, and execution state with required correlation fields (`message_id`, `command_id`, `execution_id`, `trace_id`)
-- [ ] Implement Ghost command input boundary handler for `command` envelopes with Ghost-level semantic guards
+- [x] Implement Ghost command input boundary handler for `command` envelopes with Ghost-level semantic guards
 - [ ] Implement deterministic execution pipeline: resolve seed, execute action, normalize `seed.result`, emit terminal `event` (`success` or `error`)
 - [ ] Implement in-memory execution store keyed by `execution_id` and indexed by `command_id`
 - [ ] Add query methods for execution correlation (`GetExecution`, `GetByCommandID`)
