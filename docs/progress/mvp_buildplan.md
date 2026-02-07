@@ -1,4 +1,22 @@
-# MVP Build Plan and Slices
+# MVP Build Plan and Slices (Canonical)
+
+Status: `Phase 4 complete; Phase 5 in planning; Phases 6-9 templated`
+
+This is the canonical high-level schedule for `mvp_p0.md` through `mvp_p9.md`.
+Use phase files for detailed task execution and acceptance check tracking.
+
+## MVP Phase Schedule
+
+- [x] Phase 0: `mvp_p0.md`
+- [x] Phase 1: `mvp_p1.md`
+- [x] Phase 2: `mvp_p2.md`
+- [x] Phase 3: `mvp_p3.md`
+- [x] Phase 4: `mvp_p4.md`
+- [ ] Phase 5: `mvp_p5.md`
+- [ ] Phase 6: `mvp_p6.md`
+- [ ] Phase 7: `mvp_p7.md`
+- [ ] Phase 8: `mvp_p8.md`
+- [ ] Phase 9: `mvp_p9.md` (placeholder; scope to be restored)
 
 ## Slice Status
 
@@ -7,7 +25,7 @@
 
 ## Implementation Slices (Code)
 
-- [ ] 1. Transport package skeleton (`dial`, `listen`, session lifecycle, heartbeat hooks)
+- [x] 1. Transport/session baseline (`dial`, `listen`, session lifecycle, heartbeat hooks) via `internal/protocol/session` + Ghost/Mirage runtime wiring
 - [x] 2. Protocol frame codec (`header`, `read_frame`, `write_frame`)
 - [x] 3. TLV codec (`encode_field`, `decode_fields`, typed getters)
 - [x] 4. Semantic validation (`validate_by_message_type`)
@@ -23,24 +41,52 @@
 - [x] Implement `internal/protocol/semantic` (required field validation by `message_type`)
 - [x] Add unit tests for malformed header, malformed tlv length, missing required fields
 
-- [ ] Milestone 2: Session path works
-- [ ] Implement Ghost outbound session manager (`dial`, handshake, heartbeat, reconnect)
-- [ ] Implement Mirage inbound acceptor + identity binding to `ghost_id`
-- [ ] Implement registration handshake (`seed` payload + ack)
-- [ ] Add integration test for connect -> register -> ready
+- [x] Milestone 2: Session path works
+- [x] Implement Ghost outbound session manager (`dial`, handshake, heartbeat, reconnect)
+- [x] Implement Mirage inbound acceptor + identity binding to `ghost_id`
+- [x] Implement registration handshake (`seed` payload + ack)
+- [x] Add integration test for connect -> register -> ready
 
 - [ ] Milestone 3: Mirage single-intent orchestration loop works
 - [ ] Implement Mirage in-memory intent and observed stores
 - [ ] Implement Mirage minimal reconcile loop (single command target)
-- [ ] Implement Ghost command routing to seed registry and execution adapter
+- [x] Implement Ghost command routing to seed registry and execution adapter
 - [ ] Implement event emission and Mirage report generation
 - [ ] Add Mirage e2e test: `issue -> command -> seed.execute -> seed.result -> event -> report`
 
 - [ ] Milestone 4: MVP hardening gate
-- [ ] Add retry/backoff + idempotency behavior per `reliability.toml`
+- [x] Add retry/backoff + idempotency behavior per `reliability.toml`
 - [ ] Add structured logs per `observability.toml`
 - [ ] Add error mapping per `errors.toml`
-- [ ] Add failure-path tests (disconnect, duplicate IDs, timeout, validation failures)
+- [x] Add failure-path tests (disconnect, duplicate IDs, timeout, validation failures)
+
+- [ ] Milestone 5: Mirage orchestration loop baseline (`mvp_p5.md`)
+- [ ] Implement `issue` ingestion + desired-state persistence
+- [ ] Implement reconcile loop (single-ghost first)
+- [ ] Dispatch commands and ingest events into observed state
+- [ ] Emit `report` to user boundary
+- [ ] Enable Mirage local Ghost spin-up path
+
+- [ ] Milestone 6: Boundary transport integration (`mvp_p6.md`)
+- [ ] Bind control-plane links to protocol envelopes (not ad-hoc calls)
+- [ ] Replace direct action-style HTTP shortcuts between Mirage and Ghost
+- [ ] Wire optional auth block handling and validation hooks
+- [ ] Add contract tests for all boundaries
+
+- [ ] Milestone 7: End-to-end control loop validation (`mvp_p7.md`)
+- [ ] Add E2E scenario: intent -> command -> seed execution -> event -> report
+- [ ] Add deterministic logs for ownership transitions
+- [ ] Add E2E failure scenario with corrective behavior
+
+- [ ] Milestone 8: Hardening completion (`mvp_p8.md`)
+- [ ] Add idempotency strategy for repeated commands/events
+- [ ] Add duplicate/replay event handling
+- [ ] Add protocol version-compatibility behavior checks
+- [ ] Add timeout/retry policies and terminal error states
+
+- [ ] Milestone 9: MVP finalization (`mvp_p9.md`)
+- [ ] Recover original Phase 9 definition
+- [ ] Define MVP exit criteria and final release validation matrix
 
 ## Immediate Next Sprint
 
@@ -57,7 +103,11 @@
 
 ## Conformance Gaps From P4 Verify
 
-- [ ] Add `event.ack` message type and required field validation in `internal/protocol/schema`.
-- [ ] Add schema tests for valid/invalid `event.ack`.
-- [ ] Add frame unknown-flag rejection behavior and tests in `internal/protocol/frame`.
-- [ ] Close remaining runtime conformance gaps against transport/handshake/reliability contracts.
+- [x] Add `event.ack` message type and required field validation in `internal/protocol/schema`.
+- [x] Add schema tests for valid/invalid `event.ack`.
+- [x] Add frame unknown-flag rejection behavior and tests in `internal/protocol/frame`.
+- [x] Close remaining runtime conformance gaps against transport/handshake/reliability contracts.
+
+Current state:
+- P4 conformance transport/handshake/reliability baseline is closed (`docs/progress/p4_conformance_report.md`).
+- Remaining MVP gaps are Mirage Phase 5 orchestration concerns (`issue`/desired-state/reconcile/report).
