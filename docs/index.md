@@ -2,6 +2,11 @@
 
 This index is the navigation root for architecture and protocol documentation.
 
+## Normative Precedence
+
+- Source of truth is the canonical TOML contracts under `architecture/definitions/*.toml` and architecture diagrams under `architecture/models/*.mmd`.
+- Narrative markdown in this docs tree MUST remain consistent with those contracts and diagrams.
+
 ## Architecture
 
 - Control loop overview: [`architecture/control-loop.md`](architecture/control-loop.md)
@@ -14,6 +19,9 @@ This index is the navigation root for architecture and protocol documentation.
 ## Architecture Diagrams
 
 - Discovery and registration: [`architecture/models/discovery.mmd`](architecture/models/discovery.mmd)
+- Transport session lifecycle: [`architecture/models/transport_session_lifecycle.mmd`](architecture/models/transport_session_lifecycle.mmd)
+- Framing decoder pipeline: [`architecture/models/framing_decoder_pipeline.mmd`](architecture/models/framing_decoder_pipeline.mmd)
+- Locality-aware control loop: [`architecture/models/control_loop_locality.mmd`](architecture/models/control_loop_locality.mmd)
 - Single intent loop: [`architecture/models/single_intent.mmd`](architecture/models/single_intent.mmd)
 - Multi-ghost reconcile fanout: [`architecture/models/multi_ghost.mmd`](architecture/models/multi_ghost.mmd)
 - Decision model: [`architecture/models/decision_model.mmd`](architecture/models/decision_model.mmd)

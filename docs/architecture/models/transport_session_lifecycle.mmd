@@ -1,0 +1,14 @@
+sequenceDiagram
+    autonumber
+    participant Ghost
+    participant Mirage
+
+    Ghost->>Ghost: appear()
+    Ghost->>Ghost: seed(local registry, may be empty)
+    Ghost->>Ghost: radiate()
+    Ghost->>Mirage: TCP dial
+    Mirage-->>Ghost: accept
+    Ghost->>Mirage: TLS/mTLS handshake
+    Mirage->>Mirage: identity -> ghost_id mapping
+    Ghost->>Mirage: seed(registration payload)
+    Mirage->>Mirage: register ghost + seed registry

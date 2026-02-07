@@ -28,8 +28,9 @@ It builds on the architecture and protocol contracts.
 
 - Development mode MAY allow non-TLS transport behind explicit configuration.
 - Production mode MUST require TLS.
-- Production mode SHOULD require mTLS and peer identity binding to `ghost_id`.
+- Production mode MUST require mTLS and peer identity binding to `ghost_id`.
 - Mirage MUST reject sessions where authenticated peer identity does not map to the declared `ghost_id`.
+- Mirage MUST reject sessions before command/event flow when TLS succeeds but client certificate or identity binding validation fails.
 
 ## Session Lifecycle
 
@@ -41,23 +42,7 @@ It builds on the architecture and protocol contracts.
 - Mirage accepts session, validates identity, and associates peer with `ghost_id`.
 - Ghost registers seed surface through canonical registration flow (`seed`).
 - After registration, session is used for command/event exchange.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Ghost
-    participant Mirage
-
-    Ghost->>Ghost: appear()
-    Ghost->>Ghost: seed(local registry, may be empty)
-    Ghost->>Ghost: radiate()
-    Ghost->>Mirage: TCP dial
-    Mirage-->>Ghost: accept
-    Ghost->>Mirage: TLS/mTLS handshake
-    Mirage->>Mirage: identity -> ghost_id mapping
-    Ghost->>Mirage: seed(registration payload)
-    Mirage->>Mirage: register ghost + seed registry
-```
+- Session lifecycle diagram: [`models/transport_session_lifecycle.mmd`](models/transport_session_lifecycle.mmd)
 
 ## Failure Modes and Expected Behavior
 

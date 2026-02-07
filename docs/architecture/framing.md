@@ -45,20 +45,7 @@ Canonical flags:
 - Step 4: read payload bytes exactly (`payload_len`).
 - Step 5: decode TLV fields without semantic branching.
 - Step 6: validate semantic required fields by `message_type`.
-
-```mermaid
-flowchart LR
-    A["Read header bytes"] --> B{"magic/version valid?"}
-    B -- "No" --> X["Reject frame and close session"]
-    B -- "Yes" --> C{"payload_len <= max?"}
-    C -- "No" --> X
-    C -- "Yes" --> D["Read auth block if has_auth"]
-    D --> E["Read payload bytes"]
-    E --> F["Decode TLV fields"]
-    F --> G{"Required fields by message_type?"}
-    G -- "No" --> H["Reject message; emit protocol error"]
-    G -- "Yes" --> I["Dispatch to semantic handler"]
-```
+- Decoder pipeline diagram: [`models/framing_decoder_pipeline.mmd`](models/framing_decoder_pipeline.mmd)
 
 ## Normative Framing Rules
 

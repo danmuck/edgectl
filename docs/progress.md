@@ -185,9 +185,9 @@ Status: `Done`
 - [x] [P1 | Contract Parseability] Convert canonical definition files to valid TOML syntax
 - [x] [P1 | Compatibility Semantics] Resolve unknown-field/unknown-flag behavior mismatch (drop vs preserve)
 - [x] [P1 | Reliability Protocol Gap] Define event acknowledgment mechanism or revise retry-until-ack contract
-- [ ] [P2 | Security Policy Consistency] Align production mTLS requirement language (`MUST` vs `SHOULD`)
-- [ ] [P2 | Doc Path Correctness] Fix canonical definitions path reference in progress tracker
-- [ ] [P2 | Authority Boundary Clarity] Reconcile control-loop example with seed ownership model
+- [x] [P2 | Security Policy Consistency] Align production mTLS requirement language (`MUST` vs `SHOULD`)
+- [x] [P2 | Doc Path Correctness] Fix canonical definitions path reference in progress tracker
+- [x] [P2 | Authority Boundary Clarity] Reconcile control-loop example with seed ownership model
 - [ ] [P3 | Naming Consistency] Align diagram envelope names with canonical vocabulary (`seed.execute`, etc.)
 - [ ] [P3 | Progress Doc Hygiene] Remove/merge duplicate Phase 3 checklist blocks for unambiguous status tracking
 
@@ -196,6 +196,12 @@ Status: `Done`
 - [x] Canonical contract files under `docs/architecture/definitions/*.toml` were normalized to valid TOML while preserving existing diagram/comment content.
 - [x] Unknown handling policy was unified: unknown TLV fields are preserved as inert raw data and ignored semantically; unsupported flag bits are rejected.
 - [x] Reliability delivery closure was defined via `event.ack` with required fields, retry ownership, and idempotency keys (`event_id`).
+
+### P2 Completion Notes (2026-02-07)
+
+- [x] Security language aligned in transport contract: production now requires TLS + mTLS and strict pre-flow identity binding.
+- [x] Progress note path fixed to `architecture/definitions/*.toml`.
+- [x] Control-loop authority clarified: Mirage is orchestration-only; local critical seeds are hosted by a co-located local Ghost with shared network identity/locality metadata.
 
 ---
 
@@ -250,6 +256,6 @@ Status: `Done`
 
 ## Notes
 
-- Canonical contract tables and IDs live in `../architecture/definitions/*.toml`.
+- Canonical contract tables and IDs live in `architecture/definitions/*.toml`.
 - Glossary files provide copy/paste Go definitions and small implementation scaffolds.
 - `design.toml` is not modified without explicit user request.

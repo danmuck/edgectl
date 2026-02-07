@@ -1,0 +1,31 @@
+flowchart LR
+    U["User"]
+    I["Intent"]
+    R["Reconciliation"]
+    C["Command/Event Loop"]
+    S["State Update"]
+
+    subgraph M["Mirage (Orchestration Only)"]
+        MG["local_ghost_id + locality metadata"]
+    end
+
+    subgraph LG["Local Ghost (co-located with Mirage)"]
+        GR["raft-node seed"]
+    end
+
+    subgraph SEED["External Ghost Server"]
+        SM["mongodb seed"]
+    end
+
+    U --> I
+    I --> R
+    R --> C
+    C --> S
+    S --> R
+    MG -. "locality-aware target selection" .-> C
+
+    C -->|"Command: start/stop/configure"| SM
+    C -->|"Command: join/replicate"| GR
+
+    SM -->|"Event: status/health/metrics"| C
+    GR -->|"Event: term/leader/commit"| C
