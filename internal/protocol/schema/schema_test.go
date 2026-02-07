@@ -70,3 +70,74 @@ func TestValidateTypeMismatchDeterministic(t *testing.T) {
 		t.Fatalf("unexpected validation error: %+v", ve)
 	}
 }
+
+func TestValidateEventAckRequiredFields(t *testing.T) {
+	testlog.Start(t)
+	fields := []tlv.Field{
+		{ID: FieldEventID, Type: tlv.TypeString, Value: []byte("evt.1")},
+		{ID: FieldCommandID, Type: tlv.TypeString, Value: []byte("cmd.1")},
+		{ID: FieldGhostID, Type: tlv.TypeString, Value: []byte("ghost.1")},
+		{ID: FieldAckStatus, Type: tlv.TypeString, Value: []byte("accepted")},
+		{ID: FieldTimestampMS, Type: tlv.TypeU64, Value: []byte{0, 0, 0, 0, 0, 0, 0, 1}},
+	}
+	if err := Validate(MsgEventAck, fields); err != nil {
+		t.Fatalf("validate event.ack: %v", err)
+	}
+}
+
+func TestValidateEventAckMissingTimestampDeterministic(t *testing.T) {
+	testlog.Start(t)
+	fields := []tlv.Field{
+		{ID: FieldEventID, Type: tlv.TypeString, Value: []byte("evt.1")},
+		{ID: FieldCommandID, Type: tlv.TypeString, Value: []byte("cmd.1")},
+		{ID: FieldGhostID, Type: tlv.TypeString, Value: []byte("ghost.1")},
+		{ID: FieldAckStatus, Type: tlv.TypeString, Value: []byte("accepted")},
+	}
+	err := Validate(MsgEventAck, fields)
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	ve, ok := err.(ValidationError)
+	if !ok {
+		t.Fatalf("expected ValidationError, got %T", err)
+	}
+	if ve.FieldID != FieldTimestampMS || ve.Reason != "missing required field" {
+		t.Fatalf("unexpected validation error: %+v", ve)
+	}
+}
+
+func TestValidateSeedExecuteUsesCanonicalFieldIDs(t *testing.T) {
+	testlog.Start(t)
+	fields := []tlv.Field{
+		{ID: FieldExecutionID, Type: tlv.TypeString, Value: []byte("exec.1")},
+		{ID: FieldCommandID, Type: tlv.TypeString, Value: []byte("cmd.1")},
+		{ID: FieldSeedID, Type: tlv.TypeString, Value: []byte("seed.flow")},
+		{ID: FieldSeedExecuteOperation, Type: tlv.TypeString, Value: []byte("status")},
+		{ID: FieldSeedExecuteArgs, Type: tlv.TypeBytes, Value: []byte("{}")},
+	}
+	if err := Validate(MsgSeedExecute, fields); err != nil {
+		t.Fatalf("validate seed.execute: %v", err)
+	}
+}
+
+func TestValidateSeedExecuteLegacyFieldIDsRejected(t *testing.T) {
+	testlog.Start(t)
+	fields := []tlv.Field{
+		{ID: FieldExecutionID, Type: tlv.TypeString, Value: []byte("exec.1")},
+		{ID: FieldCommandID, Type: tlv.TypeString, Value: []byte("cmd.1")},
+		{ID: FieldSeedID, Type: tlv.TypeString, Value: []byte("seed.flow")},
+		{ID: FieldOperation, Type: tlv.TypeString, Value: []byte("status")},
+		{ID: FieldArgs, Type: tlv.TypeBytes, Value: []byte("{}")},
+	}
+	err := Validate(MsgSeedExecute, fields)
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	ve, ok := err.(ValidationError)
+	if !ok {
+		t.Fatalf("expected ValidationError, got %T", err)
+	}
+	if ve.FieldID != FieldSeedExecuteOperation || ve.Reason != "missing required field" {
+		t.Fatalf("unexpected validation error: %+v", ve)
+	}
+}

@@ -22,6 +22,8 @@ Status: `Done`
 
 ## Post-Phase-4 MVP Steps
 
+- [ ] Complete the protocol/runtime conformance checklist from `docs/progress/p4_conformance_report.md` before Mirage session implementation work
+- [ ] Add required local `config.toml` boot config for `ghostctl` and `miragectl` as the next task after conformance closure; each process requires colocated network-routing + identity bootstrap config, defaults support auto-connect or headless Ghost startup with later manual Mirage attach, and empty Ghost bootstrap must allow remote seed config/install transfer to bring fresh nodes online
 - [ ] Add Mirage↔Ghost session wiring (connect/register/ready) while preserving protocol/runtime boundaries
 - [ ] Implement single-intent loop end-to-end (`issue -> command -> seed.execute -> seed.result -> event -> report`)
 - [ ] Add failure-path tests (disconnect, timeout, duplicate IDs, validation failures) before MVP tag

@@ -16,6 +16,7 @@ const (
 	MsgEvent       uint32 = 5
 	MsgReport      uint32 = 6
 	MsgError       uint32 = 7
+	MsgEventAck    uint32 = 8
 )
 
 // Field IDs from tlv contract.
@@ -25,6 +26,7 @@ const (
 	FieldExecutionID uint16 = 3
 	FieldEventID     uint16 = 4
 	FieldPhase       uint16 = 5
+	FieldTimestampMS uint16 = 6
 
 	FieldActor       uint16 = 100
 	FieldTargetScope uint16 = 101
@@ -35,7 +37,9 @@ const (
 	FieldOperation    uint16 = 202
 	FieldArgs         uint16 = 203
 
-	FieldSeedID uint16 = 300
+	FieldSeedID               uint16 = 300
+	FieldSeedExecuteOperation uint16 = 301
+	FieldSeedExecuteArgs      uint16 = 302
 
 	FieldStatus   uint16 = 400
 	FieldStdout   uint16 = 401
@@ -46,6 +50,9 @@ const (
 
 	FieldSummary         uint16 = 600
 	FieldCompletionState uint16 = 601
+
+	FieldAckStatus uint16 = 700
+	FieldAckCode   uint16 = 701
 )
 
 type Requirement struct {
@@ -84,8 +91,8 @@ var requirements = map[uint32][]Requirement{
 		{FieldExecutionID, tlv.TypeString},
 		{FieldCommandID, tlv.TypeString},
 		{FieldSeedID, tlv.TypeString},
-		{FieldOperation, tlv.TypeString},
-		{FieldArgs, tlv.TypeBytes},
+		{FieldSeedExecuteOperation, tlv.TypeString},
+		{FieldSeedExecuteArgs, tlv.TypeBytes},
 	},
 	MsgSeedResult: {
 		{FieldExecutionID, tlv.TypeString},
@@ -108,6 +115,13 @@ var requirements = map[uint32][]Requirement{
 		{FieldPhase, tlv.TypeString},
 		{FieldSummary, tlv.TypeString},
 		{FieldCompletionState, tlv.TypeString},
+	},
+	MsgEventAck: {
+		{FieldEventID, tlv.TypeString},
+		{FieldCommandID, tlv.TypeString},
+		{FieldGhostID, tlv.TypeString},
+		{FieldAckStatus, tlv.TypeString},
+		{FieldTimestampMS, tlv.TypeU64},
 	},
 }
 

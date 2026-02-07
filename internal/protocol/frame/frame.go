@@ -10,18 +10,24 @@ import (
 )
 
 const (
-	FixedHeaderLen uint16 = 32
-	FlagHasAuth    uint32 = 0x01
-	FlagIsResponse uint32 = 0x02
-	FlagIsError    uint32 = 0x04
+	FixedHeaderLen  uint16 = 32
+	ProtocolMagic   uint32 = 0xEDCE1001
+	ProtocolVersion uint16 = 1
+	FlagHasAuth     uint32 = 0x01
+	FlagIsResponse  uint32 = 0x02
+	FlagIsError     uint32 = 0x04
+	SupportedFlags  uint32 = FlagHasAuth | FlagIsResponse | FlagIsError
 )
 
 var (
-	ErrShortHeader       = errors.New("frame: short fixed header")
-	ErrHeaderLenTooSmall = errors.New("frame: header_len smaller than fixed header")
-	ErrHeaderLenMismatch = errors.New("frame: auth present but header_len has no auth bytes")
-	ErrPayloadTooLarge   = errors.New("frame: payload too large")
-	ErrAuthTooLarge      = errors.New("frame: auth too large")
+	ErrShortHeader        = errors.New("frame: short fixed header")
+	ErrHeaderLenTooSmall  = errors.New("frame: header_len smaller than fixed header")
+	ErrHeaderLenMismatch  = errors.New("frame: auth present but header_len has no auth bytes")
+	ErrPayloadTooLarge    = errors.New("frame: payload too large")
+	ErrAuthTooLarge       = errors.New("frame: auth too large")
+	ErrUnsupportedMagic   = errors.New("frame: unsupported magic")
+	ErrUnsupportedVersion = errors.New("frame: unsupported version")
+	ErrUnsupportedFlags   = errors.New("frame: unsupported flags")
 )
 
 // Header is the fixed wire header.
@@ -143,6 +149,16 @@ func WriteFrame(w io.Writer, f Frame, limits Limits) error {
 	}
 
 	h := f.Header
+	if h.Magic == 0 {
+		h.Magic = ProtocolMagic
+	}
+	if h.Version == 0 {
+		h.Version = ProtocolVersion
+	}
+	if h.Flags&^SupportedFlags != 0 {
+		logs.Errf("frame.WriteFrame unsupported flags=0x%08X", h.Flags)
+		return fmt.Errorf("%w: flags=0x%08X", ErrUnsupportedFlags, h.Flags)
+	}
 	h.HeaderLen = FixedHeaderLen + uint16(authLen)
 	h.PayloadLen = payloadLen
 	if authLen > 0 {
@@ -204,6 +220,18 @@ func DecodeHeader(b []byte) (Header, error) {
 		MessageType: binary.BigEndian.Uint32(b[16:20]),
 		Flags:       binary.BigEndian.Uint32(b[20:24]),
 		PayloadLen:  binary.BigEndian.Uint64(b[24:32]),
+	}
+	if h.Magic != ProtocolMagic {
+		logs.Errf("frame.DecodeHeader unsupported magic=0x%08X", h.Magic)
+		return Header{}, fmt.Errorf("%w: magic=0x%08X", ErrUnsupportedMagic, h.Magic)
+	}
+	if h.Version != ProtocolVersion {
+		logs.Errf("frame.DecodeHeader unsupported version=%d", h.Version)
+		return Header{}, fmt.Errorf("%w: version=%d", ErrUnsupportedVersion, h.Version)
+	}
+	if h.Flags&^SupportedFlags != 0 {
+		logs.Errf("frame.DecodeHeader unsupported flags=0x%08X", h.Flags)
+		return Header{}, fmt.Errorf("%w: flags=0x%08X", ErrUnsupportedFlags, h.Flags)
 	}
 	logs.Debugf("frame.DecodeHeader ok message_id=%d message_type=%d", h.MessageID, h.MessageType)
 	return h, nil

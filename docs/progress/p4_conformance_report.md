@@ -25,52 +25,14 @@ Scope:
 - `PASS`: canonical docs are parseable and navigable.
 - `PASS`: package `doc.go` stubs include canonical references.
 - `PASS`: unknown TLV fields are decoded and preserved as inert data in the protocol path.
-- `PARTIAL`: framing checks exist for short/malformed headers and auth/payload sizing.
-- `FAIL`: full protocol/runtime conformance is not complete.
+- `PASS`: schema now includes `event.ack` message type and required-field validation.
+- `PASS`: `seed.execute` schema field IDs now match canonical TLV IDs (`301`, `302`).
+- `PASS`: frame decode now rejects unsupported `magic`, `version`, and unknown flag bits.
+- `PARTIAL`: full protocol/runtime conformance is not complete due to pending transport/session runtime behavior.
 
 ## Conformance Gaps
 
-1. `[P1] Missing event acknowledgment message type in schema`
-   - Contract:
-     - `docs/architecture/definitions/tlv.toml` defines `"event.ack" = "8"` in message types.
-   - Code:
-     - `internal/protocol/schema/schema.go` has no `MsgEventAck` constant and no requirement entry for message type `8`.
-   - Impact:
-     - documented `event -> event.ack` delivery closure cannot be validated by schema.
-
-2. `[P1] Missing event acknowledgment fields in schema constants/validation`
-   - Contract:
-     - `docs/architecture/definitions/tlv.toml` defines `ack_status = "700:string"`, `ack_code = "701:u32"`, and requires `timestamp_ms` for `event.ack`.
-   - Code:
-     - `internal/protocol/schema/schema.go` has no `FieldAckStatus`, `FieldAckCode`, or `FieldTimestampMS`, and no `event.ack` required-field validation.
-   - Impact:
-     - ack acceptance/rejection semantics are undocumented in executable schema behavior.
-
-3. `[P1] seed.execute field IDs do not match canonical TLV contract`
-   - Contract:
-     - `docs/architecture/definitions/tlv.toml` assigns `seed.execute.operation = 301`, `seed.execute.args = 302`.
-   - Code:
-     - `internal/protocol/schema/schema.go` validates `MsgSeedExecute` using `FieldOperation = 202` and `FieldArgs = 203` (command field IDs).
-   - Impact:
-     - a canonical `seed.execute` payload can fail semantic validation.
-
-4. `[P1] Frame decoder does not reject unsupported flag bits`
-   - Contract:
-     - `docs/architecture/definitions/protocol.toml` and `docs/architecture/framing.md` require unknown flag-bit rejection.
-   - Code:
-     - `internal/protocol/frame/frame.go` has no supported-flag mask check in `DecodeHeader`/`ReadFrame`.
-   - Impact:
-     - non-canonical flag combinations can be accepted.
-
-5. `[P1] Frame decoder does not validate magic/version`
-   - Contract:
-     - `docs/architecture/framing.md` requires rejecting unknown `magic` and unsupported `version`.
-   - Code:
-     - `internal/protocol/frame/frame.go` decodes `Magic` and `Version` but never validates them.
-   - Impact:
-     - incompatible peer frames are not rejected at framing boundary.
-
-6. `[P2] Transport session, handshake, and retry/ack runtime behavior is still pending`
+1. `[P2] Transport session, handshake, and retry/ack runtime behavior is still pending`
    - Contract:
      - `docs/architecture/transport.md`
      - `docs/architecture/definitions/handshake.toml`
@@ -81,9 +43,14 @@ Scope:
    - Impact:
      - normative connection, identity bind, registration ack, and event retry/ack behavior are not yet enforced by runtime.
 
+## Closed In This Pass
+
+- [x] Add `event.ack` message type + required fields in schema (`internal/protocol/schema/schema.go`).
+- [x] Add schema tests for valid/invalid `event.ack` and canonical `seed.execute` field IDs (`internal/protocol/schema/schema_test.go`).
+- [x] Correct `MsgSeedExecute` field IDs (`operation=301`, `args=302`) in schema requirements.
+- [x] Add frame validation for `magic`, `version`, and unknown flag bits (`internal/protocol/frame/frame.go`).
+- [x] Add deterministic frame tests for magic/version/flag rejection (`internal/protocol/frame/frame_test.go`).
+
 ## Recommended Fix Order
 
-- [ ] Add `event.ack` message type + field constants + required-field validation in `internal/protocol/schema`.
-- [ ] Correct `MsgSeedExecute` field IDs (`operation=301`, `args=302`) and add deterministic schema tests.
-- [ ] Add framing validation for `magic`, `version`, and unknown flag bits, plus tests.
 - [ ] Implement Mirage<->Ghost handshake/session and reliability contracts.
