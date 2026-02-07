@@ -1,38 +1,33 @@
+[error_contract]
 
-[[ error_contract ]]
-metadata = [
-	name = "EdgeCTL Error Taxonomy Contract"
-	version = "v1"
-	scope = "wire, decode, semantic, and runtime errors"
-]
+[error_contract.metadata]
+name = "EdgeCTL Error Taxonomy Contract"
+version = "v1"
+scope = "wire, decode, semantic, and runtime errors"
 
+[classes]
 
-[[ classes ]]
-fields = [
-	transport = "connect, handshake, disconnect"
-	framing = "header invalid, length invalid, oversize"
-	tlv_decode = "field type/length invalid"
-	semantic = "missing required field, invalid message_type"
-	runtime = "seed execution failure, internal failure"
-]
+[classes.fields]
+transport = "connect, handshake, disconnect"
+framing = "header invalid, length invalid, oversize"
+tlv_decode = "field type/length invalid"
+semantic = "missing required field, invalid message_type"
+runtime = "seed execution failure, internal failure"
 
+[wire_codes]
 
-[[ wire_codes ]]
-fields = [
-	transport_failure = "1000"
-	framing_invalid_header = "1100"
-	framing_oversize = "1101"
-	tlv_decode_failure = "1200"
-	semantic_validation_failure = "1300"
-	runtime_execution_failure = "1400"
-	internal_error = "1500"
-]
+[wire_codes.fields]
+transport_failure = "1000"
+framing_invalid_header = "1100"
+framing_oversize = "1101"
+tlv_decode_failure = "1200"
+semantic_validation_failure = "1300"
+runtime_execution_failure = "1400"
+internal_error = "1500"
 
+[behavior]
 
-[[ behavior ]]
-rules = [
-	recoverable_error = "emit error envelope when safe"
-	stream_unsafety = "close session"
-	error_log_fields = "component,peer,message_id,message_type,error_code"
-]
-
+[behavior.rules]
+recoverable_error = "emit error envelope when safe"
+stream_unsafety = "close session"
+error_log_fields = "component,peer,message_id,message_type,error_code"

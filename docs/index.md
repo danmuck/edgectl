@@ -9,6 +9,7 @@ This index is the navigation root for architecture and protocol documentation.
 - Protocol/package boundary contract: [`architecture/definitions/protocol.toml`](architecture/definitions/protocol.toml)
 - Mirage-Ghost transport contract: [`architecture/transport.md`](architecture/transport.md)
 - Mirage-Ghost framing contract: [`architecture/framing.md`](architecture/framing.md)
+- TLV protocol guide (implementation behavior): [`architecture/tlv.md`](architecture/tlv.md)
 
 ## Architecture Diagrams
 
@@ -24,7 +25,6 @@ This index is the navigation root for architecture and protocol documentation.
 - Definitions and canonical vocabulary: [`glossary/definitions.md`](glossary/definitions.md)
 - Object and interface shapes: [`glossary/shapes.md`](glossary/shapes.md)
 - Envelope Go shapes: [`glossary/envelopes.md`](glossary/envelopes.md)
-- TLV protocol guide (implementation behavior): [`glossary/tlv.md`](glossary/tlv.md)
 - Glossary slice index: [`glossary/README.md`](glossary/README.md)
 - Progress tracker: [`progress.md`](progress.md)
 - Transport slice definitions: [`glossary/transport.md`](glossary/transport.md)
@@ -59,7 +59,7 @@ This index is the navigation root for architecture and protocol documentation.
 9. [`architecture/definitions/reliability.toml`](architecture/definitions/reliability.toml)
 10. [`architecture/definitions/errors.toml`](architecture/definitions/errors.toml)
 11. [`architecture/definitions/observability.toml`](architecture/definitions/observability.toml)
-12. [`glossary/tlv.md`](glossary/tlv.md)
+12. [`architecture/tlv.md`](architecture/tlv.md)
 13. [`glossary/shapes.md`](glossary/shapes.md)
 14. [`progress.md`](progress.md)
 15. [`glossary/transport.md`](glossary/transport.md)

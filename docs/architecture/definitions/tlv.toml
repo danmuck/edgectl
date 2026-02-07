@@ -1,93 +1,95 @@
+[tlv_contract]
 
-[[ tlv_contract ]]
-metadata = [
-	name    = "EdgeCTL TLV Contract"
-	version = "v1"
-	scope   = "mirage-ghost control-plane payload fields"
-	format  = "flat tlv over framed binary transport"
+[tlv_contract.metadata]
+name = "EdgeCTL TLV Contract"
+version = "v1"
+scope = "mirage-ghost control-plane payload fields"
+format = "flat tlv over framed binary transport"
+
+[primitive_types]
+
+[primitive_types.fields]
+u8 = "1"
+u16 = "2"
+u32 = "3"
+u64 = "4"
+bool = "5"
+string = "6"
+bytes = "7"
+
+[message_types]
+
+[message_types.fields]
+issue = "1"
+command = "2"
+"seed.execute" = "3"
+"seed.result" = "4"
+event = "5"
+report = "6"
+error = "7"
+"event.ack" = "8"
+
+[field_sections]
+
+[field_sections.common]
+intent_id = "1:string"
+command_id = "2:string"
+execution_id = "3:string"
+event_id = "4:string"
+phase = "5:string"
+timestamp_ms = "6:u64"
+
+[field_sections.issue]
+actor = "100:string"
+target_scope = "101:string"
+objective = "102:string"
+
+[field_sections.command]
+ghost_id = "200:string"
+seed_selector = "201:string"
+operation = "202:string"
+args = "203:bytes"
+
+[field_sections."seed.execute"]
+seed_id = "300:string"
+operation = "301:string"
+args = "302:bytes"
+
+[field_sections."seed.result"]
+status = "400:string"
+stdout = "401:bytes"
+stderr = "402:bytes"
+exit_code = "403:u32"
+
+[field_sections.event]
+outcome = "500:string"
+
+[field_sections."event.ack"]
+ack_status = "700:string"
+ack_code = "701:u32"
+
+[field_sections.report]
+summary = "600:string"
+completion_state = "601:string"
+
+[required_fields]
+issue = "intent_id, actor, target_scope, objective"
+command = "command_id, intent_id, ghost_id, seed_selector, operation"
+"seed.execute" = "execution_id, command_id, seed_id, operation, args"
+"seed.result" = "execution_id, seed_id, status, stdout, stderr, exit_code"
+event = "event_id, command_id, intent_id, ghost_id, seed_id, outcome"
+"event.ack" = "event_id, command_id, ghost_id, ack_status, timestamp_ms"
+report = "intent_id, phase, summary, completion_state"
+
+[decoder_parser_rules]
+decoder = [
+  "decode tlv fields without message_type branching",
+  "reject malformed lengths",
+  "preserve unknown field_id values for re-encode",
 ]
-
-
-[[ primitive_types ]]
-fields = [
-	u8     = "1"
-	u16    = "2"
-	u32    = "3"
-	u64    = "4"
-	bool   = "5"
-	string = "6"
-	bytes  = "7"
-]
-
-
-[[ message_types ]]
-fields = [
-	issue       = "1"
-	command     = "2"
-	seed.execute = "3"
-	seed.result  = "4"
-	event       = "5"
-	report      = "6"
-	error       = "7"
-]
-
-
-[[ field_sections ]]
-common = [
-	intent_id    = "1:string"
-	command_id   = "2:string"
-	execution_id = "3:string"
-	event_id     = "4:string"
-	phase        = "5:string"
-	timestamp_ms = "6:u64"
-]
-issue = [
-	actor        = "100:string"
-	target_scope = "101:string"
-	objective    = "102:string"
-]
-command = [
-	ghost_id      = "200:string"
-	seed_selector = "201:string"
-	operation     = "202:string"
-	args          = "203:bytes"
-]
-seed.execute = [
-	seed_id   = "300:string"
-	operation = "301:string"
-	args      = "302:bytes"
-]
-seed.result = [
-	status    = "400:string"
-	stdout    = "401:bytes"
-	stderr    = "402:bytes"
-	exit_code = "403:u32"
-]
-event = [
-	outcome = "500:string"
-]
-report = [
-	summary          = "600:string"
-	completion_state = "601:string"
-]
-
-
-[[ required_fields ]]
-issue        = "intent_id, actor, target_scope, objective"
-command      = "command_id, intent_id, ghost_id, seed_selector, operation"
-seed.execute = "execution_id, command_id, seed_id, operation, args"
-seed.result  = "execution_id, seed_id, status, stdout, stderr, exit_code"
-event        = "event_id, command_id, intent_id, ghost_id, seed_id, outcome"
-report       = "intent_id, phase, summary, completion_state"
-
-
-[[ decoder_parser_rules ]]
-rules = [
-	decoder  = "decode tlv fields without message_type branching"
-	decoder  = "reject malformed lengths"
-	decoder  = "preserve unknown field_id values for re-encode"
-	decoder  = "ignore unknown flags"
-	semantic = "use message_type to validate required fields"
-	semantic = "map known fields into typed envelope structs"
-	semantic = "ignore unknown fields"
+semantic = [
+  "use message_type to validate required fields",
+  "map known fields into typed envelope structs",
+  "ignore unknown fields",
+  "unknown fields must never alter executable operation selection",
 ]

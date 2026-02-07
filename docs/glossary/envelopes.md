@@ -95,6 +95,23 @@ type EventEnv struct {
 func (e EventEnv) Validate() error
 ```
 
+## Event Ack Envelope (Mirage -> Ghost)
+
+```go
+type EventAckEnv struct {
+	EventID     string
+	CommandID   string
+	GhostID     string
+	AckStatus   string
+	AckCode     uint32
+	TimestampMS uint64
+}
+```
+
+```go
+func (e EventAckEnv) Validate() error
+```
+
 ## Report Envelope (Mirage -> User)
 
 ```go

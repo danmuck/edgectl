@@ -9,7 +9,7 @@ It is transport-agnostic above an ordered byte stream, and is expected to run ov
 - Protocol boundary contract: [`definitions/protocol.toml`](definitions/protocol.toml)
 - Canonical definitions: [`../glossary/definitions.md`](../glossary/definitions.md)
 - Object and interface shapes: [`../glossary/shapes.md`](../glossary/shapes.md)
-- TLV field contract: [`../glossary/tlv.md`](../glossary/tlv.md)
+- TLV field contract: [`tlv.md`](tlv.md)
 
 ## Frame Model
 
@@ -64,11 +64,13 @@ flowchart LR
 
 - Receiver MUST reject unsupported protocol `version`.
 - Receiver MUST reject unknown `magic`.
+- Receiver MUST reject frames with unsupported flag bits.
 - Receiver MUST reject payloads above configured maximum frame size.
 - Receiver MUST reject malformed TLV field lengths.
 - Receiver MUST decode TLV before semantic envelope parsing.
 - Semantic parser MUST ignore unknown field IDs.
-- Unknown field IDs SHOULD be preserved for pass-through/re-encode where applicable.
+- Unknown field IDs MUST be preserved as inert raw data for observability/re-encode paths.
+- Unknown field IDs MUST NOT influence operation selection or execution behavior.
 - Receiver MUST treat `message_id` as session-scoped unique correlation key.
 
 ## Error and Logging Contract

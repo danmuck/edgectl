@@ -1,14 +1,14 @@
 # EdgeCTL TLV Protocol Guide
 
-This file documents how to implement and use the TLV protocol contract defined in [`../architecture/definitions/tlv.toml`](../architecture/definitions/tlv.toml).
+This file documents how to implement and use the TLV protocol contract defined in [`definitions/tlv.toml`](definitions/tlv.toml).
 It intentionally avoids duplicating numeric/type tables from TOML.
 
 ## References
 
-- Canonical TLV contract: [`../architecture/definitions/tlv.toml`](../architecture/definitions/tlv.toml)
-- Wire/header contract: [`../architecture/definitions/protocol.toml`](../architecture/definitions/protocol.toml)
-- Canonical envelope vocabulary: [`definitions.md`](definitions.md)
-- Envelope shapes: [`envelopes.md`](envelopes.md)
+- Canonical TLV contract: [`definitions/tlv.toml`](definitions/tlv.toml)
+- Wire/header contract: [`definitions/protocol.toml`](definitions/protocol.toml)
+- Canonical envelope vocabulary: [`../glossary/definitions.md`](../glossary/definitions.md)
+- Envelope shapes: [`../glossary/envelopes.md`](../glossary/envelopes.md)
 
 ## Purpose
 
@@ -43,7 +43,8 @@ It intentionally avoids duplicating numeric/type tables from TOML.
 - Decoder MUST parse TLV fields without branching on `message_type` during binary decode.
 - Decoder MUST reject malformed field lengths.
 - Decoder MUST produce a raw field map/list before semantic validation.
-- Decoder SHOULD preserve unknown fields in raw form for observability and re-encode paths.
+- Decoder MUST preserve unknown fields in raw form for observability and re-encode paths.
+- Decoder MUST treat unknown fields as inert data only.
 
 ## Semantic Validation Behavior
 
@@ -51,6 +52,7 @@ It intentionally avoids duplicating numeric/type tables from TOML.
 - Semantic parser MUST enforce the required field set for that message type from `definitions/tlv.toml`.
 - Semantic parser MUST type-check each required field against its declared primitive type.
 - Semantic parser MUST ignore unknown fields for forward compatibility.
+- Semantic parser MUST derive execution behavior only from known, allowlisted fields and operations.
 - Semantic parser MUST return deterministic validation errors for missing required fields or type mismatch.
 
 ## Correlation and Traceability
@@ -66,8 +68,8 @@ It intentionally avoids duplicating numeric/type tables from TOML.
 
 ## Compatibility Rules
 
-- Unknown fields: decode and ignore semantically unless promoted by a newer contract version.
-- Unknown flags: follow protocol-level behavior from `definitions/protocol.toml`.
+- Unknown fields: preserve raw bytes, ignore semantically unless promoted by a newer contract version.
+- Unknown flags: reject frame when any unsupported bit is set.
 - Reuse of existing field IDs for different meanings in the same version is NOT allowed.
 - New fields MUST be additive and MUST NOT break older required field sets.
 

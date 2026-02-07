@@ -9,7 +9,7 @@ It builds on the architecture and protocol contracts.
 - Protocol boundary contract: [`definitions/protocol.toml`](definitions/protocol.toml)
 - Canonical definitions: [`../glossary/definitions.md`](../glossary/definitions.md)
 - Envelope shapes: [`../glossary/envelopes.md`](../glossary/envelopes.md)
-- TLV contract: [`../glossary/tlv.md`](../glossary/tlv.md)
+- TLV contract: [`tlv.md`](tlv.md)
 
 ## Scope
 

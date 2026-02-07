@@ -41,7 +41,7 @@ This file is the canonical vocabulary for Phase 0 (Contract Freeze).
 ## Chain of Custody
 
 - Canonical flow:
-  - `User -> Mirage(issue.intent) -> Ghost(command) -> Seed(seed.execute) -> Ghost(seed.result -> event) -> Mirage(report) -> User`
+  - `User -> Mirage(issue.intent) -> Ghost(command) -> Seed(seed.execute) -> Ghost(seed.result -> event) -> Mirage(event.ack, report) -> User`
 
 ## Control-Plane Interfaces (Canonical Envelope Names)
 
@@ -60,6 +60,9 @@ This file is the canonical vocabulary for Phase 0 (Contract Freeze).
 - `event`:
   - Ghost -> Mirage
   - observed state delta from execution
+- `event.ack`:
+  - Mirage -> Ghost
+  - event delivery acknowledgment (`accepted` or `rejected`)
 - `report`:
   - Mirage -> User
   - reconciled status/progress summary
@@ -118,7 +121,7 @@ This file is the canonical vocabulary for Phase 0 (Contract Freeze).
 ## Naming Rules
 
 - Use `Mirage`, `Ghost`, `Seed` as role names (capitalized) in docs.
-- Use `issue`, `command`, `seed.execute`, `seed.result`, `event`, `report` as canonical envelope names.
+- Use `issue`, `command`, `seed.execute`, `seed.result`, `event`, `event.ack`, `report` as canonical envelope names.
 - Do not substitute synonyms (`task`, `job`, `action-event`, etc.) for canonical envelope names.
 - Prefer `intent_id`, `command_id`, `event_id`, `execution_id` for correlation keys.
 
@@ -126,6 +129,7 @@ This file is the canonical vocabulary for Phase 0 (Contract Freeze).
 
 - `command` is Mirage->Ghost, not User->Mirage.
 - `event` is Ghost->Mirage, not Seed->Mirage directly.
+- `event.ack` is Mirage->Ghost delivery closure for `event`.
 - `seed.result` is Seed->Ghost internal boundary output.
 - `report` is Mirage->User summary, not raw execution output.
 

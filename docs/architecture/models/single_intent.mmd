@@ -17,6 +17,7 @@ sequenceDiagram
 
         Seed-->>Ghost: result(stdout/stderr/status)
         Ghost-->>Mirage: event(observed state delta)
+        Mirage-->>Ghost: event.ack(accepted|rejected)
 
         Mirage->>Mirage: update observed state
         Mirage-->>User: report(progress/outcome)

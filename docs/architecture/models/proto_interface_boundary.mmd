@@ -9,6 +9,7 @@ flowchart LR
 
     M -->|"command(CommandEnvelope)"| G
     G -->|"event(EventEnvelope)"| M
+    M -->|"event.ack(EventAckEnvelope)"| G
 
     G -->|"execute(SeedCommandEnvelope)"| S
     S -->|"result(SeedResultEnvelope)"| G
