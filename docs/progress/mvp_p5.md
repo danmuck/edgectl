@@ -1,6 +1,6 @@
 # MVP Progress — Phase 5 (Mirage Orchestration Layer)
 
-Status: `Not Started`
+Status: `In Progress`
 
 ## Phase Goal
 
@@ -8,9 +8,10 @@ Status: `Not Started`
 
 ## Tasks (Buildplan-Aligned)
 
-- [ ] Define `issue` ingestion contract and desired-state persistence model
-- [ ] Implement `issue` ingestion path and desired-state store (in-memory first)
-- [ ] Implement reconcile loop (single-ghost first)
+- [ ] Define the Mirage server controller, similar to ghosts
+- [x] Define `issue` ingestion contract and desired-state persistence model
+- [x] Implement `issue` ingestion path and desired-state store (in-memory first)
+- [x] Implement reconcile loop (single-ghost first)
 - [ ] Dispatch protocol command envelopes and ingest protocol event envelopes into observed state
 - [ ] Emit `report` to user boundary with explicit desired vs observed transitions
 - [ ] Mirage must be able to spin up local Ghost servers
