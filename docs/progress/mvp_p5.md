@@ -15,6 +15,7 @@ Status: `In Progress`
 - [ ] Dispatch protocol command envelopes and ingest protocol event envelopes into observed state
 - [ ] Emit `report` to user boundary with explicit desired vs observed transitions
 - [ ] Mirage must be able to spin up local Ghost servers
+- [x] Introduce Mirage server boundary (`internal/mirage/server.go`) for lifecycle + orchestration command boundary ownership
 - [ ] Update architecture/message-flow diagrams in `docs/architecture/models` for Phase 5 behavior
 
 ### Acceptance Checks

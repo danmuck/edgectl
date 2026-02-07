@@ -144,6 +144,12 @@ type seedLock struct {
 	CommandID string
 }
 
+// OrchestratorSnapshot summarizes desired/observed store sizes.
+type OrchestratorSnapshot struct {
+	IntentCount   int
+	ObservedCount int
+}
+
 // NewOrchestrator returns an empty Mirage orchestration loop with in-memory stores.
 func NewOrchestrator() *Orchestrator {
 	return &Orchestrator{
@@ -151,6 +157,16 @@ func NewOrchestrator() *Orchestrator {
 		observed:  make(map[string]*ObservedIntent),
 		executors: make(map[string]CommandExecutor),
 		seedLocks: make(map[string]seedLock),
+	}
+}
+
+// Snapshot returns aggregate desired/observed store counters.
+func (o *Orchestrator) Snapshot() OrchestratorSnapshot {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	return OrchestratorSnapshot{
+		IntentCount:   len(o.desired),
+		ObservedCount: len(o.observed),
 	}
 }
 

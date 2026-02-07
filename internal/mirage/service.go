@@ -64,9 +64,10 @@ type peerAuth struct {
 type Service struct {
 	cfg ServiceConfig
 
-	mu       sync.RWMutex
-	registry map[string]*registeredGhostState
-	conns    map[net.Conn]struct{}
+	server *Server
+
+	connsMu sync.Mutex
+	conns   map[net.Conn]struct{}
 }
 
 // Mirage service constructor using default configuration.
@@ -81,16 +82,31 @@ func NewServiceWithConfig(cfg ServiceConfig) *Service {
 	}
 	cfg.Session = cfg.Session.WithDefaults()
 	return &Service{
-		cfg:      cfg,
-		registry: make(map[string]*registeredGhostState),
-		conns:    make(map[net.Conn]struct{}),
+		cfg:    cfg,
+		server: NewServer(),
+		conns:  make(map[net.Conn]struct{}),
 	}
+}
+
+// Server returns the Mirage lifecycle/orchestration boundary owner.
+func (s *Service) Server() *Server {
+	return s.server
 }
 
 // Mirage runtime entrypoint that blocks until signal shutdown.
 func (s *Service) Run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	if err := s.server.Appear(MirageConfig{MirageID: "mirage.local"}); err != nil {
+		return err
+	}
+	if err := s.server.Shimmer(); err != nil {
+		return err
+	}
+	if err := s.server.Seed(); err != nil {
+		return err
+	}
 
 	if err := s.cfg.Session.ValidateServerTransport(); err != nil {
 		return err
@@ -143,15 +159,7 @@ func (s *Service) Serve(ctx context.Context, ln net.Listener) error {
 
 // Mirage snapshot of observed Ghost registration state.
 func (s *Service) SnapshotRegisteredGhosts() []RegisteredGhost {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := make([]RegisteredGhost, 0, len(s.registry))
-	for _, state := range s.registry {
-		meta := state.meta
-		meta.SeedList = copySeedList(meta.SeedList)
-		out = append(out, meta)
-	}
-	return out
+	return s.server.SnapshotRegisteredGhosts()
 }
 
 // Mirage connection handler for registration and event ingestion.
@@ -176,7 +184,7 @@ func (s *Service) handleConn(conn net.Conn) {
 		return
 	}
 	logs.Infof("mirage.handleConn registered ghost_id=%q peer=%q", reg.GhostID, conn.RemoteAddr().String())
-	defer s.unregisterGhost(reg.GhostID)
+	defer s.server.MarkGhostDisconnected(reg.GhostID)
 
 	if err := conn.SetDeadline(time.Time{}); err != nil {
 		logs.Warnf("mirage.handleConn clear deadline err=%v", err)
@@ -202,7 +210,7 @@ func (s *Service) handleConn(conn net.Conn) {
 			logs.Warnf("mirage.handleConn decode event err=%v", err)
 			return
 		}
-		ack := s.acceptEvent(reg.GhostID, event)
+		ack := s.server.AcceptEvent(reg.GhostID, event)
 		ackPayload, err := session.EncodeEventAckFrame(fr.Header.MessageID, ack)
 		if err != nil {
 			logs.Warnf("mirage.handleConn encode event.ack err=%v", err)
@@ -284,37 +292,7 @@ func (s *Service) handleRegistration(
 		}
 	}
 
-	registered := RegisteredGhost{
-		GhostID:    reg.GhostID,
-		RemoteAddr: conn.RemoteAddr().String(),
-		SeedList:   copySeedList(reg.SeedList),
-		Connected:  true,
-	}
-
-	s.mu.Lock()
-	state, ok := s.registry[reg.GhostID]
-	if !ok {
-		state = &registeredGhostState{
-			ackByEvent: make(map[string]session.EventAck),
-		}
-		s.registry[reg.GhostID] = state
-	}
-	if state.meta.RegisteredAt.IsZero() {
-		state.meta.RegisteredAt = time.Now()
-	}
-	registered.RegisteredAt = state.meta.RegisteredAt
-	registered.LastEventAt = state.meta.LastEventAt
-	registered.EventCount = state.meta.EventCount
-	state.meta = registered
-	s.mu.Unlock()
-
-	return reg, session.RegistrationAck{
-		Status:      session.AckStatusAccepted,
-		Code:        0,
-		Message:     "registered",
-		GhostID:     reg.GhostID,
-		TimestampMS: now,
-	}
+	return reg, s.server.UpsertRegistration(conn.RemoteAddr().String(), reg)
 }
 
 // Mirage transport-auth helper enforcing TLS/mTLS and extracting peer identity.
@@ -400,38 +378,6 @@ func (s *Service) serverTLSConfig() (*tls.Config, error) {
 	return cfg, nil
 }
 
-// Mirage event-ingest handler returning deterministic idempotent event.ack.
-func (s *Service) acceptEvent(ghostID string, event session.Event) session.EventAck {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	state, ok := s.registry[ghostID]
-	if !ok {
-		state = &registeredGhostState{
-			meta: RegisteredGhost{
-				GhostID:      ghostID,
-				RegisteredAt: time.Now(),
-			},
-			ackByEvent: make(map[string]session.EventAck),
-		}
-		s.registry[ghostID] = state
-	}
-	if ack, ok := state.ackByEvent[event.EventID]; ok {
-		return ack
-	}
-	ack := session.EventAck{
-		EventID:     event.EventID,
-		CommandID:   event.CommandID,
-		GhostID:     ghostID,
-		AckStatus:   session.AckStatusAccepted,
-		AckCode:     0,
-		TimestampMS: uint64(time.Now().UnixMilli()),
-	}
-	state.ackByEvent[event.EventID] = ack
-	state.meta.LastEventAt = time.Now()
-	state.meta.EventCount++
-	return ack
-}
-
 // Mirage helper that returns a defensive copy of registered seed descriptors.
 func copySeedList(in []session.SeedInfo) []session.SeedInfo {
 	if len(in) == 0 {
@@ -442,36 +388,24 @@ func copySeedList(in []session.SeedInfo) []session.SeedInfo {
 	return out
 }
 
-// Mirage disconnect marker that retains observed ghost state.
-func (s *Service) unregisterGhost(ghostID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	state, ok := s.registry[ghostID]
-	if !ok {
-		return
-	}
-	state.meta.Connected = false
-	state.meta.RemoteAddr = ""
-}
-
 // Mirage connection-tracking add operation for coordinated shutdown.
 func (s *Service) trackConn(conn net.Conn) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.connsMu.Lock()
+	defer s.connsMu.Unlock()
 	s.conns[conn] = struct{}{}
 }
 
 // Mirage connection-tracking remove operation after connection teardown.
 func (s *Service) untrackConn(conn net.Conn) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.connsMu.Lock()
+	defer s.connsMu.Unlock()
 	delete(s.conns, conn)
 }
 
 // Mirage shutdown helper that closes and drains tracked active connections.
 func (s *Service) closeAllConns() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.connsMu.Lock()
+	defer s.connsMu.Unlock()
 	for conn := range s.conns {
 		_ = conn.Close()
 		delete(s.conns, conn)

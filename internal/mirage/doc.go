@@ -1,6 +1,8 @@
 // Package mirage owns orchestration concerns.
 //
 // Ownership boundary:
+// - lifecycle control (appear -> shimmer -> seed)
+//
 // - desired-state ingestion
 //
 // - reconciliation planning
