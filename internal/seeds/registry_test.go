@@ -16,6 +16,10 @@ func (f fakeSeed) Metadata() SeedMetadata {
 	return f.meta
 }
 
+func (f fakeSeed) Operations() []OperationSpec {
+	return []OperationSpec{{Name: "status", Description: "fake status", Idempotent: true}}
+}
+
 func (f fakeSeed) Execute(action string, args map[string]string) (SeedResult, error) {
 	return SeedResult{Status: "ok", ExitCode: 0}, nil
 }

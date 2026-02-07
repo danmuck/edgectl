@@ -15,8 +15,16 @@ type SeedResult struct {
 	ExitCode int32
 }
 
+// OperationSpec defines one supported seed action.
+type OperationSpec struct {
+	Name        string
+	Description string
+	Idempotent  bool
+}
+
 // Seed is the seed execution boundary used by Ghost-local dispatch.
 type Seed interface {
 	Metadata() SeedMetadata
+	Operations() []OperationSpec
 	Execute(action string, args map[string]string) (SeedResult, error)
 }

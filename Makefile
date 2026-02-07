@@ -1,33 +1,25 @@
 .PHONY: \
 	clear \
-	cls \
 	test \
-	test-clear \
 	test-ghost \
 	test-protocol \
 	test-seeds \
 	test-one \
-	test-one-clear \
 	test-list \
 	run-mirage \
-	run-ghost \
-	run-mirage-clear \
-	run-ghost-clear
+	run-ghost
 
 PKG ?= ./internal/ghost
 TEST ?= .
+CLEAR_CMD ?= clear
 
 clear:
-	@clear || printf '\033[2J\033[H'
-
-cls: clear
+	@$(CLEAR_CMD)
 
 ### TEST
 test:
 	go clean -testcache
 	go test -v ./...
-
-test-clear: clear test
 
 test-ghost:
 	go test -v ./internal/ghost
@@ -41,8 +33,6 @@ test-seeds:
 test-one:
 	go test -v $(PKG) -run '$(TEST)'
 
-test-one-clear: clear test-one
-
 test-list:
 	go test $(PKG) -list .
 
@@ -52,7 +42,3 @@ run-mirage:
 
 run-ghost:
 	go run ./cmd/ghostctl
-
-run-mirage-clear: clear run-mirage
-
-run-ghost-clear: clear run-ghost

@@ -29,6 +29,14 @@ func (s FlowSeed) Metadata() SeedMetadata {
 	}
 }
 
+func (s FlowSeed) Operations() []OperationSpec {
+	return []OperationSpec{
+		{Name: "status", Description: "deterministic health/status response", Idempotent: true},
+		{Name: "echo", Description: "deterministic argument echo", Idempotent: true},
+		{Name: "step", Description: "deterministic pseudo-step mapping", Idempotent: true},
+	}
+}
+
 func (s FlowSeed) Execute(action string, args map[string]string) (SeedResult, error) {
 	logs.Debugf("seeds.FlowSeed.Execute action=%q args=%d", action, len(args))
 	switch action {

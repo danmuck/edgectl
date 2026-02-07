@@ -37,6 +37,7 @@ It builds on the architecture and protocol contracts.
 - Ghost performs `seed` registration preparation before serving.
 - Ghost may seed an empty registry and still become ready.
 - Ghost transitions to serving state (`radiate`) only after `seed`.
+- Ghost MAY remain in standalone serving mode without an active Mirage session.
 - Mirage accepts session, validates identity, and associates peer with `ghost_id`.
 - Ghost registers seed surface through canonical registration flow (`seed`).
 - After registration, session is used for command/event exchange.

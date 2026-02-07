@@ -8,6 +8,7 @@
 // Lifecycle order:
 // - appear -> seed -> radiate
 // - radiate may run with an empty seeded registry.
+// - standalone runtime does not require Mirage to be connected.
 //
 // Ghost does not own desired state.
 //
