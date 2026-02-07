@@ -1,4 +1,7 @@
+local_ghost_id = "ghost.local"
+local_ghost_admin_addr = "127.0.0.1:7010"
+
 [[targets]]
 name = "local-mirage"
-addr = "127.0.0.1:7020"
+addr = "127.0.0.1:7001"
 mirage_id = "mirage.local"

@@ -50,9 +50,11 @@ type ghostTargetConfig struct {
 	GhostID string `toml:"ghost_id"`
 }
 
-// mirageConfigFile reserves future Mirage target wiring.
+// mirageConfigFile persists one Mirage control-plane target plus local Ghost linkage.
 type mirageConfigFile struct {
-	Targets []mirageTargetConfig `toml:"targets"`
+	Targets             []mirageTargetConfig `toml:"targets"`
+	LocalGhostID        string               `toml:"local_ghost_id"`
+	LocalGhostAdminAddr string               `toml:"local_ghost_admin_addr"`
 }
 
 type mirageTargetConfig struct {
@@ -363,6 +365,19 @@ func (a *App) loadOrInitConfigs() error {
 		})
 		needsSave = true
 	}
+	if len(a.mirageCfg.Targets) > 1 {
+		logs.Warnf("client-tm mirage config has %d targets; only first target is supported", len(a.mirageCfg.Targets))
+		a.mirageCfg.Targets = a.mirageCfg.Targets[:1]
+		needsSave = true
+	}
+	if strings.TrimSpace(a.mirageCfg.LocalGhostID) == "" {
+		a.mirageCfg.LocalGhostID = "ghost.local"
+		needsSave = true
+	}
+	if strings.TrimSpace(a.mirageCfg.LocalGhostAdminAddr) == "" {
+		a.mirageCfg.LocalGhostAdminAddr = "127.0.0.1:7010"
+		needsSave = true
+	}
 	for i, cfg := range a.ghostCfg.Targets {
 		name := strings.TrimSpace(cfg.Name)
 		addr := strings.TrimSpace(cfg.Addr)
@@ -388,28 +403,27 @@ func (a *App) loadOrInitConfigs() error {
 	if len(a.targets) > 0 {
 		a.activeTarget = 0
 	}
-	for i, cfg := range a.mirageCfg.Targets {
-		name := strings.TrimSpace(cfg.Name)
-		addr := strings.TrimSpace(cfg.Addr)
-		if name == "" || addr == "" {
-			continue
-		}
-		mirageID := strings.TrimSpace(cfg.MirageID)
-		admin := NewRemoteMirageAdmin(addr)
-		if mirageID == "" {
-			if status, err := admin.Status(); err == nil && strings.TrimSpace(status.MirageID) != "" {
-				mirageID = strings.TrimSpace(status.MirageID)
-			} else {
-				mirageID = "mirage.local"
-			}
-			a.mirageCfg.Targets[i].MirageID = mirageID
-			needsSave = true
-		}
-		a.mirageTargets = append(a.mirageTargets, MirageTarget{
-			Name:  name,
-			Admin: admin,
-		})
+	cfg := a.mirageCfg.Targets[0]
+	name := strings.TrimSpace(cfg.Name)
+	addr := strings.TrimSpace(cfg.Addr)
+	if name == "" || addr == "" {
+		return errors.New("mirage config requires non-empty target name and addr")
 	}
+	mirageID := strings.TrimSpace(cfg.MirageID)
+	admin := NewRemoteMirageAdmin(addr)
+	if mirageID == "" {
+		if status, err := admin.Status(); err == nil && strings.TrimSpace(status.MirageID) != "" {
+			mirageID = strings.TrimSpace(status.MirageID)
+		} else {
+			mirageID = "mirage.local"
+		}
+		a.mirageCfg.Targets[0].MirageID = mirageID
+		needsSave = true
+	}
+	a.mirageTargets = append(a.mirageTargets, MirageTarget{
+		Name:  name,
+		Admin: admin,
+	})
 	if len(a.mirageTargets) > 0 {
 		a.activeMirage = 0
 	}
@@ -463,7 +477,7 @@ func (a *App) printMainMenu() {
 func (a *App) runMirageClientLoop() error {
 	for {
 		a.printMirageMenu()
-		choice, err := a.promptInt("Choose", 1, 9, false, true)
+		choice, err := a.promptInt("Choose", 1, 8, false, true)
 		if err != nil {
 			if errors.Is(err, ErrNavigateExit) {
 				return a.exitClient()
@@ -473,47 +487,37 @@ func (a *App) runMirageClientLoop() error {
 		a.clearIfEnabled()
 		switch choice {
 		case 1:
-			a.listMirageTargets()
+			a.showMirageControlPlaneConfig()
 		case 2:
-			if err := a.addMirageTarget(); err != nil {
-				logs.Errf("add mirage target failed: %v", err)
-			}
-		case 3:
-			if err := a.selectActiveMirageTarget(); err != nil {
-				if errors.Is(err, ErrNavigateBack) {
-					continue
-				}
-				if errors.Is(err, ErrNavigateExit) {
-					return a.exitClient()
-				}
-				logs.Errf("select mirage target failed: %v", err)
-			}
-		case 4:
 			if err := a.showActiveMirageSummary(); err != nil {
 				logs.Errf("show mirage summary failed: %v", err)
 			}
-		case 5:
+		case 3:
 			if err := a.runMirageAdminConsole(); err != nil {
 				if errors.Is(err, ErrNavigateExit) {
 					return a.exitClient()
 				}
 				logs.Errf("mirage admin console error: %v", err)
 			}
-		case 6:
+		case 4:
 			if err := a.showMirageConnectedGhosts(); err != nil {
 				logs.Errf("show connected ghosts failed: %v", err)
 			}
-		case 7:
-			if err := a.openConnectedGhostConsole(); err != nil {
-				logs.Errf("open connected ghost console failed: %v", err)
+		case 5:
+			if err := a.openLocalGhostConsole(); err != nil {
+				logs.Errf("open local ghost console failed: %v", err)
 			}
-		case 8:
+		case 6:
+			a.clearScreen = !a.clearScreen
+			a.ghostCfg.ClearScreenAfterCommand = a.clearScreen
+			logs.Infof("clear_screen_after_command=%v", a.clearScreen)
+		case 7:
 			if err := a.saveConfigs(); err != nil {
 				logs.Errf("save failed: %v", err)
 			} else {
 				logs.Infof("config saved")
 			}
-		case 9:
+		case 8:
 			return a.exitClient()
 		}
 	}
@@ -523,17 +527,16 @@ func (a *App) printMirageMenu() {
 	fmt.Println()
 	fmt.Println("Client TM (Mirage)")
 	fmt.Printf("  ghost config:  %s (targets=%d)\n", a.ghostCfgPath, len(a.ghostCfg.Targets))
-	fmt.Printf("  mirage config: %s (targets=%d)\n", a.mirageCfgPath, len(a.mirageCfg.Targets))
+	fmt.Printf("  mirage config: %s (single control plane)\n", a.mirageCfgPath)
 	fmt.Printf("  clear screen after command: %v\n", a.clearScreen)
-	fmt.Println("  1) List mirage targets")
-	fmt.Println("  2) Add mirage target (persist)")
-	fmt.Println("  3) Select active mirage target")
-	fmt.Println("  4) Show active mirage summary")
-	fmt.Println("  5) Mirage admin console")
-	fmt.Println("  6) Show connected ghosts")
-	fmt.Println("  7) Open connected ghost admin console")
-	fmt.Println("  8) Save configs")
-	fmt.Println("  9) Exit")
+	fmt.Println("  1) Show mirage control-plane config")
+	fmt.Println("  2) Show mirage status")
+	fmt.Println("  3) Mirage admin console")
+	fmt.Println("  4) Show connected ghosts")
+	fmt.Println("  5) Open local ghost admin console")
+	fmt.Println("  6) Toggle clear-screen")
+	fmt.Println("  7) Save configs")
+	fmt.Println("  8) Exit")
 }
 
 func (a *App) activeMirageTarget() (MirageTarget, bool) {
@@ -543,91 +546,18 @@ func (a *App) activeMirageTarget() (MirageTarget, bool) {
 	return a.mirageTargets[a.activeMirage], true
 }
 
-func (a *App) listMirageTargets() {
-	fmt.Println()
-	fmt.Println("Mirage Targets")
-	if len(a.mirageTargets) == 0 {
-		fmt.Println("  (none)")
+func (a *App) showMirageControlPlaneConfig() {
+	target, ok := a.activeMirageTarget()
+	if !ok {
+		fmt.Println("No configured mirage target.")
 		return
 	}
-	for i := range a.mirageTargets {
-		target := a.mirageTargets[i]
-		marker := " "
-		if a.activeMirage == i {
-			marker = "*"
-		}
-		status, err := target.Admin.Status()
-		if err != nil {
-			fmt.Printf("  %s [%d] %s addr=%s (status err: %v)\n", marker, i+1, target.Name, target.Admin.Address(), err)
-			continue
-		}
-		fmt.Printf(
-			"  %s [%d] %s addr=%s mirage_id=%s phase=%s ghosts=%d intents=%d reports=%d\n",
-			marker,
-			i+1,
-			target.Name,
-			target.Admin.Address(),
-			status.MirageID,
-			status.Phase,
-			status.RegisteredGhosts,
-			status.ActiveIntents,
-			status.ReportCount,
-		)
-	}
-}
-
-func (a *App) addMirageTarget() error {
-	nameRaw, err := a.promptLine("Mirage target name")
-	if err != nil {
-		return err
-	}
-	addrRaw, err := a.promptLine("Mirage admin addr (host:port)")
-	if err != nil {
-		return err
-	}
-	name := strings.TrimSpace(nameRaw)
-	addr := strings.TrimSpace(addrRaw)
-	if name == "" || addr == "" {
-		return errors.New("name and addr are required")
-	}
-	if _, _, err := net.SplitHostPort(addr); err != nil {
-		return fmt.Errorf("invalid mirage admin addr %q", addr)
-	}
-	for _, cfg := range a.mirageCfg.Targets {
-		if strings.EqualFold(strings.TrimSpace(cfg.Name), name) || strings.EqualFold(strings.TrimSpace(cfg.Addr), addr) {
-			return fmt.Errorf("mirage target exists name=%q addr=%q", name, addr)
-		}
-	}
-	admin := NewRemoteMirageAdmin(addr)
-	mirageID := "mirage.local"
-	if status, err := admin.Status(); err == nil && strings.TrimSpace(status.MirageID) != "" {
-		mirageID = strings.TrimSpace(status.MirageID)
-	}
-	a.mirageCfg.Targets = append(a.mirageCfg.Targets, mirageTargetConfig{
-		Name:     name,
-		Addr:     addr,
-		MirageID: mirageID,
-	})
-	a.mirageTargets = append(a.mirageTargets, MirageTarget{Name: name, Admin: admin})
-	if a.activeMirage < 0 {
-		a.activeMirage = 0
-	}
-	logs.Infof("mirage target added name=%q addr=%q mirage_id=%q", name, addr, mirageID)
-	return a.saveConfigs()
-}
-
-func (a *App) selectActiveMirageTarget() error {
-	if len(a.mirageTargets) == 0 {
-		return errors.New("no mirage targets available")
-	}
-	a.listMirageTargets()
-	choice, err := a.promptInt("Select mirage target", 1, len(a.mirageTargets), true, true)
-	if err != nil {
-		return err
-	}
-	a.activeMirage = choice - 1
-	logs.Infof("active mirage target set name=%q", a.mirageTargets[a.activeMirage].Name)
-	return nil
+	fmt.Println()
+	fmt.Println("Mirage Control-Plane Config")
+	fmt.Printf("  mirage name:        %s\n", target.Name)
+	fmt.Printf("  mirage admin addr:  %s\n", target.Admin.Address())
+	fmt.Printf("  local ghost id:     %s\n", strings.TrimSpace(a.mirageCfg.LocalGhostID))
+	fmt.Printf("  local ghost admin:  %s\n", strings.TrimSpace(a.mirageCfg.LocalGhostAdminAddr))
 }
 
 func (a *App) showActiveMirageSummary() error {
@@ -647,6 +577,8 @@ func (a *App) showActiveMirageSummary() error {
 	fmt.Printf("  ghosts:    %d\n", status.RegisteredGhosts)
 	fmt.Printf("  intents:   %d\n", status.ActiveIntents)
 	fmt.Printf("  reports:   %d\n", status.ReportCount)
+	fmt.Printf("  local_ghost_id:    %s\n", strings.TrimSpace(a.mirageCfg.LocalGhostID))
+	fmt.Printf("  local_ghost_admin: %s\n", strings.TrimSpace(a.mirageCfg.LocalGhostAdminAddr))
 	return nil
 }
 
@@ -680,58 +612,32 @@ func (a *App) showMirageConnectedGhosts() error {
 	return nil
 }
 
-func (a *App) openConnectedGhostConsole() error {
+// openLocalGhostConsole opens the local ghost admin console configured for this Mirage control plane.
+func (a *App) openLocalGhostConsole() error {
 	target, ok := a.activeMirageTarget()
 	if !ok {
 		return errors.New("no active mirage target")
 	}
-	ghosts, err := target.Admin.RegisteredGhosts()
-	if err != nil {
-		return err
+	localGhostID := strings.TrimSpace(a.mirageCfg.LocalGhostID)
+	localGhostAddr := strings.TrimSpace(a.mirageCfg.LocalGhostAdminAddr)
+	if localGhostID == "" {
+		return errors.New("mirage config local_ghost_id is required")
 	}
-	if len(ghosts) == 0 {
-		return errors.New("no registered ghosts available from active mirage")
+	if localGhostAddr == "" {
+		return errors.New("mirage config local_ghost_admin_addr is required")
 	}
-	fmt.Println()
-	fmt.Println("Mirage Registered Ghosts")
-	for i := range ghosts {
-		fmt.Printf("  [%d] %s (connected=%v)\n", i+1, ghosts[i].GhostID, ghosts[i].Connected)
-	}
-	choice, err := a.promptInt("Choose ghost", 1, len(ghosts), true, true)
-	if err != nil {
-		return err
-	}
-	selected := ghosts[choice-1]
-	idx := a.findGhostTargetByID(selected.GhostID)
-	if idx < 0 {
-		return fmt.Errorf("ghost_id=%q is not configured in ghost targets", selected.GhostID)
-	}
-	return a.runGhostAdminConsoleForIndex(idx)
-}
-
-func (a *App) runGhostAdminConsoleForIndex(idx int) error {
-	if idx < 0 || idx >= len(a.targets) {
-		return errors.New("invalid ghost target index")
-	}
-	prev := a.activeTarget
-	a.activeTarget = idx
-	defer func() {
-		a.activeTarget = prev
-	}()
-	return a.runGhostAdminConsole()
-}
-
-func (a *App) findGhostTargetByID(ghostID string) int {
-	targetID := strings.TrimSpace(ghostID)
-	if targetID == "" {
-		return -1
-	}
-	for i := range a.targets {
-		if strings.TrimSpace(a.targets[i].Admin.GhostID()) == targetID {
-			return i
-		}
-	}
-	return -1
+	logs.Infof(
+		"opening local ghost admin console mirage=%q local_ghost_id=%q addr=%q",
+		target.Name,
+		localGhostID,
+		localGhostAddr,
+	)
+	admin := NewRemoteGhostAdmin(localGhostAddr)
+	defer admin.Close()
+	return a.runGhostAdminConsoleForTarget(GhostTarget{
+		Name:  localGhostID,
+		Admin: admin,
+	})
 }
 
 func (a *App) runMirageAdminConsole() error {
@@ -928,6 +834,8 @@ func (a *App) resetToDefaultConfig() error {
 		Targets: []mirageTargetConfig{
 			{Name: "local-mirage", Addr: "127.0.0.1:7020", MirageID: "mirage.local"},
 		},
+		LocalGhostID:        "ghost.local",
+		LocalGhostAdminAddr: "127.0.0.1:7010",
 	}
 	a.closeMirageTargets()
 	a.targets = []GhostTarget{{Name: "local-ghost", Admin: NewRemoteGhostAdmin("127.0.0.1:7010")}}
@@ -958,6 +866,10 @@ func (a *App) showActiveTargetSummary() {
 		fmt.Println("No active target. Add/select one first.")
 		return
 	}
+	a.showGhostTargetSummary(target)
+}
+
+func (a *App) showGhostTargetSummary(target GhostTarget) {
 	status, err := target.Admin.Status()
 	if err != nil {
 		fmt.Printf("Status error: %v\n", err)
@@ -986,6 +898,11 @@ func (a *App) runGhostAdminConsole() error {
 	if !ok {
 		return errors.New("no active target")
 	}
+	return a.runGhostAdminConsoleForTarget(target)
+}
+
+// runGhostAdminConsoleForTarget drives one admin session for the selected Ghost target.
+func (a *App) runGhostAdminConsoleForTarget(target GhostTarget) error {
 	for {
 		fmt.Println()
 		fmt.Printf("Ghost Admin Console (%s @ %s)\n", target.Name, target.Admin.Address())
@@ -1007,7 +924,7 @@ func (a *App) runGhostAdminConsole() error {
 		a.clearIfEnabled()
 		switch choice {
 		case 1:
-			a.showActiveTargetSummary()
+			a.showGhostTargetSummary(target)
 		case 2:
 			if err := a.listSeedOperations(target); err != nil {
 				logs.Errf("list seed operations failed: %v", err)

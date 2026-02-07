@@ -2,5 +2,5 @@ clear_screen_after_command = true
 
 [[targets]]
   name = "local-ghost"
-  addr = "127.0.0.1:7010"
-  ghost_id = "ghost.local"
+  addr = "127.0.0.1:7011"
+  ghost_id = "ghost.local.client"
