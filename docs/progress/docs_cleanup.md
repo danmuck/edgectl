@@ -37,4 +37,5 @@ Status: `In Progress`
 - [x] Repository-level governance file added at `AGENTS.md` with canonical-source and change-control requirements.
 - [x] Package `doc.go` stubs updated to reference canonical contracts before implementation changes.
 - [x] Buildlog policy, naming scheme, and TOML template added under `docs/progress/buildlog/` with scope-based log rollover and follow-up append rules.
-- [ ] Full code-to-contract conformance is still in progress; outstanding items are tracked in `p4_conformance_report.md`.
+- [ ] `2026-02-07` verification pass completed; `go test ./...` passes, but conformance gaps remain (6 open items, including `event.ack`, `seed.execute` field IDs, framing `magic/version/flags` checks, and runtime handshake/reliability implementation).  
+  Source: `p4_conformance_report.md`.
