@@ -112,6 +112,72 @@ func TestMirageClientProductionRequiresTLS(t *testing.T) {
 	}
 }
 
+func TestMirageSessionSendEventWithAckDisconnect(t *testing.T) {
+	testlog.Start(t)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- serveDisconnectAfterFirstEvent(ln)
+	}()
+
+	cfg := session.DefaultConfig()
+	cfg.ConnectTimeout = 500 * time.Millisecond
+	cfg.HandshakeTimeout = 500 * time.Millisecond
+	cfg.ReadTimeout = 50 * time.Millisecond
+	cfg.WriteTimeout = 200 * time.Millisecond
+	cfg.AckTimeout = 260 * time.Millisecond
+	cfg.Backoff.InitialDelay = 10 * time.Millisecond
+	cfg.Backoff.Multiplier = 1.5
+	cfg.Backoff.MaxDelay = 20 * time.Millisecond
+	cfg.Backoff.Jitter = false
+
+	client, err := NewMirageClient(MirageClientConfig{
+		Address:            ln.Addr().String(),
+		GhostID:            "ghost.alpha",
+		PeerIdentity:       "ghost.alpha",
+		SeedList:           []session.SeedInfo{{ID: "seed.flow", Name: "Flow", Description: "Deterministic control-flow seed"}},
+		Session:            cfg,
+		MaxConnectAttempts: 1,
+	})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	gs, err := client.ConnectAndRegister(ctx)
+	if err != nil {
+		_ = ln.Close()
+		_ = <-done
+		t.Fatalf("connect and register: %v", err)
+	}
+	defer gs.Close()
+
+	_, err = gs.SendEventWithAck(ctx, EventEnv{
+		EventID:     "evt.disconnect.1",
+		CommandID:   "cmd.disconnect.1",
+		IntentID:    "intent.disconnect.1",
+		GhostID:     "ghost.alpha",
+		SeedID:      "seed.flow",
+		Outcome:     OutcomeSuccess,
+		TimestampMS: uint64(time.Now().UnixMilli()),
+	})
+	if !errors.Is(err, ErrAckTimeout) {
+		_ = ln.Close()
+		_ = <-done
+		t.Fatalf("expected ErrAckTimeout after disconnect, got %v", err)
+	}
+
+	_ = ln.Close()
+	if err := <-done; err != nil {
+		t.Fatalf("disconnect endpoint exit err: %v", err)
+	}
+}
+
 func serveNoAckEndpoint(ln net.Listener) error {
 	defer ln.Close()
 
@@ -154,4 +220,40 @@ func serveNoAckEndpoint(ln net.Listener) error {
 			return nil
 		}
 	}
+}
+
+func serveDisconnectAfterFirstEvent(ln net.Listener) error {
+	defer ln.Close()
+
+	conn, err := ln.Accept()
+	if err != nil {
+		if errors.Is(err, net.ErrClosed) {
+			return nil
+		}
+		return err
+	}
+	defer conn.Close()
+
+	reader := bufio.NewReader(conn)
+	reg, err := session.ReadRegistration(reader)
+	if err != nil {
+		return err
+	}
+	if err := session.WriteRegistrationAck(conn, session.RegistrationAck{
+		Status:      session.AckStatusAccepted,
+		Code:        0,
+		Message:     "registered",
+		GhostID:     reg.GhostID,
+		TimestampMS: uint64(time.Now().UnixMilli()),
+	}); err != nil {
+		return err
+	}
+
+	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		return err
+	}
+	if _, err := session.ReadFrame(reader, frame.DefaultLimits()); err != nil {
+		return err
+	}
+	return conn.Close()
 }

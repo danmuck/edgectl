@@ -1,7 +1,7 @@
 # P4 Conformance Report
 
 Date: `2026-02-07`
-Pass: `docs cleanup conformance verify + P2 step1/step2 runtime implementation + step3 resilience scenarios + TLS/mTLS enforcement`
+Pass: `docs cleanup conformance verify + P2 step1/step2 runtime implementation + step3 resilience scenarios + TLS/mTLS enforcement + single-command e2e closure`
 
 Scope:
 - verify current code behavior against canonical protocol/design docs
@@ -37,6 +37,8 @@ Scope:
 - `PASS`: duplicate event replay across reconnect now returns idempotent prior `event.ack` while preserving event count.
 - `PASS`: transport security baseline is now enforced in runtime: production-mode TLS+mTLS required, cert-backed peer identity extracted from TLS peer certificate, and Mirage rejects identity/ghost binding mismatch before command/event flow.
 - `PASS`: runtime configuration now exposes security policy controls in both entrypoints (`ghostctl`, `miragectl`) with TLS/mTLS file-path settings.
+- `PASS`: single-command end-to-end loop is covered with deterministic integration tests (`command -> seed.execute -> seed.result -> event -> report`) via Ghost-side loop harness.
+- `PASS`: failure-path matrix now includes explicit disconnect transport case in addition to timeout, duplicate ID, and validation coverage.
 
 ## Conformance Gaps
 
@@ -62,7 +64,9 @@ Scope:
 - [x] Enforce TLS/mTLS in Mirage runtime listener/session auth and bind TLS peer certificate identity to `ghost_id` (`internal/mirage/service.go`).
 - [x] Add TLS/mTLS integration tests covering accept and identity mismatch rejection paths (`internal/mirage/service_test.go`).
 - [x] Add entrypoint config plumbing for Mirage and Ghost transport security settings (`cmd/miragectl/config.go`, `cmd/ghostctl/config.go` and tests).
+- [x] Add single-command end-to-end loop implementation and integration coverage (`internal/ghost/command_loop.go`, `internal/ghost/command_loop_test.go`).
+- [x] Add explicit disconnect failure-path test for event delivery (`internal/ghost/mirage_client_test.go`).
 
 ## Recommended Fix Order
 
-- [ ] Move to next MVP step: single-intent end-to-end loop (`issue -> command -> seed.execute -> seed.result -> event -> report`).
+- [ ] Begin post-Phase-4 implementation: terminal client for node operations and dev/debug admin shell access.

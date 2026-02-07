@@ -29,12 +29,12 @@
 - [ ] Implement registration handshake (`seed` payload + ack)
 - [ ] Add integration test for connect -> register -> ready
 
-- [ ] Milestone 3: Single-intent execution loop works
+- [ ] Milestone 3: Mirage single-intent orchestration loop works
 - [ ] Implement Mirage in-memory intent and observed stores
 - [ ] Implement Mirage minimal reconcile loop (single command target)
 - [ ] Implement Ghost command routing to seed registry and execution adapter
 - [ ] Implement event emission and Mirage report generation
-- [ ] Add e2e test: `issue -> command -> seed.execute -> seed.result -> event -> report`
+- [ ] Add Mirage e2e test: `issue -> command -> seed.execute -> seed.result -> event -> report`
 
 - [ ] Milestone 4: MVP hardening gate
 - [ ] Add retry/backoff + idempotency behavior per `reliability.toml`

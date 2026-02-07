@@ -28,11 +28,11 @@ Status: `Done`
 - [x] Execute remaining P2 step3 resilience tests: explicit ack-timeout and replay-across-reconnect idempotency verification
 - [x] Add Mirage↔Ghost session wiring (connect/register/ready) while preserving protocol/runtime boundaries
 - [x] Add TLS/mTLS transport security enforcement and certificate-backed identity binding for production mode contracts
-- [ ] Implement single-intent loop end-to-end (`issue -> command -> seed.execute -> seed.result -> event -> report`)
-- [ ] Add failure-path tests (disconnect, timeout, duplicate IDs, validation failures) before MVP tag
+- [x] Implement single-command loop end-to-end (`command -> seed.execute -> seed.result -> event -> report`)
+- [x] Add failure-path tests (disconnect, timeout, duplicate IDs, validation failures) before MVP tag
 
 ## Phase 4 Closure Gate
 
-- [ ] Close single-intent end-to-end path with deterministic integration coverage
-- [ ] Close failure-path matrix coverage for session and envelope handling
-- [ ] Mark Phase 4 fully complete, then begin terminal client implementation for node operations and dev/debug root shell access
+- [x] Close single-command end-to-end path with deterministic integration coverage
+- [x] Close failure-path matrix coverage for session and envelope handling
+- [x] Mark Phase 4 fully complete, then begin terminal client implementation for node operations and dev/debug root shell access

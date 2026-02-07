@@ -40,3 +40,4 @@ Status: `Done`
 - [x] Test tooling UX pass added `cmd/testctl` and consolidated test entrypoints to `make test` (interactive package/module selection) and `make test-override` (full suite non-interactive), with grouped test listing, indented logs, per-package/per-test result matrix, and end-of-run totals.
 - [x] `2026-02-07` verification + implementation passes completed; `go test ./...` passes, P1 is closed, and P2 runtime now includes session primitives, minimal Mirage endpoint, Ghost client, config/policy wiring, reconnect baseline tests, step-3 resilience scenarios (ack-timeout + replay-across-reconnect coverage), and TLS/mTLS transport security enforcement with certificate-backed identity binding.  
   Source: `p4_conformance_report.md`.
+- [x] `2026-02-07` Phase 4 closeout achieved: single-command end-to-end loop and failure-path matrix coverage are complete; terminal-client implementation can begin as the next execution phase.
