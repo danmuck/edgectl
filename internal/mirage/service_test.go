@@ -243,6 +243,89 @@ func TestServiceEventAckReplayAcrossReconnect(t *testing.T) {
 	}
 }
 
+func TestServiceIngestEventEmitsReportHistory(t *testing.T) {
+	testlog.Start(t)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	cfg := DefaultServiceConfig()
+	cfg.RequireIdentityBinding = true
+	cfg.Session.ReadTimeout = 2 * time.Second
+	cfg.Session.WriteTimeout = 2 * time.Second
+	cfg.Session.HandshakeTimeout = 2 * time.Second
+	svc := NewServiceWithConfig(cfg)
+
+	if err := svc.Server().SubmitIssue(IssueEnv{
+		IntentID:    "intent.1",
+		Actor:       "user:dan",
+		TargetScope: "ghost:ghost.alpha",
+		Objective:   "status",
+		CommandPlan: []IssueCommand{
+			{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status"},
+		},
+	}); err != nil {
+		t.Fatalf("submit issue: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- svc.Serve(ctx, ln)
+	}()
+
+	client, err := ghost.NewMirageClient(ghost.MirageClientConfig{
+		Address:      ln.Addr().String(),
+		GhostID:      "ghost.alpha",
+		PeerIdentity: "ghost.alpha",
+		SeedList: []session.SeedInfo{
+			{ID: "seed.flow", Name: "Flow", Description: "Deterministic control-flow seed"},
+		},
+		Session: session.DefaultConfig(),
+	})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	connectCtx, connectCancel := context.WithTimeout(ctx, 3*time.Second)
+	defer connectCancel()
+	gs, err := client.ConnectAndRegister(connectCtx)
+	if err != nil {
+		t.Fatalf("connect and register: %v", err)
+	}
+	defer gs.Close()
+
+	event := ghost.EventEnv{
+		EventID:     "evt.cmd.intent.1.1",
+		CommandID:   "cmd.intent.1.1",
+		IntentID:    "intent.1",
+		GhostID:     "ghost.alpha",
+		SeedID:      "seed.flow",
+		Outcome:     ghost.OutcomeSuccess,
+		TimestampMS: uint64(time.Now().UnixMilli()),
+	}
+	if _, err := gs.SendEventWithAck(connectCtx, event); err != nil {
+		t.Fatalf("send event: %v", err)
+	}
+
+	if !waitForReportCount(2*time.Second, 25*time.Millisecond, svc, 1) {
+		t.Fatalf("expected report history entry after observed event")
+	}
+	reports := svc.RecentReports(10)
+	if len(reports) != 1 {
+		t.Fatalf("expected one report, got %d", len(reports))
+	}
+	if reports[0].IntentID != "intent.1" || reports[0].Phase != ReportPhaseComplete {
+		t.Fatalf("unexpected report payload: %+v", reports[0])
+	}
+
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("serve exit err: %v", err)
+	}
+}
+
 func waitForGhostState(
 	timeout time.Duration,
 	interval time.Duration,
@@ -265,6 +348,17 @@ func waitForGhostState(
 		}
 	}
 	return false
+}
+
+func waitForReportCount(timeout time.Duration, interval time.Duration, svc *Service, count int) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if len(svc.RecentReports(count)) >= count {
+			return true
+		}
+		time.Sleep(interval)
+	}
+	return len(svc.RecentReports(count)) >= count
 }
 
 func TestServiceRegistrationTLSMTLSIdentityBound(t *testing.T) {

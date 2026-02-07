@@ -25,6 +25,7 @@ import (
 type ServiceConfig struct {
 	ListenAddr             string
 	RequireIdentityBinding bool
+	RootGhostAdminAddr     string
 	Session                session.Config
 }
 
@@ -33,6 +34,7 @@ func DefaultServiceConfig() ServiceConfig {
 	return ServiceConfig{
 		ListenAddr:             ":9000",
 		RequireIdentityBinding: true,
+		RootGhostAdminAddr:     "",
 		Session:                session.DefaultConfig(),
 	}
 }
@@ -81,16 +83,30 @@ func NewServiceWithConfig(cfg ServiceConfig) *Service {
 		cfg.ListenAddr = DefaultServiceConfig().ListenAddr
 	}
 	cfg.Session = cfg.Session.WithDefaults()
-	return &Service{
+	svc := &Service{
 		cfg:    cfg,
 		server: NewServer(),
 		conns:  make(map[net.Conn]struct{}),
 	}
+	if addr := strings.TrimSpace(cfg.RootGhostAdminAddr); addr != "" {
+		svc.server.SetGhostSpawner(NewGhostAdminSpawner(addr))
+	}
+	return svc
 }
 
 // Server returns the Mirage lifecycle/orchestration boundary owner.
 func (s *Service) Server() *Server {
 	return s.server
+}
+
+// SpawnLocalGhost provisions one local ghost through the configured server spawner boundary.
+func (s *Service) SpawnLocalGhost(ctx context.Context, req SpawnGhostRequest) (SpawnGhostResult, error) {
+	return s.server.SpawnLocalGhost(ctx, req)
+}
+
+// RecentReports returns bounded user-boundary report history from Mirage server.
+func (s *Service) RecentReports(limit int) []session.Report {
+	return s.server.RecentReports(limit)
 }
 
 // Mirage runtime entrypoint that blocks until signal shutdown.
@@ -107,7 +123,6 @@ func (s *Service) Run() error {
 	if err := s.server.Seed(); err != nil {
 		return err
 	}
-
 	if err := s.cfg.Session.ValidateServerTransport(); err != nil {
 		return err
 	}

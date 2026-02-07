@@ -29,7 +29,7 @@ Use phase files for detailed task execution and acceptance check tracking.
 - [x] 2. Protocol frame codec (`header`, `read_frame`, `write_frame`)
 - [x] 3. TLV codec (`encode_field`, `decode_fields`, typed getters)
 - [x] 4. Semantic validation (`validate_by_message_type`)
-- [ ] 5. Mirage reconcile interfaces + in-memory stores
+- [x] 5. Mirage reconcile interfaces + in-memory stores
 - [x] 6. Ghost command dispatch + seed registry execution path
 - [ ] 7. Structured logging/event schema (`component`, `peer`, `trace_id`, correlation IDs)
 
@@ -48,10 +48,10 @@ Use phase files for detailed task execution and acceptance check tracking.
 - [x] Add integration test for connect -> register -> ready
 
 - [ ] Milestone 3: Mirage single-intent orchestration loop works
-- [ ] Implement Mirage in-memory intent and observed stores
-- [ ] Implement Mirage minimal reconcile loop (single command target)
+- [x] Implement Mirage in-memory intent and observed stores
+- [x] Implement Mirage minimal reconcile loop (single command target)
 - [x] Implement Ghost command routing to seed registry and execution adapter
-- [ ] Implement event emission and Mirage report generation
+- [x] Implement event emission and Mirage report generation
 - [ ] Add Mirage e2e test: `issue -> command -> seed.execute -> seed.result -> event -> report`
 
 - [ ] Milestone 4: MVP hardening gate
@@ -61,11 +61,11 @@ Use phase files for detailed task execution and acceptance check tracking.
 - [x] Add failure-path tests (disconnect, duplicate IDs, timeout, validation failures)
 
 - [ ] Milestone 5: Mirage orchestration loop baseline (`mvp_p5.md`)
-- [ ] Implement `issue` ingestion + desired-state persistence
-- [ ] Implement reconcile loop (single-ghost first)
-- [ ] Dispatch commands and ingest events into observed state
-- [ ] Emit `report` to user boundary
-- [ ] Enable Mirage local Ghost spin-up path
+- [x] Implement `issue` ingestion + desired-state persistence
+- [x] Implement reconcile loop (single-ghost first)
+- [x] Dispatch commands and ingest events into observed state
+- [x] Emit `report` to user boundary
+- [x] Enable Mirage local Ghost spin-up path
 
 - [ ] Milestone 6: Boundary transport integration (`mvp_p6.md`)
 - [ ] Bind control-plane links to protocol envelopes (not ad-hoc calls)

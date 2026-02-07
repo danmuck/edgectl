@@ -13,6 +13,7 @@ import (
 type fileConfig struct {
 	Addr                string `toml:"addr"`
 	RequireIdentityBind bool   `toml:"require_identity_binding"`
+	RootGhostAdminAddr  string `toml:"root_ghost_admin_addr"`
 	SessionSecurityMode string `toml:"session_security_mode"`
 	SessionTLSEnabled   bool   `toml:"session_tls_enabled"`
 	SessionTLSMutual    bool   `toml:"session_tls_mutual"`
@@ -36,6 +37,9 @@ func loadServiceConfig(path string) (mirage.ServiceConfig, error) {
 	}
 	if meta.IsDefined("require_identity_binding") {
 		cfg.RequireIdentityBinding = raw.RequireIdentityBind
+	}
+	if meta.IsDefined("root_ghost_admin_addr") {
+		cfg.RootGhostAdminAddr = strings.TrimSpace(raw.RootGhostAdminAddr)
 	}
 	if meta.IsDefined("session_security_mode") {
 		cfg.Session.SecurityMode = session.SecurityMode(strings.TrimSpace(raw.SessionSecurityMode))

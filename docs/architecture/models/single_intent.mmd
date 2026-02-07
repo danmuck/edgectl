@@ -1,24 +1,36 @@
 sequenceDiagram
     autonumber
     participant User
-    participant Mirage
+    participant Mirage as Mirage(Service/Server)
+    participant Loop as Mirage Orchestrator
     participant Ghost as GhostZ
     participant Seed
 
-    User->>Mirage: issue(intent)
-    Note over Mirage: Persist desired state (intent)
+    User->>Mirage: issue(intent + command plan)
+    Mirage->>Loop: persist desired state
 
     loop Reconciliation loop
-        Mirage->>Mirage: reconcile()
-        Mirage->>Ghost: command(imperative step)
+        Mirage->>Loop: reconcile_once(intent_id)
+        Loop->>Loop: select next pending command
+        alt seed lock held by another intent (blocking step)
+            Loop-->>Mirage: report(phase=in_progress, completion=in_progress)
+            Mirage-->>User: report(waiting on seed lock)
+        else command dispatch permitted
+            Loop->>Ghost: command(command_id, ghost_id, seed_selector, operation, args)
 
-        Ghost->>Ghost: reconcile(local mapping)
-        Ghost->>Seed: seed.execute(operation,args)
+            Ghost->>Ghost: handle command boundary + execution state
+            Ghost->>Seed: seed.execute(operation,args)
 
-        Seed-->>Ghost: seed.result(status,stdout,stderr,exit_code)
-        Ghost-->>Mirage: event(observed state delta)
-        Mirage-->>Ghost: event.ack(accepted|rejected)
+            Seed-->>Ghost: seed.result(status,stdout,stderr,exit_code)
+            Ghost-->>Mirage: event(event_id,command_id,intent_id,outcome)
+            Mirage-->>Ghost: event.ack(accepted|rejected)
 
-        Mirage->>Mirage: update observed state
-        Mirage-->>User: report(progress/outcome)
+            Mirage->>Loop: ingest observed event(command_id,event_id)
+            Loop->>Loop: idempotency(event_id) + update observed
+            Loop-->>Mirage: report(progress/outcome)
+            Mirage-->>User: report(progress/outcome)
+        end
     end
+
+    Note over Ghost,Mirage: event retry until event.ack accepted or ack_timeout
+    Note over Mirage,Loop: duplicate event_id is deduplicated; report history remains stable

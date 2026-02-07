@@ -8,21 +8,21 @@ Status: `In Progress`
 
 ## Tasks (Buildplan-Aligned)
 
-- [ ] Define the Mirage server controller, similar to ghosts
+- [x] Define the Mirage server controller, similar to ghosts
 - [x] Define `issue` ingestion contract and desired-state persistence model
 - [x] Implement `issue` ingestion path and desired-state store (in-memory first)
 - [x] Implement reconcile loop (single-ghost first)
 - [x] Dispatch protocol command envelopes and ingest protocol event envelopes into observed state
-- [ ] Emit `report` to user boundary with explicit desired vs observed transitions
-- [ ] Mirage must be able to spin up local Ghost servers
+- [x] Emit `report` to user boundary with explicit desired vs observed transitions
+- [x] Mirage must be able to spin up local Ghost servers
 - [x] Introduce Mirage server boundary (`internal/mirage/server.go`) for lifecycle + orchestration command boundary ownership
-- [ ] Update architecture/message-flow diagrams in `docs/architecture/models` for Phase 5 behavior
+- [x] Update architecture/message-flow diagrams in `docs/architecture/models` for Phase 5 behavior
 
 ### Acceptance Checks
 
-- [ ] One intent drives command execution and produces report updates
-- [ ] Desired vs observed state transitions are explicit and testable
-- [ ] Phase 5 contracts are reflected in docs and corresponding test coverage
+- [x] One intent drives command execution and produces report updates
+- [x] Desired vs observed state transitions are explicit and testable
+- [x] Phase 5 contracts are reflected in docs and corresponding test coverage
 
 ## Coexisting Phase-Break Flow
 

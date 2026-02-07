@@ -12,6 +12,7 @@ func TestLoadServiceConfigDefaultsAndOverrides(t *testing.T) {
 	content := `
 addr = "127.0.0.1:9443"
 require_identity_binding = true
+root_ghost_admin_addr = "127.0.0.1:7010"
 session_security_mode = "production"
 session_tls_enabled = true
 session_tls_mutual = true
@@ -32,6 +33,9 @@ session_tls_ca_file = "/etc/mirage/ca.crt"
 	}
 	if !cfg.RequireIdentityBinding {
 		t.Fatalf("expected require_identity_binding true")
+	}
+	if cfg.RootGhostAdminAddr != "127.0.0.1:7010" {
+		t.Fatalf("unexpected root ghost admin addr: %q", cfg.RootGhostAdminAddr)
 	}
 	if cfg.Session.SecurityMode != "production" {
 		t.Fatalf("unexpected security mode: %q", cfg.Session.SecurityMode)

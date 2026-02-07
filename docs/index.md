@@ -23,6 +23,8 @@ This index is the navigation root for architecture and protocol documentation.
 - Framing decoder pipeline: [`architecture/models/framing_decoder_pipeline.mmd`](architecture/models/framing_decoder_pipeline.mmd)
 - Locality-aware control loop: [`architecture/models/control_loop_locality.mmd`](architecture/models/control_loop_locality.mmd)
 - Single intent loop: [`architecture/models/single_intent.mmd`](architecture/models/single_intent.mmd)
+- Phase 5 orchestration boundary: [`architecture/models/phase5_orchestration_boundary.mmd`](architecture/models/phase5_orchestration_boundary.mmd)
+- Phase 5 event-to-report flow: [`architecture/models/phase5_event_report_flow.mmd`](architecture/models/phase5_event_report_flow.mmd)
 - Multi-ghost reconcile fanout: [`architecture/models/multi_ghost.mmd`](architecture/models/multi_ghost.mmd)
 - Decision model: [`architecture/models/decision_model.mmd`](architecture/models/decision_model.mmd)
 - State authority: [`architecture/models/state_authority.mmd`](architecture/models/state_authority.mmd)

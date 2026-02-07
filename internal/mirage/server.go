@@ -14,6 +14,7 @@ import (
 var (
 	ErrInvalidMirageID = errors.New("mirage: invalid mirage id")
 	ErrLifecycleOrder  = errors.New("mirage: invalid lifecycle transition")
+	ErrNoGhostSpawner  = errors.New("mirage: no ghost spawner configured")
 )
 
 // LifecyclePhase describes Mirage runtime phase transitions.
@@ -37,6 +38,25 @@ type LifecycleStatus struct {
 	Phase            LifecyclePhase
 	RegisteredGhosts int
 	ActiveIntents    int
+	ReportCount      int
+}
+
+// SpawnGhostRequest defines one local Ghost provisioning request from Mirage.
+type SpawnGhostRequest struct {
+	TargetName string
+	AdminAddr  string
+}
+
+// SpawnGhostResult describes one provisioned local Ghost endpoint.
+type SpawnGhostResult struct {
+	TargetName string
+	GhostID    string
+	AdminAddr  string
+}
+
+// GhostSpawner provisions local Ghost nodes via a boundary adapter.
+type GhostSpawner interface {
+	SpawnLocalGhost(ctx context.Context, req SpawnGhostRequest) (SpawnGhostResult, error)
 }
 
 // Server owns Mirage lifecycle, orchestration boundary, and observed ghost registry.
@@ -49,6 +69,9 @@ type Server struct {
 	registry map[string]*registeredGhostState
 
 	loop *Orchestrator
+
+	reports []session.Report
+	spawner GhostSpawner
 }
 
 // NewServer constructs Mirage server state in boot phase.
@@ -57,6 +80,7 @@ func NewServer() *Server {
 		phase:    PhaseBoot,
 		registry: make(map[string]*registeredGhostState),
 		loop:     NewOrchestrator(),
+		reports:  make([]session.Report, 0),
 	}
 }
 
@@ -104,6 +128,7 @@ func (s *Server) Status() LifecycleStatus {
 	id := s.mirageID
 	phase := s.phase
 	ghosts := len(s.registry)
+	reports := len(s.reports)
 	s.mu.RUnlock()
 
 	snapshot := s.loop.Snapshot()
@@ -112,6 +137,7 @@ func (s *Server) Status() LifecycleStatus {
 		Phase:            phase,
 		RegisteredGhosts: ghosts,
 		ActiveIntents:    snapshot.IntentCount,
+		ReportCount:      reports,
 	}
 }
 
@@ -206,11 +232,6 @@ func (s *Server) AcceptEvent(ghostID string, event session.Event) session.EventA
 	return ack
 }
 
-// ObserveEvent ingests a ghost event into orchestration observed state when command is known.
-func (s *Server) ObserveEvent(event session.Event) (session.Report, bool, error) {
-	return s.loop.IngestObservedEvent(event)
-}
-
 // RegisterExecutor binds command execution for one ghost_id in the orchestration boundary.
 func (s *Server) RegisterExecutor(ghostID string, exec CommandExecutor) error {
 	return s.loop.RegisterExecutor(ghostID, exec)
@@ -223,12 +244,65 @@ func (s *Server) SubmitIssue(issue IssueEnv) error {
 
 // ReconcileIntent executes one orchestration pass for an intent.
 func (s *Server) ReconcileIntent(ctx context.Context, intentID string) (session.Report, error) {
-	return s.loop.ReconcileOnce(ctx, intentID)
+	report, err := s.loop.ReconcileOnce(ctx, intentID)
+	if err != nil {
+		return session.Report{}, err
+	}
+	s.appendReport(report)
+	return report, nil
 }
 
 // SnapshotIntent returns desired/observed state for one intent.
 func (s *Server) SnapshotIntent(intentID string) (IntentSnapshot, bool) {
 	return s.loop.SnapshotIntent(intentID)
+}
+
+// ObserveEvent ingests a ghost event into orchestration observed state when command is known.
+func (s *Server) ObserveEvent(event session.Event) (session.Report, bool, error) {
+	report, matched, err := s.loop.IngestObservedEvent(event)
+	if err != nil || !matched {
+		return report, matched, err
+	}
+	s.appendReport(report)
+	return report, matched, nil
+}
+
+// RecentReports returns bounded report history for user-boundary emission.
+func (s *Server) RecentReports(limit int) []session.Report {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if limit <= 0 || len(s.reports) <= limit {
+		out := make([]session.Report, len(s.reports))
+		copy(out, s.reports)
+		return out
+	}
+	out := make([]session.Report, limit)
+	copy(out, s.reports[len(s.reports)-limit:])
+	return out
+}
+
+// SetGhostSpawner binds a local-ghost provisioning adapter.
+func (s *Server) SetGhostSpawner(spawner GhostSpawner) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.spawner = spawner
+}
+
+// SpawnLocalGhost provisions one local ghost endpoint through configured spawner.
+func (s *Server) SpawnLocalGhost(ctx context.Context, req SpawnGhostRequest) (SpawnGhostResult, error) {
+	s.mu.RLock()
+	spawner := s.spawner
+	s.mu.RUnlock()
+	if spawner == nil {
+		return SpawnGhostResult{}, ErrNoGhostSpawner
+	}
+	return spawner.SpawnLocalGhost(ctx, req)
+}
+
+func (s *Server) appendReport(report session.Report) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reports = append(s.reports, report)
 }
 
 func transitionError(from, to LifecyclePhase) error {

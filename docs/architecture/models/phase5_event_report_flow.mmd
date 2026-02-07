@@ -1,0 +1,28 @@
+sequenceDiagram
+    autonumber
+    participant Ghost
+    participant MirageSvc as Mirage Service
+    participant MirageSrv as Mirage Server
+    participant Loop as Orchestrator
+    participant User
+
+    Ghost->>MirageSvc: event(event_id, command_id, intent_id, outcome)
+    MirageSvc->>MirageSrv: AcceptEvent(ghost_id, event)
+    MirageSrv-->>Ghost: event.ack(accepted, timestamp_ms)
+
+    MirageSvc->>MirageSrv: ObserveEvent(event)
+    MirageSrv->>Loop: IngestObservedEvent(command_id,event_id)
+    alt command_id matches planned command
+        Loop->>Loop: dedupe by event_id
+        Loop->>Loop: update observed state + release seed lock
+        Loop-->>MirageSrv: report(intent_id, phase, completion_state)
+        MirageSrv->>MirageSrv: append report history
+        MirageSrv-->>MirageSvc: matched report
+        MirageSvc-->>User: report update
+    else command not planned by Mirage
+        Loop-->>MirageSrv: no match
+        MirageSrv-->>MirageSvc: skip report emission
+    end
+
+    Note over Ghost,MirageSvc: Ghost retries event delivery until ack accepted or ack timeout
+    Note over Loop,MirageSrv: Duplicate event_id does not duplicate state transition

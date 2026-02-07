@@ -91,6 +91,10 @@ func TestServerDelegatesOrchestration(t *testing.T) {
 	if report.Phase != ReportPhaseComplete {
 		t.Fatalf("unexpected report phase: %q", report.Phase)
 	}
+	reports := srv.RecentReports(10)
+	if len(reports) != 1 {
+		t.Fatalf("expected 1 emitted report, got %d", len(reports))
+	}
 }
 
 func TestServerLifecycleOrderInvalid(t *testing.T) {
@@ -99,5 +103,53 @@ func TestServerLifecycleOrderInvalid(t *testing.T) {
 	srv := NewServer()
 	if err := srv.Shimmer(); !errors.Is(err, ErrLifecycleOrder) {
 		t.Fatalf("expected ErrLifecycleOrder, got %v", err)
+	}
+}
+
+type fakeSpawner struct {
+	out SpawnGhostResult
+	err error
+}
+
+func (s fakeSpawner) SpawnLocalGhost(_ context.Context, _ SpawnGhostRequest) (SpawnGhostResult, error) {
+	if s.err != nil {
+		return SpawnGhostResult{}, s.err
+	}
+	return s.out, nil
+}
+
+func TestServerSpawnLocalGhostRequiresSpawner(t *testing.T) {
+	testlog.Start(t)
+
+	srv := NewServer()
+	_, err := srv.SpawnLocalGhost(context.Background(), SpawnGhostRequest{
+		TargetName: "edge-1",
+		AdminAddr:  "127.0.0.1:7119",
+	})
+	if !errors.Is(err, ErrNoGhostSpawner) {
+		t.Fatalf("expected ErrNoGhostSpawner, got %v", err)
+	}
+}
+
+func TestServerSpawnLocalGhostViaSpawner(t *testing.T) {
+	testlog.Start(t)
+
+	srv := NewServer()
+	srv.SetGhostSpawner(fakeSpawner{
+		out: SpawnGhostResult{
+			TargetName: "ghost.local.edge.1",
+			GhostID:    "ghost.local.edge.1",
+			AdminAddr:  "127.0.0.1:7119",
+		},
+	})
+	out, err := srv.SpawnLocalGhost(context.Background(), SpawnGhostRequest{
+		TargetName: "edge-1",
+		AdminAddr:  "127.0.0.1:7119",
+	})
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if out.GhostID != "ghost.local.edge.1" {
+		t.Fatalf("unexpected ghost id: %q", out.GhostID)
 	}
 }
