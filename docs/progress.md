@@ -82,10 +82,10 @@ Status: `Done`
 - [x] Define `SeedResult` with deterministic fields: `status`, `stdout`, `stderr`, `exit_code`
 
 - [ ] 2. Implement registry as pure in-memory contract
-- [ ] `Register(seed Seed) error` (reject duplicate `id`)
-- [ ] `Resolve(id string) (Seed, bool)`
-- [ ] `ListMetadata() []SeedMetadata` (stable sort by `id` for deterministic tests)
-- [ ] `ValidateMetadata(meta SeedMetadata) error` (non-empty fields + id format guard)
+- [x] `Register(seed Seed) error` (reject duplicate `id`)
+- [x] `Resolve(id string) (Seed, bool)`
+- [x] `ListMetadata() []SeedMetadata` (stable sort by `id` for deterministic tests)
+- [x] `ValidateMetadata(meta SeedMetadata) error` (non-empty fields + id format guard)
 
 - [ ] 3. Implement deterministic `flow` seed
 - [ ] Seed id: `seed.flow`
@@ -97,10 +97,10 @@ Status: `Done`
 
 - [ ] 4. Add unit tests (no runtime coupling)
 - [ ] Registry:
-- [ ] register success
-- [ ] duplicate register failure
-- [ ] resolve/list behavior
-- [ ] metadata validation failures
+- [x] register success
+- [x] duplicate register failure
+- [x] resolve/list behavior
+- [x] metadata validation failures
 - [ ] Flow seed:
 - [ ] metadata correctness
 - [ ] supported actions return byte-for-byte stable output
