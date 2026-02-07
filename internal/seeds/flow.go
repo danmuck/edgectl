@@ -11,15 +11,16 @@ import (
 
 var ErrUnknownAction = errors.New("unknown seed action")
 
-// FlowSeed is a deterministic seed used for local execution verification.
+// Seeds package deterministic seed used for local execution verification.
 type FlowSeed struct{}
 
-// NewFlowSeed creates the deterministic flow seed.
+// Seeds package constructor for deterministic flow seed.
 func NewFlowSeed() FlowSeed {
 	logs.Debug("seeds.NewFlowSeed")
 	return FlowSeed{}
 }
 
+// Seeds package metadata provider for stable identity and capability description.
 func (s FlowSeed) Metadata() SeedMetadata {
 	logs.Debug("seeds.FlowSeed.Metadata")
 	return SeedMetadata{
@@ -29,6 +30,7 @@ func (s FlowSeed) Metadata() SeedMetadata {
 	}
 }
 
+// Seeds package operation catalog for deterministic flow behavior.
 func (s FlowSeed) Operations() []OperationSpec {
 	return []OperationSpec{
 		{Name: "status", Description: "deterministic health/status response", Idempotent: true},
@@ -37,6 +39,7 @@ func (s FlowSeed) Operations() []OperationSpec {
 	}
 }
 
+// Seeds package deterministic operation dispatcher.
 func (s FlowSeed) Execute(action string, args map[string]string) (SeedResult, error) {
 	logs.Debugf("seeds.FlowSeed.Execute action=%q args=%d", action, len(args))
 	switch action {
@@ -88,6 +91,7 @@ func (s FlowSeed) Execute(action string, args map[string]string) (SeedResult, er
 	}
 }
 
+// Seeds package helper rendering args in deterministic key order for echo output.
 func renderArgs(args map[string]string) string {
 	logs.Debugf("seeds.renderArgs args=%d", len(args))
 	if len(args) == 0 {
@@ -105,6 +109,7 @@ func renderArgs(args map[string]string) string {
 	return "flow echo: " + strings.Join(pairs, ",") + "\n"
 }
 
+// Seeds package helper mapping step names to deterministic outputs and exit codes.
 func deterministicStep(name string) (string, int) {
 	logs.Debugf("seeds.deterministicStep name=%q", name)
 	switch name {

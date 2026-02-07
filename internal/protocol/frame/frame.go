@@ -30,7 +30,7 @@ var (
 	ErrUnsupportedFlags   = errors.New("frame: unsupported flags")
 )
 
-// Header is the fixed wire header.
+// Frame fixed-width wire header.
 type Header struct {
 	Magic       uint32
 	Version     uint16
@@ -41,19 +41,20 @@ type Header struct {
 	PayloadLen  uint64
 }
 
-// Frame is one complete wire message.
+// Frame complete wire message containing header, auth bytes, and payload.
 type Frame struct {
 	Header  Header
 	Auth    []byte
 	Payload []byte
 }
 
-// Limits constrains frame decode/encode memory use.
+// Frame decode/encode memory limits.
 type Limits struct {
 	MaxAuthBytes    uint64
 	MaxPayloadBytes uint64
 }
 
+// Frame package conservative default size limits for runtime decode/encode.
 func DefaultLimits() Limits {
 	logs.Debug("frame.DefaultLimits")
 	return Limits{
@@ -62,6 +63,7 @@ func DefaultLimits() Limits {
 	}
 }
 
+// Frame decoder for one full frame with structural validation.
 func ReadFrame(r io.Reader, limits Limits) (Frame, error) {
 	logs.Debugf(
 		"frame.ReadFrame start max_auth=%d max_payload=%d",
@@ -129,6 +131,7 @@ func ReadFrame(r io.Reader, limits Limits) (Frame, error) {
 	return Frame{Header: h, Auth: auth, Payload: payload}, nil
 }
 
+// Frame encoder for one full frame with structural validation.
 func WriteFrame(w io.Writer, f Frame, limits Limits) error {
 	authLen := uint64(len(f.Auth))
 	payloadLen := uint64(len(f.Payload))
@@ -194,6 +197,7 @@ func WriteFrame(w io.Writer, f Frame, limits Limits) error {
 	return nil
 }
 
+// Frame header serializer for fixed-width protocol header bytes.
 func EncodeHeader(h Header) []byte {
 	logs.Debugf("frame.EncodeHeader message_id=%d message_type=%d", h.MessageID, h.MessageType)
 	buf := make([]byte, FixedHeaderLen)
@@ -207,6 +211,7 @@ func EncodeHeader(h Header) []byte {
 	return buf
 }
 
+// Frame header parser/validator for fixed-width protocol header bytes.
 func DecodeHeader(b []byte) (Header, error) {
 	if len(b) != int(FixedHeaderLen) {
 		logs.Errf("frame.DecodeHeader invalid length=%d", len(b))

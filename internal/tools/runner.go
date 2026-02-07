@@ -14,6 +14,7 @@ type CommandRunner interface {
 // ExecRunner executes commands on the local host.
 type ExecRunner struct{}
 
+// tools command-runner implementation backed by os/exec.
 func (r ExecRunner) Run(name string, args ...string) ([]byte, []byte, int32, error) {
 	cmd := exec.Command(name, args...)
 	var stdout bytes.Buffer

@@ -16,6 +16,7 @@ var (
 	ErrTLSInsecureSkipNotAllow = errors.New("session: insecure skip verify not allowed")
 )
 
+// Session security-mode normalizer with development default.
 func NormalizeSecurityMode(mode SecurityMode) SecurityMode {
 	if strings.TrimSpace(string(mode)) == "" {
 		return SecurityModeDevelopment
@@ -23,6 +24,7 @@ func NormalizeSecurityMode(mode SecurityMode) SecurityMode {
 	return SecurityMode(strings.ToLower(strings.TrimSpace(string(mode))))
 }
 
+// Session client transport validator for TLS/mTLS requirements by security mode.
 func (c Config) ValidateClientTransport() error {
 	mode := NormalizeSecurityMode(c.SecurityMode)
 	switch mode {
@@ -59,6 +61,7 @@ func (c Config) ValidateClientTransport() error {
 	return nil
 }
 
+// Session server transport validator for TLS/mTLS requirements by security mode.
 func (c Config) ValidateServerTransport() error {
 	mode := NormalizeSecurityMode(c.SecurityMode)
 	switch mode {

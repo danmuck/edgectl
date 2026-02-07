@@ -30,6 +30,7 @@ var (
 	ErrSessionClosed         = errors.New("ghost: mirage session closed")
 )
 
+// Ghost outbound Mirage session-client configuration.
 type MirageClientConfig struct {
 	Address            string
 	GhostID            string
@@ -39,17 +40,20 @@ type MirageClientConfig struct {
 	MaxConnectAttempts int
 }
 
+// Ghost Mirage session-client defaults aligned with session defaults.
 func DefaultMirageClientConfig() MirageClientConfig {
 	return MirageClientConfig{
 		Session: session.DefaultConfig(),
 	}
 }
 
+// Ghost-side Mirage client with connect/register retry behavior.
 type MirageClient struct {
 	cfg MirageClientConfig
 	rng *rand.Rand
 }
 
+// Ghost Mirage client constructor with transport/session validation.
 func NewMirageClient(cfg MirageClientConfig) (*MirageClient, error) {
 	if strings.TrimSpace(cfg.Address) == "" {
 		return nil, ErrMirageAddressRequired
@@ -67,7 +71,7 @@ func NewMirageClient(cfg MirageClientConfig) (*MirageClient, error) {
 	}, nil
 }
 
-// ConnectAndRegister dials Mirage, performs registration handshake, and returns a live session.
+// Ghost connect/register flow that returns a live Mirage session.
 func (c *MirageClient) ConnectAndRegister(ctx context.Context) (*MirageSession, error) {
 	var attempt int
 	for {
@@ -98,6 +102,7 @@ func (c *MirageClient) ConnectAndRegister(ctx context.Context) (*MirageSession, 
 	}
 }
 
+// Ghost transport dial helper honoring session TLS policy.
 func (c *MirageClient) dial(ctx context.Context) (net.Conn, error) {
 	if err := c.cfg.Session.ValidateClientTransport(); err != nil {
 		return nil, err
@@ -127,6 +132,7 @@ func (c *MirageClient) dial(ctx context.Context) (net.Conn, error) {
 	return conn, nil
 }
 
+// Ghost TLS client config builder from session transport settings.
 func (c *MirageClient) clientTLSConfig() (*tls.Config, error) {
 	cfg := &tls.Config{
 		MinVersion:         tls.VersionTLS12,
@@ -165,6 +171,7 @@ func (c *MirageClient) clientTLSConfig() (*tls.Config, error) {
 	return cfg, nil
 }
 
+// Ghost retry decision helper for connect/register attempts.
 func (c *MirageClient) shouldRetry(attempt int) bool {
 	if c.cfg.MaxConnectAttempts <= 0 {
 		return true
@@ -172,6 +179,7 @@ func (c *MirageClient) shouldRetry(attempt int) bool {
 	return attempt < c.cfg.MaxConnectAttempts
 }
 
+// Ghost retry backoff sleep helper with context cancellation support.
 func (c *MirageClient) sleepBackoff(ctx context.Context, attempt int) error {
 	delay := session.NextBackoffDelay(c.cfg.Session.Backoff, attempt, c.rng)
 	timer := time.NewTimer(delay)
@@ -184,6 +192,7 @@ func (c *MirageClient) sleepBackoff(ctx context.Context, attempt int) error {
 	}
 }
 
+// Ghost seed.register handshake helper returning a session handle.
 func (c *MirageClient) register(conn net.Conn) (*MirageSession, error) {
 	_ = conn.SetDeadline(time.Now().Add(c.cfg.Session.HandshakeTimeout))
 	reader := bufio.NewReader(conn)
@@ -214,6 +223,7 @@ func (c *MirageClient) register(conn net.Conn) (*MirageSession, error) {
 	return s, nil
 }
 
+// Ghost-side registered Mirage stream with event ack/retry behavior.
 type MirageSession struct {
 	conn          net.Conn
 	reader        *bufio.Reader
@@ -224,6 +234,7 @@ type MirageSession struct {
 	mu            sync.Mutex
 }
 
+// Ghost Mirage-session close operation for the underlying stream connection.
 func (s *MirageSession) Close() error {
 	if s.conn == nil {
 		return nil
@@ -231,11 +242,12 @@ func (s *MirageSession) Close() error {
 	return s.conn.Close()
 }
 
+// Ghost outbox snapshot for pending event retry diagnostics/tests.
 func (s *MirageSession) OutboxSnapshot() []session.PendingEvent {
 	return s.outbox.List()
 }
 
-// SendEventWithAck sends one event and retries until accepted ack or ack timeout.
+// Ghost event delivery with retry-until-accepted-ack or timeout.
 func (s *MirageSession) SendEventWithAck(ctx context.Context, event EventEnv) (session.EventAck, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -297,6 +309,7 @@ func (s *MirageSession) SendEventWithAck(ctx context.Context, event EventEnv) (s
 	}
 }
 
+// Ghost one-shot event send/read for a matching event.ack.
 func (s *MirageSession) sendEventOnce(ctx context.Context, event session.Event) (session.EventAck, error) {
 	payload, err := session.EncodeEventFrame(s.nextMessageID.Add(1), event)
 	if err != nil {
@@ -327,6 +340,7 @@ func (s *MirageSession) sendEventOnce(ctx context.Context, event session.Event) 
 	return ack, nil
 }
 
+// Ghost write-deadline helper using stricter timeout vs context deadline.
 func (s *MirageSession) setWriteDeadline(ctx context.Context) error {
 	deadline := time.Now().Add(s.cfg.WriteTimeout)
 	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
@@ -335,6 +349,7 @@ func (s *MirageSession) setWriteDeadline(ctx context.Context) error {
 	return s.conn.SetWriteDeadline(deadline)
 }
 
+// Ghost read-deadline helper using stricter timeout vs context deadline.
 func (s *MirageSession) setReadDeadline(ctx context.Context) error {
 	deadline := time.Now().Add(s.cfg.ReadTimeout)
 	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
@@ -343,6 +358,7 @@ func (s *MirageSession) setReadDeadline(ctx context.Context) error {
 	return s.conn.SetReadDeadline(deadline)
 }
 
+// Ghost seed metadata mapper for seed.register handshake descriptors.
 func SeedInfoFromMetadata(list []seeds.SeedMetadata) []session.SeedInfo {
 	out := make([]session.SeedInfo, 0, len(list))
 	for _, meta := range list {
@@ -355,6 +371,7 @@ func SeedInfoFromMetadata(list []seeds.SeedMetadata) []session.SeedInfo {
 	return out
 }
 
+// Ghost helper that returns a defensive copy of handshake seed descriptors.
 func copySeedList(in []session.SeedInfo) []session.SeedInfo {
 	if len(in) == 0 {
 		return []session.SeedInfo{}

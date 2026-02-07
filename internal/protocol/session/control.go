@@ -23,20 +23,21 @@ var (
 	ErrControlMessageTooLarge = errors.New("session: control message too large")
 )
 
-// SeedInfo is the handshake shape for one seed descriptor.
+// Session handshake descriptor for one seed entry.
 type SeedInfo struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
 }
 
-// Registration is the Ghost->Mirage session-start payload.
+// Session seed.register payload from Ghost to Mirage.
 type Registration struct {
 	GhostID      string     `json:"ghost_id"`
 	PeerIdentity string     `json:"peer_identity"`
 	SeedList     []SeedInfo `json:"seed_list"`
 }
 
+// Session seed.register validator for required payload fields.
 func (r Registration) Validate() error {
 	if strings.TrimSpace(r.GhostID) == "" {
 		return fmt.Errorf("%w: missing ghost_id", ErrInvalidRegistration)
@@ -58,7 +59,7 @@ func (r Registration) Validate() error {
 	return nil
 }
 
-// RegistrationAck is the Mirage->Ghost registration response.
+// Session seed.register.ack payload from Mirage to Ghost.
 type RegistrationAck struct {
 	Status      string `json:"status"`
 	Code        uint32 `json:"code"`
@@ -67,6 +68,7 @@ type RegistrationAck struct {
 	TimestampMS uint64 `json:"timestamp_ms"`
 }
 
+// Session seed.register.ack validator for required payload fields.
 func (a RegistrationAck) Validate() error {
 	status := strings.TrimSpace(a.Status)
 	if status != AckStatusAccepted && status != AckStatusRejected {
@@ -81,12 +83,14 @@ func (a RegistrationAck) Validate() error {
 	return nil
 }
 
+// Session control-plane envelope for handshake payload variants.
 type controlEnvelope struct {
 	Type string           `json:"type"`
 	Reg  *Registration    `json:"registration,omitempty"`
 	Ack  *RegistrationAck `json:"registration_ack,omitempty"`
 }
 
+// Session writer for one newline-delimited seed.register envelope.
 func WriteRegistration(w io.Writer, reg Registration) error {
 	if err := reg.Validate(); err != nil {
 		return err
@@ -97,6 +101,7 @@ func WriteRegistration(w io.Writer, reg Registration) error {
 	})
 }
 
+// Session reader for one validated seed.register envelope.
 func ReadRegistration(r *bufio.Reader) (Registration, error) {
 	env, err := readControlEnvelope(r)
 	if err != nil {
@@ -111,6 +116,7 @@ func ReadRegistration(r *bufio.Reader) (Registration, error) {
 	return *env.Reg, nil
 }
 
+// Session writer for one newline-delimited seed.register.ack envelope.
 func WriteRegistrationAck(w io.Writer, ack RegistrationAck) error {
 	if err := ack.Validate(); err != nil {
 		return err
@@ -121,6 +127,7 @@ func WriteRegistrationAck(w io.Writer, ack RegistrationAck) error {
 	})
 }
 
+// Session reader for one validated seed.register.ack envelope.
 func ReadRegistrationAck(r *bufio.Reader) (RegistrationAck, error) {
 	env, err := readControlEnvelope(r)
 	if err != nil {
@@ -135,6 +142,7 @@ func ReadRegistrationAck(r *bufio.Reader) (RegistrationAck, error) {
 	return *env.Ack, nil
 }
 
+// Session helper that serializes one newline-delimited JSON control envelope.
 func writeControlEnvelope(w io.Writer, env controlEnvelope) error {
 	payload, err := json.Marshal(env)
 	if err != nil {
@@ -147,6 +155,7 @@ func writeControlEnvelope(w io.Writer, env controlEnvelope) error {
 	return nil
 }
 
+// Session helper that reads one newline-delimited JSON control envelope.
 func readControlEnvelope(r *bufio.Reader) (controlEnvelope, error) {
 	line, err := r.ReadBytes('\n')
 	if err != nil {

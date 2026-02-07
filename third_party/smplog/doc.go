@@ -7,6 +7,8 @@
 //
 // Relevant docs (project integration):
 // - docs/architecture/definitions/observability.toml
+//
 // - docs/glossary/observability.md
-// - docs/progress.md
+//
+// - docs/progress/index.md
 package logs

@@ -15,18 +15,18 @@ var (
 	ErrInvalidMetadata = errors.New("invalid seed metadata")
 )
 
-// Registry stores seeds by stable identifier.
+// Seeds package registry storing seeds by stable identifier.
 type Registry struct {
 	items map[string]Seed
 }
 
-// NewRegistry creates an empty seed registry.
+// Seeds package constructor for an empty registry.
 func NewRegistry() *Registry {
 	logs.Debug("seeds.NewRegistry")
 	return &Registry{items: make(map[string]Seed)}
 }
 
-// ValidateMetadata checks required metadata fields and id format.
+// Seeds package metadata validator for required fields and id format.
 func ValidateMetadata(meta SeedMetadata) error {
 	logs.Debugf("seeds.ValidateMetadata id=%q", meta.ID)
 	id := strings.TrimSpace(meta.ID)
@@ -44,7 +44,7 @@ func ValidateMetadata(meta SeedMetadata) error {
 	return nil
 }
 
-// Register adds a seed to the registry.
+// Seeds package registry insert operation for one seed.
 func (r *Registry) Register(seed Seed) error {
 	logs.Debugf("seeds.Register start")
 	if seed == nil {
@@ -67,14 +67,14 @@ func (r *Registry) Register(seed Seed) error {
 	return nil
 }
 
-// Resolve returns a seed by id.
+// Seeds package registry lookup by id.
 func (r *Registry) Resolve(id string) (Seed, bool) {
 	seed, ok := r.items[id]
 	logs.Debugf("seeds.Resolve id=%q found=%v", id, ok)
 	return seed, ok
 }
 
-// ListMetadata returns deterministic metadata ordering by id.
+// Seeds package metadata snapshot in deterministic id order.
 func (r *Registry) ListMetadata() []SeedMetadata {
 	logs.Debugf("seeds.ListMetadata count=%d", len(r.items))
 	list := make([]SeedMetadata, 0, len(r.items))
@@ -88,6 +88,7 @@ func (r *Registry) ListMetadata() []SeedMetadata {
 	return list
 }
 
+// Seeds package id-format validator for stable seed identifiers.
 func isValidID(id string) bool {
 	logs.Debugf("seeds.isValidID id=%q", id)
 	if id == "" {

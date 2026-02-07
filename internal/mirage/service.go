@@ -21,12 +21,14 @@ import (
 	logs "github.com/danmuck/smplog"
 )
 
+// Mirage session endpoint configuration.
 type ServiceConfig struct {
 	ListenAddr             string
 	RequireIdentityBinding bool
 	Session                session.Config
 }
 
+// Mirage service defaults for session endpoint configuration.
 func DefaultServiceConfig() ServiceConfig {
 	return ServiceConfig{
 		ListenAddr:             ":9000",
@@ -35,6 +37,7 @@ func DefaultServiceConfig() ServiceConfig {
 	}
 }
 
+// Mirage observed state for one connected Ghost identity.
 type RegisteredGhost struct {
 	GhostID      string
 	RemoteAddr   string
@@ -45,17 +48,19 @@ type RegisteredGhost struct {
 	Connected    bool
 }
 
+// Mirage internal state with mutable registration metadata and ack idempotency map.
 type registeredGhostState struct {
 	meta       RegisteredGhost
 	ackByEvent map[string]session.EventAck
 }
 
+// Mirage internal transport-authenticated peer identity details.
 type peerAuth struct {
 	PeerIdentity  string
 	Authenticated bool
 }
 
-// Service is a minimal Mirage runtime for session/handshake contracts.
+// Mirage runtime service for session and handshake contracts.
 type Service struct {
 	cfg ServiceConfig
 
@@ -64,10 +69,12 @@ type Service struct {
 	conns    map[net.Conn]struct{}
 }
 
+// Mirage service constructor using default configuration.
 func NewService() *Service {
 	return NewServiceWithConfig(DefaultServiceConfig())
 }
 
+// Mirage service constructor using explicit configuration.
 func NewServiceWithConfig(cfg ServiceConfig) *Service {
 	if strings.TrimSpace(cfg.ListenAddr) == "" {
 		cfg.ListenAddr = DefaultServiceConfig().ListenAddr
@@ -80,7 +87,7 @@ func NewServiceWithConfig(cfg ServiceConfig) *Service {
 	}
 }
 
-// Run starts the Mirage session endpoint and blocks until signal shutdown.
+// Mirage runtime entrypoint that blocks until signal shutdown.
 func (s *Service) Run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -97,6 +104,7 @@ func (s *Service) Run() error {
 	return s.Serve(ctx, ln)
 }
 
+// Mirage listener builder for TCP or TLS based on transport policy.
 func (s *Service) listen() (net.Listener, error) {
 	if !s.cfg.Session.TLS.Enabled {
 		return net.Listen("tcp", s.cfg.ListenAddr)
@@ -108,7 +116,7 @@ func (s *Service) listen() (net.Listener, error) {
 	return tls.Listen("tcp", s.cfg.ListenAddr, tlsCfg)
 }
 
-// Serve accepts Ghost sessions on an existing listener.
+// Mirage accept loop for Ghost sessions on an existing listener.
 func (s *Service) Serve(ctx context.Context, ln net.Listener) error {
 	if err := s.cfg.Session.ValidateServerTransport(); err != nil {
 		return err
@@ -133,6 +141,7 @@ func (s *Service) Serve(ctx context.Context, ln net.Listener) error {
 	}
 }
 
+// Mirage snapshot of observed Ghost registration state.
 func (s *Service) SnapshotRegisteredGhosts() []RegisteredGhost {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -145,6 +154,7 @@ func (s *Service) SnapshotRegisteredGhosts() []RegisteredGhost {
 	return out
 }
 
+// Mirage connection handler for registration and event ingestion.
 func (s *Service) handleConn(conn net.Conn) {
 	defer conn.Close()
 	defer s.untrackConn(conn)
@@ -206,6 +216,7 @@ func (s *Service) handleConn(conn net.Conn) {
 	}
 }
 
+// Mirage registration handler for one seed.register handshake payload.
 func (s *Service) handleRegistration(
 	conn net.Conn,
 	reader *bufio.Reader,
@@ -306,6 +317,7 @@ func (s *Service) handleRegistration(
 	}
 }
 
+// Mirage transport-auth helper enforcing TLS/mTLS and extracting peer identity.
 func (s *Service) authenticateConn(conn net.Conn) (peerAuth, error) {
 	mode := session.NormalizeSecurityMode(s.cfg.Session.SecurityMode)
 	if !s.cfg.Session.TLS.Enabled {
@@ -339,6 +351,7 @@ func (s *Service) authenticateConn(conn net.Conn) (peerAuth, error) {
 	return peerAuth{PeerIdentity: peerID, Authenticated: true}, nil
 }
 
+// Mirage certificate identity extractor using CN/URI/DNS preference order.
 func peerIdentityFromCert(cert *x509.Certificate) string {
 	if cert == nil {
 		return ""
@@ -359,6 +372,7 @@ func peerIdentityFromCert(cert *x509.Certificate) string {
 	return ""
 }
 
+// Mirage TLS server-config builder for listener transport enforcement.
 func (s *Service) serverTLSConfig() (*tls.Config, error) {
 	cert, err := tls.LoadX509KeyPair(s.cfg.Session.TLS.CertFile, s.cfg.Session.TLS.KeyFile)
 	if err != nil {
@@ -386,6 +400,7 @@ func (s *Service) serverTLSConfig() (*tls.Config, error) {
 	return cfg, nil
 }
 
+// Mirage event-ingest handler returning deterministic idempotent event.ack.
 func (s *Service) acceptEvent(ghostID string, event session.Event) session.EventAck {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -417,6 +432,7 @@ func (s *Service) acceptEvent(ghostID string, event session.Event) session.Event
 	return ack
 }
 
+// Mirage helper that returns a defensive copy of registered seed descriptors.
 func copySeedList(in []session.SeedInfo) []session.SeedInfo {
 	if len(in) == 0 {
 		return []session.SeedInfo{}
@@ -426,6 +442,7 @@ func copySeedList(in []session.SeedInfo) []session.SeedInfo {
 	return out
 }
 
+// Mirage disconnect marker that retains observed ghost state.
 func (s *Service) unregisterGhost(ghostID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -437,18 +454,21 @@ func (s *Service) unregisterGhost(ghostID string) {
 	state.meta.RemoteAddr = ""
 }
 
+// Mirage connection-tracking add operation for coordinated shutdown.
 func (s *Service) trackConn(conn net.Conn) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.conns[conn] = struct{}{}
 }
 
+// Mirage connection-tracking remove operation after connection teardown.
 func (s *Service) untrackConn(conn net.Conn) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.conns, conn)
 }
 
+// Mirage shutdown helper that closes and drains tracked active connections.
 func (s *Service) closeAllConns() {
 	s.mu.Lock()
 	defer s.mu.Unlock()

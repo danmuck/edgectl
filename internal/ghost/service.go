@@ -22,6 +22,7 @@ var (
 	ErrInvalidMiragePolicy      = errors.New("ghost: invalid mirage session policy")
 )
 
+// MirageSessionPolicy controls Ghost behavior when Mirage is unavailable.
 type MirageSessionPolicy string
 
 const (
@@ -30,6 +31,7 @@ const (
 	MiragePolicyRequired MirageSessionPolicy = "required"
 )
 
+// MirageSessionConfig configures optional Ghost<->Mirage session behavior.
 type MirageSessionConfig struct {
 	Policy             MirageSessionPolicy
 	Address            string
@@ -38,6 +40,7 @@ type MirageSessionConfig struct {
 	SessionConfig      session.Config
 }
 
+// ServiceConfig configures Ghost standalone runtime defaults.
 type ServiceConfig struct {
 	GhostID           string
 	BuiltinSeedIDs    []string
@@ -45,6 +48,7 @@ type ServiceConfig struct {
 	Mirage            MirageSessionConfig
 }
 
+// Ghost service defaults for standalone runtime configuration.
 func DefaultServiceConfig() ServiceConfig {
 	return ServiceConfig{
 		GhostID:           "ghost.local",
@@ -66,12 +70,12 @@ type Service struct {
 	seq    atomic.Uint64
 }
 
-// NewService creates a Ghost service with default standalone config.
+// Ghost service constructor using default standalone config.
 func NewService() *Service {
 	return NewServiceWithConfig(DefaultServiceConfig())
 }
 
-// NewServiceWithConfig creates a Ghost service with explicit config.
+// Ghost service constructor using explicit config.
 func NewServiceWithConfig(cfg ServiceConfig) *Service {
 	cfg.Mirage.SessionConfig = cfg.Mirage.SessionConfig.WithDefaults()
 	if strings.TrimSpace(string(cfg.Mirage.Policy)) == "" {
@@ -83,7 +87,7 @@ func NewServiceWithConfig(cfg ServiceConfig) *Service {
 	}
 }
 
-// Run starts Ghost lifecycle and blocks until process signal shutdown.
+// Ghost runtime entrypoint that blocks until process signal shutdown.
 func (s *Service) Run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -94,11 +98,12 @@ func (s *Service) Run() error {
 	return s.serve(ctx)
 }
 
-// Server returns the lifecycle/execution boundary owner for Ghost.
+// Ghost runtime accessor for lifecycle/execution boundary owner.
 func (s *Service) Server() *Server {
 	return s.server
 }
 
+// Ghost bootstrap sequence: appear->seed->radiate lifecycle transitions.
 func (s *Service) bootstrap() error {
 	if s.cfg.HeartbeatInterval <= 0 {
 		return ErrInvalidHeartbeatInterval
@@ -132,6 +137,7 @@ func (s *Service) bootstrap() error {
 	return nil
 }
 
+// Ghost main loop for heartbeat logging and optional Mirage session supervision.
 func (s *Service) serve(ctx context.Context) error {
 	ticker := time.NewTicker(s.cfg.HeartbeatInterval)
 	defer ticker.Stop()
@@ -165,6 +171,7 @@ func (s *Service) serve(ctx context.Context) error {
 	}
 }
 
+// Ghost-side Mirage session manager with reconnect behavior.
 func (s *Service) runMirageSessionLoop(ctx context.Context) error {
 	attempt := 0
 	connectedOnce := false
@@ -216,6 +223,7 @@ func (s *Service) runMirageSessionLoop(ctx context.Context) error {
 	}
 }
 
+// Ghost Mirage client dial/register wrapper using runtime seed metadata.
 func (s *Service) connectMirageSession(ctx context.Context) (*MirageSession, error) {
 	clientCfg := MirageClientConfig{
 		Address:            strings.TrimSpace(s.cfg.Mirage.Address),
@@ -238,6 +246,7 @@ func (s *Service) connectMirageSession(ctx context.Context) (*MirageSession, err
 	return sessionConn, nil
 }
 
+// Ghost session health probe loop using heartbeat events.
 func (s *Service) monitorMirageSession(ctx context.Context, conn *MirageSession) error {
 	interval := s.cfg.Mirage.SessionConfig.HeartbeatInterval
 	if interval <= 0 {
@@ -261,6 +270,7 @@ func (s *Service) monitorMirageSession(ctx context.Context, conn *MirageSession)
 	}
 }
 
+// Ghost runtime atomic swap for the active Mirage session pointer.
 func (s *Service) setMirageSession(conn *MirageSession) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -270,6 +280,7 @@ func (s *Service) setMirageSession(conn *MirageSession) {
 	s.mirage = conn
 }
 
+// Ghost runtime session cleanup that closes and clears active Mirage session.
 func (s *Service) clearMirageSession() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -279,6 +290,7 @@ func (s *Service) clearMirageSession() {
 	}
 }
 
+// Ghost runtime guarded session clear that requires pointer identity match.
 func (s *Service) clearMirageSessionIf(target *MirageSession) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -289,12 +301,14 @@ func (s *Service) clearMirageSessionIf(target *MirageSession) {
 	s.mirage = nil
 }
 
+// Ghost runtime accessor for current Mirage session pointer, if any.
 func (s *Service) MirageSession() *MirageSession {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.mirage
 }
 
+// Ghost session probe timeout derived from session config.
 func (s *Service) sessionProbeTimeout() time.Duration {
 	if s.cfg.Mirage.SessionConfig.SessionDeadAfter > 0 {
 		return s.cfg.Mirage.SessionConfig.SessionDeadAfter
@@ -305,6 +319,7 @@ func (s *Service) sessionProbeTimeout() time.Duration {
 	return 5 * time.Second
 }
 
+// Ghost synthetic heartbeat event builder for Mirage session probes.
 func (s *Service) sessionProbeEvent() EventEnv {
 	now := uint64(time.Now().UnixMilli())
 	seq := s.seq.Add(1)
@@ -319,6 +334,7 @@ func (s *Service) sessionProbeEvent() EventEnv {
 	}
 }
 
+// Ghost reconnect backoff wait helper with deterministic delay.
 func (s *Service) waitReconnectBackoff(ctx context.Context, attempt int) error {
 	backoffCfg := s.cfg.Mirage.SessionConfig.Backoff
 	backoffCfg.Jitter = false
@@ -333,6 +349,7 @@ func (s *Service) waitReconnectBackoff(ctx context.Context, attempt int) error {
 	}
 }
 
+// Ghost policy validator for allowed Mirage session policy values.
 func validateMiragePolicy(policy MirageSessionPolicy) error {
 	switch policy {
 	case MiragePolicyHeadless, MiragePolicyAuto, MiragePolicyRequired:
@@ -342,6 +359,7 @@ func validateMiragePolicy(policy MirageSessionPolicy) error {
 	}
 }
 
+// Ghost builtin-seed resolver that builds a runtime registry.
 func buildBuiltinRegistry(seedIDs []string) (*seeds.Registry, error) {
 	reg := seeds.NewRegistry()
 

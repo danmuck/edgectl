@@ -16,6 +16,7 @@ var (
 	ErrSeedRegistry   = errors.New("ghost: invalid seed registry")
 )
 
+// LifecyclePhase describes Ghost runtime phase transitions.
 type LifecyclePhase string
 
 const (
@@ -25,15 +26,18 @@ const (
 	PhaseSeeded    LifecyclePhase = "seeded"
 )
 
+// GhostConfig configures identity at Ghost appear time.
 type GhostConfig struct {
 	GhostID string
 }
 
+// SeedRegistry resolves and lists seeds available to this Ghost instance.
 type SeedRegistry interface {
 	Resolve(seedID string) (seeds.Seed, bool)
 	ListMetadata() []seeds.SeedMetadata
 }
 
+// Lifecycle defines Ghost server phase transitions.
 type Lifecycle interface {
 	Appear(cfg GhostConfig) error
 	Radiate() error
@@ -41,6 +45,7 @@ type Lifecycle interface {
 	Status() LifecycleStatus
 }
 
+// CommandBoundary defines command intake and execution-state query operations.
 type CommandBoundary interface {
 	HandleCommand(cmd CommandEnv) (ExecutionState, error)
 	HandleCommandAndExecute(cmd CommandEnv) (EventEnv, error)
@@ -50,12 +55,14 @@ type CommandBoundary interface {
 	ExecutionByMessageID(messageID uint64) (ExecutionState, bool)
 }
 
+// LifecycleStatus reports current Ghost identity/phase/seed inventory size.
 type LifecycleStatus struct {
 	GhostID   string
 	Phase     LifecyclePhase
 	SeedCount int
 }
 
+// Server owns Ghost lifecycle, command intake, and execution state storage.
 type Server struct {
 	mu                 sync.RWMutex
 	ghostID            string
@@ -66,6 +73,7 @@ type Server struct {
 	commandByMessageID map[uint64]string
 }
 
+// Ghost constructor for a server in boot phase with empty execution state.
 func NewServer() *Server {
 	logs.Debug("ghost.NewServer")
 	return &Server{
@@ -76,6 +84,7 @@ func NewServer() *Server {
 	}
 }
 
+// Ghost lifecycle transition: sets immutable identity and moves boot->appeared.
 func (s *Server) Appear(cfg GhostConfig) error {
 	logs.Debugf("ghost.Server.Appear ghost_id=%q", cfg.GhostID)
 	id := strings.TrimSpace(cfg.GhostID)
@@ -98,6 +107,7 @@ func (s *Server) Appear(cfg GhostConfig) error {
 	return nil
 }
 
+// Ghost lifecycle transition: moves seeded->radiating to accept commands.
 func (s *Server) Radiate() error {
 	logs.Debug("ghost.Server.Radiate")
 	s.mu.Lock()
@@ -113,6 +123,7 @@ func (s *Server) Radiate() error {
 	return nil
 }
 
+// Ghost lifecycle transition: installs seed registry and moves appeared->seeded.
 func (s *Server) Seed(reg SeedRegistry) error {
 	logs.Debug("ghost.Server.Seed")
 	if reg == nil {
@@ -139,6 +150,7 @@ func (s *Server) Seed(reg SeedRegistry) error {
 	return nil
 }
 
+// Ghost status snapshot of identity, phase, and seed count.
 func (s *Server) Status() LifecycleStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -162,6 +174,7 @@ func (s *Server) Status() LifecycleStatus {
 	return status
 }
 
+// Ghost command boundary handler for validation, authorization, and recording.
 func (s *Server) HandleCommand(cmd CommandEnv) (ExecutionState, error) {
 	logs.Debugf(
 		"ghost.Server.HandleCommand message_id=%d command_id=%q intent_id=%q ghost_id=%q",
@@ -215,6 +228,7 @@ func (s *Server) HandleCommand(cmd CommandEnv) (ExecutionState, error) {
 	return state, nil
 }
 
+// Ghost execution-store update with terminal pipeline artifacts.
 func (s *Server) completeExecution(
 	executionID string,
 	seedExec SeedExecuteEnv,
@@ -247,6 +261,7 @@ func (s *Server) completeExecution(
 	)
 }
 
+// Ghost execution lookup by execution_id.
 func (s *Server) GetExecution(executionID string) (ExecutionState, bool) {
 	key := strings.TrimSpace(executionID)
 
@@ -258,10 +273,12 @@ func (s *Server) GetExecution(executionID string) (ExecutionState, bool) {
 	return state, ok
 }
 
+// Ghost execution lookup by command_id.
 func (s *Server) GetByCommandID(commandID string) (ExecutionState, bool) {
 	return s.ExecutionByCommandID(commandID)
 }
 
+// Ghost execution lookup by command_id.
 func (s *Server) ExecutionByCommandID(commandID string) (ExecutionState, bool) {
 	key := strings.TrimSpace(commandID)
 
@@ -273,6 +290,7 @@ func (s *Server) ExecutionByCommandID(commandID string) (ExecutionState, bool) {
 	return state, ok
 }
 
+// Ghost execution lookup by message_id.
 func (s *Server) ExecutionByMessageID(messageID uint64) (ExecutionState, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -287,7 +305,7 @@ func (s *Server) ExecutionByMessageID(messageID uint64) (ExecutionState, bool) {
 	return state, ok
 }
 
-// SeedMetadata returns a snapshot of currently registered seed metadata.
+// Ghost snapshot of currently registered seed metadata.
 func (s *Server) SeedMetadata() []seeds.SeedMetadata {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -300,6 +318,7 @@ func (s *Server) SeedMetadata() []seeds.SeedMetadata {
 	return out
 }
 
+// Ghost lifecycle helper for stable transition mismatch errors.
 func transitionError(current LifecyclePhase, expected LifecyclePhase) error {
 	return fmt.Errorf("%w: have=%s want=%s", ErrLifecycleOrder, current, expected)
 }

@@ -23,12 +23,13 @@ const (
 	CompletionFailed    = "failed"
 )
 
+// Ghost command-loop request envelope keyed by caller-provided request id.
 type CommandRequest struct {
 	RequestID string
 	Command   CommandEnv
 }
 
-// ReportEnv is a minimal terminal-client/Mirage status envelope for command flow tests.
+// Ghost command-loop terminal status envelope used by tests and tooling.
 type ReportEnv struct {
 	IntentID        string
 	Phase           string
@@ -41,6 +42,7 @@ type ReportEnv struct {
 	LastUpdated     time.Time
 }
 
+// Ghost observed command record with terminal execution correlation ids.
 type ObservedCommand struct {
 	CommandID   string
 	ExecutionID string
@@ -49,13 +51,14 @@ type ObservedCommand struct {
 	UpdatedAt   time.Time
 }
 
+// Ghost command-loop snapshot of desired input and optional observed output.
 type CommandSnapshot struct {
 	Desired     CommandEnv
 	Observed    ObservedCommand
 	HasObserved bool
 }
 
-// SingleCommandLoop is a minimal reconcile controller for one-command closure.
+// Ghost single-command reconcile harness for deterministic command closure tests.
 type SingleCommandLoop struct {
 	mu       sync.RWMutex
 	desired  map[string]CommandEnv
@@ -63,6 +66,7 @@ type SingleCommandLoop struct {
 	seq      atomic.Uint64
 }
 
+// Ghost command-loop constructor for an empty reconcile state.
 func NewSingleCommandLoop() *SingleCommandLoop {
 	return &SingleCommandLoop{
 		desired:  make(map[string]CommandEnv),
@@ -70,6 +74,7 @@ func NewSingleCommandLoop() *SingleCommandLoop {
 	}
 }
 
+// Ghost command-loop ingest path that validates and stores desired command input.
 func (l *SingleCommandLoop) SubmitCommand(req CommandRequest) error {
 	key := strings.TrimSpace(req.RequestID)
 	if key == "" {
@@ -88,6 +93,7 @@ func (l *SingleCommandLoop) SubmitCommand(req CommandRequest) error {
 	return nil
 }
 
+// Ghost command-loop state lookup for one request id.
 func (l *SingleCommandLoop) SnapshotCommand(requestID string) (CommandSnapshot, bool) {
 	key := strings.TrimSpace(requestID)
 	l.mu.RLock()
@@ -104,6 +110,7 @@ func (l *SingleCommandLoop) SnapshotCommand(requestID string) (CommandSnapshot, 
 	return out, true
 }
 
+// Ghost reconcile pass that executes one stored command and records terminal state.
 func (l *SingleCommandLoop) ReconcileOnce(srv *Server, requestID string) (ReportEnv, error) {
 	key := strings.TrimSpace(requestID)
 	l.mu.RLock()
@@ -141,6 +148,7 @@ func (l *SingleCommandLoop) ReconcileOnce(srv *Server, requestID string) (Report
 	return reportFor(cmd, obs), nil
 }
 
+// Ghost helper that fills command ids and validates submitted command envelope.
 func normalizeSubmittedCommand(cmd CommandEnv, requestID string, msgSeq uint64) (CommandEnv, error) {
 	out := cmd
 	if out.MessageID == 0 {
@@ -155,6 +163,7 @@ func normalizeSubmittedCommand(cmd CommandEnv, requestID string, msgSeq uint64) 
 	return out, nil
 }
 
+// Ghost helper that maps execution result state into a terminal report envelope.
 func reportFor(cmd CommandEnv, observed ObservedCommand) ReportEnv {
 	completion := CompletionFailed
 	summary := fmt.Sprintf("command %s failed", cmd.CommandID)

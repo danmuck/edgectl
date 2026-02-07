@@ -11,6 +11,7 @@ import (
 
 const unknownSeedExitCode int32 = 127
 
+// Ghost full command pipeline: boundary accept -> seed.execute -> seed.result -> event.
 func (s *Server) HandleCommandAndExecute(cmd CommandEnv) (EventEnv, error) {
 	logs.Debugf(
 		"ghost.Server.HandleCommandAndExecute message_id=%d command_id=%q",
@@ -47,6 +48,7 @@ func (s *Server) HandleCommandAndExecute(cmd CommandEnv) (EventEnv, error) {
 	return event, nil
 }
 
+// Ghost mapping from accepted command state to seed.execute payload.
 func buildSeedExecute(state ExecutionState) SeedExecuteEnv {
 	return SeedExecuteEnv{
 		ExecutionID: state.ExecutionID,
@@ -57,6 +59,7 @@ func buildSeedExecute(state ExecutionState) SeedExecuteEnv {
 	}
 }
 
+// Ghost seed dispatch helper: resolve target seed and invoke requested operation.
 func (s *Server) executeSeed(exec SeedExecuteEnv) SeedResultEnv {
 	s.mu.RLock()
 	reg := s.registry
@@ -82,6 +85,7 @@ func (s *Server) executeSeed(exec SeedExecuteEnv) SeedResultEnv {
 	return normalizeSeedResult(exec, result, err)
 }
 
+// Ghost normalization of seed output/error into canonical seed.result fields.
 func normalizeSeedResult(exec SeedExecuteEnv, result seeds.SeedResult, execErr error) SeedResultEnv {
 	status := strings.TrimSpace(result.Status)
 	if status == "" {
@@ -116,6 +120,7 @@ func normalizeSeedResult(exec SeedExecuteEnv, result seeds.SeedResult, execErr e
 	}
 }
 
+// Ghost deterministic seed.result builder for dispatch-time failures.
 func errorSeedResult(exec SeedExecuteEnv, reason string, exitCode int32) SeedResultEnv {
 	return SeedResultEnv{
 		ExecutionID: exec.ExecutionID,
@@ -127,6 +132,7 @@ func errorSeedResult(exec SeedExecuteEnv, reason string, exitCode int32) SeedRes
 	}
 }
 
+// Ghost event envelope builder from terminal seed result state.
 func buildEvent(state ExecutionState, seedResult SeedResultEnv) EventEnv {
 	outcome := OutcomeError
 	if seedResult.Status == SeedStatusOK && seedResult.ExitCode == 0 {
@@ -144,6 +150,7 @@ func buildEvent(state ExecutionState, seedResult SeedResultEnv) EventEnv {
 	}
 }
 
+// Ghost helper that returns a defensive copy of byte slices.
 func cloneBytes(in []byte) []byte {
 	if len(in) == 0 {
 		return nil

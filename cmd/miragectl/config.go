@@ -9,6 +9,7 @@ import (
 	"github.com/danmuck/edgectl/internal/protocol/session"
 )
 
+// miragectl config.toml key mapping to Mirage runtime settings.
 type fileConfig struct {
 	Addr                string `toml:"addr"`
 	RequireIdentityBind bool   `toml:"require_identity_binding"`
@@ -20,6 +21,7 @@ type fileConfig struct {
 	SessionTLSCAFile    string `toml:"session_tls_ca_file"`
 }
 
+// miragectl loader for TOML config with default overlay.
 func loadServiceConfig(path string) (mirage.ServiceConfig, error) {
 	cfg := mirage.DefaultServiceConfig()
 

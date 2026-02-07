@@ -15,17 +15,19 @@ const (
 
 var ErrCommandFailed = errors.New("seed command failed")
 
-// MongodSeed is a predefined service seed for controlling mongod service operations.
+// Seeds package predefined service seed for controlling mongod operations.
 type MongodSeed struct {
 	unit   string
 	runner tools.CommandRunner
 }
 
+// Seeds package constructor for mongod seed with default unit and local runner.
 func NewMongodSeed() MongodSeed {
 	logs.Debug("seeds.NewMongodSeed")
 	return NewMongodSeedWithRunner(DefaultMongodUnit, tools.ExecRunner{})
 }
 
+// Seeds package constructor for mongod seed with explicit unit and runner.
 func NewMongodSeedWithRunner(unit string, runner tools.CommandRunner) MongodSeed {
 	resolvedUnit := strings.TrimSpace(unit)
 	if resolvedUnit == "" {
@@ -40,6 +42,7 @@ func NewMongodSeedWithRunner(unit string, runner tools.CommandRunner) MongodSeed
 	}
 }
 
+// Seeds package metadata provider for stable identity and capability description.
 func (s MongodSeed) Metadata() SeedMetadata {
 	return SeedMetadata{
 		ID:          "seed.mongod",
@@ -48,6 +51,7 @@ func (s MongodSeed) Metadata() SeedMetadata {
 	}
 }
 
+// Seeds package operation catalog for mongod control behavior.
 func (s MongodSeed) Operations() []OperationSpec {
 	return []OperationSpec{
 		{Name: "status", Description: "read mongod service status", Idempotent: true},
@@ -58,6 +62,7 @@ func (s MongodSeed) Operations() []OperationSpec {
 	}
 }
 
+// Seeds package mongod operation dispatcher to system commands.
 func (s MongodSeed) Execute(action string, args map[string]string) (SeedResult, error) {
 	act := strings.TrimSpace(action)
 	unit := s.unit
@@ -91,6 +96,7 @@ func (s MongodSeed) Execute(action string, args map[string]string) (SeedResult, 
 	}
 }
 
+// Seeds package helper running one command and normalizing stdout/stderr/exit state.
 func (s MongodSeed) exec(name string, args ...string) (SeedResult, error) {
 	stdout, stderr, exitCode, err := s.runner.Run(name, args...)
 	if err != nil {

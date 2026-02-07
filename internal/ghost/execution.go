@@ -5,6 +5,7 @@ import (
 	"strings"
 )
 
+// Ghost in-memory command lifecycle phase marker.
 type ExecutionPhase string
 
 const (
@@ -12,7 +13,7 @@ const (
 	ExecutionComplete ExecutionPhase = "complete"
 )
 
-// ExecutionState tracks command intake state keyed by command/message ids.
+// Ghost in-memory execution record keyed by command and message ids.
 type ExecutionState struct {
 	MessageID    uint64
 	CommandID    string
@@ -29,6 +30,7 @@ type ExecutionState struct {
 	Phase        ExecutionPhase
 }
 
+// Ghost execution-state constructor from accepted command input.
 func newExecutionState(cmd CommandEnv) ExecutionState {
 	return ExecutionState{
 		MessageID:    cmd.MessageID,
@@ -43,10 +45,12 @@ func newExecutionState(cmd CommandEnv) ExecutionState {
 	}
 }
 
+// Ghost deterministic execution_id builder derived from command_id.
 func executionIDForCommand(commandID string) string {
 	return "exec." + strings.TrimSpace(commandID)
 }
 
+// Ghost helper that returns a defensive copy of command argument maps.
 func cloneArgs(in map[string]string) map[string]string {
 	if len(in) == 0 {
 		return nil

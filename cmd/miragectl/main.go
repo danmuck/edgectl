@@ -9,6 +9,7 @@ import (
 	logs "github.com/danmuck/smplog"
 )
 
+// miragectl entrypoint that loads config and runs Mirage runtime.
 func main() {
 	var configPath string
 	flag.StringVar(&configPath, "config", "cmd/miragectl/config.toml", "path to miragectl config.toml")

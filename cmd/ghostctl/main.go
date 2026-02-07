@@ -9,6 +9,7 @@ import (
 	logs "github.com/danmuck/smplog"
 )
 
+// ghostctl entrypoint that loads config and runs Ghost runtime.
 func main() {
 	var configPath string
 	flag.StringVar(&configPath, "config", "cmd/ghostctl/config.toml", "path to ghostctl config.toml")

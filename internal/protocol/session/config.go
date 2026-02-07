@@ -2,6 +2,7 @@ package session
 
 import "time"
 
+// Session transport enforcement level selector.
 type SecurityMode string
 
 const (
@@ -9,7 +10,7 @@ const (
 	SecurityModeProduction  SecurityMode = "production"
 )
 
-// TLSConfig defines session TLS/mTLS transport settings.
+// Session TLS/mTLS transport settings.
 type TLSConfig struct {
 	Enabled            bool
 	Mutual             bool
@@ -20,7 +21,7 @@ type TLSConfig struct {
 	InsecureSkipVerify bool
 }
 
-// BackoffConfig defines retry backoff behavior.
+// Session retry backoff behavior settings.
 type BackoffConfig struct {
 	InitialDelay time.Duration
 	Multiplier   float64
@@ -28,7 +29,7 @@ type BackoffConfig struct {
 	Jitter       bool
 }
 
-// Config defines transport/session reliability defaults.
+// Session transport/reliability configuration.
 type Config struct {
 	ConnectTimeout    time.Duration
 	HandshakeTimeout  time.Duration
@@ -42,7 +43,7 @@ type Config struct {
 	Backoff           BackoffConfig
 }
 
-// DefaultConfig returns contract-aligned defaults from reliability.toml.
+// Session default config aligned to reliability contract defaults.
 func DefaultConfig() Config {
 	return Config{
 		ConnectTimeout:    5 * time.Second,
@@ -62,7 +63,7 @@ func DefaultConfig() Config {
 	}
 }
 
-// WithDefaults fills unset fields while preserving explicit overrides.
+// Session config merger that fills unset fields while preserving overrides.
 func (c Config) WithDefaults() Config {
 	d := DefaultConfig()
 

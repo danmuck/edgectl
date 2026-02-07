@@ -16,6 +16,7 @@ const (
 	EnvLogBypass    = "EDGECTL_LOG_BYPASS"
 )
 
+// Logging profile selector for runtime vs test defaults.
 type Profile int
 
 const (
@@ -25,14 +26,17 @@ const (
 
 var configureOnce sync.Once
 
+// Logging runtime initializer for one-time runtime defaults.
 func ConfigureRuntime() {
 	Configure(ProfileRuntime)
 }
 
+// Logging test initializer for one-time test defaults.
 func ConfigureTests() {
 	Configure(ProfileTest)
 }
 
+// Logging one-time process initializer.
 func Configure(profile Profile) {
 	configureOnce.Do(func() {
 		cfg := defaultConfig(profile)
@@ -41,6 +45,7 @@ func Configure(profile Profile) {
 	})
 }
 
+// Logging default-config builder for selected profile.
 func defaultConfig(profile Profile) logs.Config {
 	cfg := logs.DefaultConfig()
 	switch profile {
@@ -54,6 +59,7 @@ func defaultConfig(profile Profile) logs.Config {
 	return cfg
 }
 
+// Logging env overlay for EDGECTL_LOG_* settings.
 func applyEnvOverrides(cfg *logs.Config) {
 	if lvl, ok := parseLevel(os.Getenv(EnvLogLevel)); ok {
 		cfg.Level = lvl
@@ -69,6 +75,7 @@ func applyEnvOverrides(cfg *logs.Config) {
 	}
 }
 
+// Logging level parser for user-provided level values.
 func parseLevel(raw string) (logs.Level, bool) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "":
@@ -90,6 +97,7 @@ func parseLevel(raw string) (logs.Level, bool) {
 	}
 }
 
+// Logging bool parser for optional environment values.
 func parseBool(raw string) (bool, bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

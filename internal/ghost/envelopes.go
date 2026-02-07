@@ -13,6 +13,7 @@ const (
 	SeedStatusError = "error"
 )
 
+// Ghost normalized seed.execute request envelope for seed dispatch.
 type SeedExecuteEnv struct {
 	ExecutionID string
 	CommandID   string
@@ -21,6 +22,7 @@ type SeedExecuteEnv struct {
 	Args        map[string]string
 }
 
+// Ghost seed.execute validator for required envelope fields.
 func (e SeedExecuteEnv) Validate() error {
 	if strings.TrimSpace(e.ExecutionID) == "" {
 		return fmt.Errorf("%w: missing execution_id", ErrInvalidCommandEnv)
@@ -37,6 +39,7 @@ func (e SeedExecuteEnv) Validate() error {
 	return nil
 }
 
+// Ghost normalized seed.result envelope emitted from seed execution.
 type SeedResultEnv struct {
 	ExecutionID string
 	SeedID      string
@@ -46,6 +49,7 @@ type SeedResultEnv struct {
 	ExitCode    int32
 }
 
+// Ghost seed.result validator for required envelope fields.
 func (e SeedResultEnv) Validate() error {
 	if strings.TrimSpace(e.ExecutionID) == "" {
 		return fmt.Errorf("%w: missing execution_id", ErrInvalidCommandEnv)
@@ -59,6 +63,7 @@ func (e SeedResultEnv) Validate() error {
 	return nil
 }
 
+// Ghost terminal event envelope emitted after command execution closure.
 type EventEnv struct {
 	EventID     string
 	CommandID   string
@@ -69,6 +74,7 @@ type EventEnv struct {
 	TimestampMS uint64
 }
 
+// Ghost event validator for required terminal envelope fields.
 func (e EventEnv) Validate() error {
 	if strings.TrimSpace(e.EventID) == "" {
 		return fmt.Errorf("%w: missing event_id", ErrInvalidCommandEnv)
@@ -94,6 +100,7 @@ func (e EventEnv) Validate() error {
 	return nil
 }
 
+// Ghost deterministic event_id builder derived from command_id.
 func eventIDForCommand(commandID string) string {
 	return "evt." + strings.TrimSpace(commandID)
 }

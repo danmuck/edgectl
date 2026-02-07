@@ -16,12 +16,14 @@ import (
 	"time"
 )
 
+// tlstest certificate authority helper for issuing test TLS credentials.
 type Authority struct {
 	cert   *x509.Certificate
 	key    *rsa.PrivateKey
 	caPath string
 }
 
+// tlstest constructor for a temporary certificate authority.
 func NewAuthority(t testing.TB, dir string, commonName string) *Authority {
 	t.Helper()
 
@@ -61,20 +63,24 @@ func NewAuthority(t testing.TB, dir string, commonName string) *Authority {
 	}
 }
 
+// tlstest CA certificate path accessor.
 func (a *Authority) CAFile() string {
 	return a.caPath
 }
 
+// tlstest server-certificate issuer using the test authority.
 func (a *Authority) IssueServerCert(t testing.TB, dir string, commonName string, dnsNames []string, ips []net.IP) (string, string) {
 	t.Helper()
 	return a.issueCert(t, dir, commonName, x509.ExtKeyUsageServerAuth, dnsNames, ips)
 }
 
+// tlstest client-certificate issuer using the test authority.
 func (a *Authority) IssueClientCert(t testing.TB, dir string, commonName string) (string, string) {
 	t.Helper()
 	return a.issueCert(t, dir, commonName, x509.ExtKeyUsageClientAuth, nil, nil)
 }
 
+// tlstest internal certificate issuer shared by client/server helpers.
 func (a *Authority) issueCert(
 	t testing.TB,
 	dir string,
@@ -119,11 +125,13 @@ func (a *Authority) issueCert(
 	return certPath, keyPath
 }
 
+// tlstest helper that writes one PEM block to disk.
 func writePEM(path string, blockType string, der []byte, perm os.FileMode) error {
 	data := pem.EncodeToMemory(&pem.Block{Type: blockType, Bytes: der})
 	return os.WriteFile(path, data, perm)
 }
 
+// tlstest helper that sanitizes a cert basename for filesystem paths.
 func sanitize(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {

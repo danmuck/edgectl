@@ -17,12 +17,14 @@ import (
 	"time"
 )
 
+// testctl CLI flags for execution mode and selection scope.
 type options struct {
 	mode string
 	pkg  string
 	run  string
 }
 
+// testctl mirror of `go test -json` event fields consumed by renderer.
 type testEvent struct {
 	Action  string  `json:"Action"`
 	Package string  `json:"Package"`
@@ -31,6 +33,7 @@ type testEvent struct {
 	Output  string  `json:"Output"`
 }
 
+// testctl discovered test names for one package.
 type packageTests struct {
 	ImportPath string
 	RelPath    string
@@ -38,6 +41,7 @@ type packageTests struct {
 	Tests      []string
 }
 
+// testctl grouped package/test inventory by module bucket.
 type inventory struct {
 	modulePath string
 	groups     []string
@@ -45,12 +49,14 @@ type inventory struct {
 	packages   []packageTests
 }
 
+// testctl per-test outcome row used in summary rendering.
 type testResult struct {
 	Name    string
 	Status  string
 	Elapsed float64
 }
 
+// testctl per-package outcomes plus per-test result rows.
 type packageResult struct {
 	ImportPath string
 	RelPath    string
@@ -59,6 +65,7 @@ type packageResult struct {
 	Tests      []testResult
 }
 
+// testctl live counters while streaming test events.
 type packageStats struct {
 	testsRun  int
 	testsPass int
@@ -68,11 +75,13 @@ type packageStats struct {
 	elapsed   float64
 }
 
+// testctl package collector keeping output order stable while updating test rows.
 type packageCollector struct {
 	result    packageResult
 	testIndex map[string]int
 }
 
+// testctl aggregate report printed after each run.
 type runSummary struct {
 	packagesTotal  int
 	packagesPass   int
@@ -92,6 +101,7 @@ var (
 	latestRunSummary   runSummary
 )
 
+// testctl mode dispatcher for list/run/interactive.
 func main() {
 	opts := parseFlags()
 	switch opts.mode {
@@ -116,6 +126,7 @@ func main() {
 	}
 }
 
+// testctl flag parser into options.
 func parseFlags() options {
 	var opts options
 	flag.StringVar(&opts.mode, "mode", "run", "mode: run | list | interactive")
@@ -125,6 +136,7 @@ func parseFlags() options {
 	return opts
 }
 
+// testctl interactive selector UI for choosing test scope.
 func runInteractive(opts options) (int, error) {
 	inv, err := buildInventory(parsePatterns(opts.pkg))
 	if err != nil {
@@ -190,6 +202,7 @@ func runInteractive(opts options) (int, error) {
 	}
 }
 
+// testctl bounded integer prompt reader from stdin.
 func promptInt(reader *bufio.Reader, label string, min int, max int) (int, error) {
 	for {
 		fmt.Printf("%s [%d-%d]: ", label, min, max)
@@ -210,6 +223,7 @@ func promptInt(reader *bufio.Reader, label string, min int, max int) (int, error
 	}
 }
 
+// testctl inventory printer grouped by module bucket.
 func runList(opts options) error {
 	inv, err := buildInventory(parsePatterns(opts.pkg))
 	if err != nil {
@@ -258,6 +272,7 @@ func runList(opts options) error {
 	return nil
 }
 
+// testctl inventory builder from package patterns and discovered tests.
 func buildInventory(patterns []string) (inventory, error) {
 	modulePath, err := goListModulePath()
 	if err != nil {
@@ -305,6 +320,7 @@ func buildInventory(patterns []string) (inventory, error) {
 	}, nil
 }
 
+// testctl execution path for `go test -json` with streamed summaries.
 func runTests(opts options) (int, error) {
 	latestRunSummary = runSummary{}
 
@@ -366,6 +382,7 @@ func runTests(opts options) (int, error) {
 	return exitCode, nil
 }
 
+// testctl JSON-event stream consumer building summary state.
 func streamTestEvents(modulePath string, r io.Reader) error {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
@@ -509,6 +526,7 @@ func streamTestEvents(modulePath string, r io.Reader) error {
 	return nil
 }
 
+// testctl helper returning mutable test row, creating it if needed.
 func ensureTestResult(pc *packageCollector, testName string) *testResult {
 	if pc == nil {
 		return &testResult{}
@@ -522,6 +540,7 @@ func ensureTestResult(pc *packageCollector, testName string) *testResult {
 	return &pc.result.Tests[idx]
 }
 
+// testctl stderr forwarder for non-empty go test subprocess lines.
 func streamStderr(r io.Reader) error {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 16*1024), 2*1024*1024)
@@ -535,6 +554,7 @@ func streamStderr(r io.Reader) error {
 	return sc.Err()
 }
 
+// testctl output formatter that filters noise and indents useful lines.
 func renderOutputLine(raw string, withinTest bool) {
 	line := strings.TrimSpace(raw)
 	if line == "" {
@@ -556,6 +576,7 @@ func renderOutputLine(raw string, withinTest bool) {
 	fmt.Printf("%s %s\n", prefix, line)
 }
 
+// testctl final printer for package/test matrix and aggregate totals.
 func printRunSummary(start time.Time) {
 	totalDuration := time.Since(start)
 	fmt.Println()
@@ -601,6 +622,7 @@ func printRunSummary(start time.Time) {
 	}
 }
 
+// testctl package-pattern normalizer for comma/space separated input.
 func parsePatterns(raw string) []string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -623,6 +645,7 @@ func parsePatterns(raw string) []string {
 	return out
 }
 
+// testctl helper returning current module import path.
 func goListModulePath() (string, error) {
 	out, err := exec.Command("go", "list", "-m", "-f", "{{.Path}}").Output()
 	if err != nil {
@@ -631,6 +654,7 @@ func goListModulePath() (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// testctl helper resolving package patterns into deterministic import paths.
 func goListPackages(patterns []string) ([]string, error) {
 	args := append([]string{"list"}, patterns...)
 	out, err := exec.Command("go", args...).CombinedOutput()
@@ -650,6 +674,7 @@ func goListPackages(patterns []string) ([]string, error) {
 	return outPkgs, nil
 }
 
+// testctl helper returning discovered test names for one package.
 func listTestsForPackage(pkg string) ([]string, error) {
 	out, err := exec.Command("go", "test", pkg, "-list", ".").CombinedOutput()
 	if err != nil {
@@ -668,6 +693,7 @@ func listTestsForPackage(pkg string) ([]string, error) {
 	return tests, nil
 }
 
+// testctl helper converting full import path to module-relative label.
 func relImportPath(modulePath string, importPath string) string {
 	if importPath == modulePath {
 		return "."
@@ -679,6 +705,7 @@ func relImportPath(modulePath string, importPath string) string {
 	return importPath
 }
 
+// testctl helper mapping relative package path to stable reporting bucket.
 func moduleGroup(relPath string) string {
 	if relPath == "." {
 		return "root"
@@ -702,6 +729,7 @@ func moduleGroup(relPath string) string {
 	return parts[0]
 }
 
+// testctl helper returning deterministic map key order.
 func sortedKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -711,6 +739,7 @@ func sortedKeys[V any](m map[string]V) []string {
 	return keys
 }
 
+// testctl fatal printer that exits non-zero.
 func fatalf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "testctl: "+format+"\n", args...)
 	os.Exit(1)

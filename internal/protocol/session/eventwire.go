@@ -12,7 +12,7 @@ import (
 	"github.com/danmuck/edgectl/internal/protocol/tlv"
 )
 
-// Event is the wire-transport event shape sent Ghost->Mirage.
+// Session wire event payload sent from Ghost to Mirage.
 type Event struct {
 	EventID     string
 	CommandID   string
@@ -23,6 +23,7 @@ type Event struct {
 	TimestampMS uint64
 }
 
+// Session event validator for required payload fields.
 func (e Event) Validate() error {
 	if strings.TrimSpace(e.EventID) == "" {
 		return fmt.Errorf("event missing event_id")
@@ -45,7 +46,7 @@ func (e Event) Validate() error {
 	return nil
 }
 
-// EventAck is the wire-transport acknowledgment shape sent Mirage->Ghost.
+// Session wire event.ack payload sent from Mirage to Ghost.
 type EventAck struct {
 	EventID     string
 	CommandID   string
@@ -55,6 +56,7 @@ type EventAck struct {
 	TimestampMS uint64
 }
 
+// Session event.ack validator for required payload fields.
 func (a EventAck) Validate() error {
 	if strings.TrimSpace(a.EventID) == "" {
 		return fmt.Errorf("event.ack missing event_id")
@@ -74,6 +76,7 @@ func (a EventAck) Validate() error {
 	return nil
 }
 
+// Session encoder for event envelope into framed protocol message bytes.
 func EncodeEventFrame(messageID uint64, event Event) ([]byte, error) {
 	if err := event.Validate(); err != nil {
 		return nil, err
@@ -107,6 +110,7 @@ func EncodeEventFrame(messageID uint64, event Event) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// Session decoder for one event frame payload with schema validation.
 func DecodeEventFrame(f frame.Frame) (Event, error) {
 	fields, err := tlv.DecodeFields(f.Payload)
 	if err != nil {
@@ -133,6 +137,7 @@ func DecodeEventFrame(f frame.Frame) (Event, error) {
 	return event, nil
 }
 
+// Session encoder for event.ack envelope into framed protocol message bytes.
 func EncodeEventAckFrame(messageID uint64, ack EventAck) ([]byte, error) {
 	if err := ack.Validate(); err != nil {
 		return nil, err
@@ -164,6 +169,7 @@ func EncodeEventAckFrame(messageID uint64, ack EventAck) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// Session decoder for one event.ack frame payload with schema validation.
 func DecodeEventAckFrame(f frame.Frame) (EventAck, error) {
 	fields, err := tlv.DecodeFields(f.Payload)
 	if err != nil {
@@ -189,34 +195,39 @@ func DecodeEventAckFrame(f frame.Frame) (EventAck, error) {
 	return ack, nil
 }
 
-// ReadFrame reads one framed message from the stream.
+// Session framed-message reader delegated to frame package limits/decoder.
 func ReadFrame(r io.Reader, limits frame.Limits) (frame.Frame, error) {
 	return frame.ReadFrame(r, limits)
 }
 
+// Session helper returning required string field value after schema validation.
 func getRequiredString(fields []tlv.Field, id uint16) string {
 	f, _ := tlv.GetField(fields, id)
 	return string(f.Value)
 }
 
+// Session helper returning required u64 field value after schema validation.
 func getRequiredU64(fields []tlv.Field, id uint16) uint64 {
 	f, _ := tlv.GetField(fields, id)
 	v, _ := u64FromBytes(f.Value)
 	return v
 }
 
+// Session helper encoding uint32 in network byte order.
 func putU32(v uint32) []byte {
 	out := make([]byte, 4)
 	binary.BigEndian.PutUint32(out, v)
 	return out
 }
 
+// Session helper encoding uint64 in network byte order.
 func putU64(v uint64) []byte {
 	out := make([]byte, 8)
 	binary.BigEndian.PutUint64(out, v)
 	return out
 }
 
+// Session helper decoding network-order uint64 from fixed-length bytes.
 func u64FromBytes(b []byte) (uint64, error) {
 	if len(b) != 8 {
 		return 0, fmt.Errorf("session: invalid u64 length: %d", len(b))

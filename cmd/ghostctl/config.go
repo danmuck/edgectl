@@ -10,6 +10,7 @@ import (
 	"github.com/danmuck/edgectl/internal/protocol/session"
 )
 
+// ghostctl config.toml key mapping to Ghost runtime settings.
 type fileConfig struct {
 	ID                  string   `toml:"id"`
 	Seeds               []string `toml:"seeds"`
@@ -30,6 +31,7 @@ type fileConfig struct {
 	MirageTLSInsecure   bool     `toml:"mirage_tls_insecure_skip_verify"`
 }
 
+// ghostctl loader for TOML config with default overlay.
 func loadServiceConfig(path string) (ghost.ServiceConfig, error) {
 	cfg := ghost.DefaultServiceConfig()
 
@@ -113,6 +115,7 @@ func loadServiceConfig(path string) (ghost.ServiceConfig, error) {
 	return cfg, nil
 }
 
+// ghostctl seed list normalizer that trims ids and drops empty entries.
 func normalizeSeeds(in []string) []string {
 	if len(in) == 0 {
 		return []string{}

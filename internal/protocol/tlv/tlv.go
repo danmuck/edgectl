@@ -26,13 +26,14 @@ const (
 	TypeBytes  uint8 = 7
 )
 
-// Field is one decoded TLV field.
+// TLV decoded field tuple.
 type Field struct {
 	ID    uint16
 	Type  uint8
 	Value []byte
 }
 
+// TLV serializer for one field header and value bytes.
 func EncodeField(f Field) []byte {
 	logs.Debugf("tlv.EncodeField id=%d type=%d len=%d", f.ID, f.Type, len(f.Value))
 	buf := make([]byte, HeaderLen+len(f.Value))
@@ -43,6 +44,7 @@ func EncodeField(f Field) []byte {
 	return buf
 }
 
+// TLV parser for payload bytes into ordered fields.
 func DecodeFields(payload []byte) ([]Field, error) {
 	logs.Debugf("tlv.DecodeFields start len=%d", len(payload))
 	fields := make([]Field, 0)
@@ -69,6 +71,7 @@ func DecodeFields(payload []byte) ([]Field, error) {
 	return fields, nil
 }
 
+// TLV serializer for an ordered set of fields.
 func EncodeFields(fields []Field) []byte {
 	logs.Debugf("tlv.EncodeFields count=%d", len(fields))
 	out := make([]byte, 0)
@@ -79,6 +82,7 @@ func EncodeFields(fields []Field) []byte {
 	return out
 }
 
+// TLV field lookup returning the first field with matching id.
 func GetField(fields []Field, id uint16) (Field, bool) {
 	logs.Debugf("tlv.GetField id=%d count=%d", id, len(fields))
 	for _, f := range fields {
@@ -91,6 +95,7 @@ func GetField(fields []Field, id uint16) (Field, bool) {
 	return Field{}, false
 }
 
+// TLV type-check helper for field type id validation.
 func MustType(f Field, expected uint8) error {
 	if f.Type != expected {
 		logs.Errf("tlv.MustType mismatch id=%d got=%d want=%d", f.ID, f.Type, expected)
@@ -100,6 +105,7 @@ func MustType(f Field, expected uint8) error {
 	return nil
 }
 
+// TLV helper decoding a big-endian uint32 from fixed-length bytes.
 func U32FromBytes(b []byte) (uint32, error) {
 	if len(b) != 4 {
 		logs.Errf("tlv.U32FromBytes invalid len=%d", len(b))

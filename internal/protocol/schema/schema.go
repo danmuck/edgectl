@@ -55,17 +55,20 @@ const (
 	FieldAckCode   uint16 = 701
 )
 
+// Schema required field id/type pair for a message type.
 type Requirement struct {
 	ID   uint16
 	Type uint8
 }
 
+// Schema validation failure details.
 type ValidationError struct {
 	MessageType uint32
 	FieldID     uint16
 	Reason      string
 }
 
+// Schema validation error string formatter.
 func (e ValidationError) Error() string {
 	if e.FieldID == 0 {
 		return fmt.Sprintf("schema: message_type=%d: %s", e.MessageType, e.Reason)
@@ -125,7 +128,7 @@ var requirements = map[uint32][]Requirement{
 	},
 }
 
-// Validate enforces required fields and required field types for a message type.
+// Schema validator for required fields and required field types by message type.
 // Unknown fields are ignored by design.
 func Validate(messageType uint32, fields []tlv.Field) error {
 	logs.Debugf("schema.Validate message_type=%d fields=%d", messageType, len(fields))

@@ -14,7 +14,7 @@ var (
 	ErrDuplicateMessageID    = errors.New("ghost: duplicate message_id")
 )
 
-// CommandEnv is the Ghost input boundary envelope from Mirage.
+// Ghost command boundary envelope received from Mirage or a direct terminal client.
 type CommandEnv struct {
 	MessageID    uint64
 	CommandID    string
@@ -25,7 +25,7 @@ type CommandEnv struct {
 	Args         map[string]string
 }
 
-// Validate enforces required command envelope fields.
+// Ghost command-envelope validator for required boundary fields.
 func (e CommandEnv) Validate() error {
 	if e.MessageID == 0 {
 		return wrapInvalidCommand("missing message_id")
@@ -48,6 +48,7 @@ func (e CommandEnv) Validate() error {
 	return nil
 }
 
+// Ghost command-envelope error wrapper for boundary validation failures.
 func wrapInvalidCommand(reason string) error {
 	return fmt.Errorf("%w: %s", ErrInvalidCommandEnv, reason)
 }
