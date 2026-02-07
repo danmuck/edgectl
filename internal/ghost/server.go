@@ -43,6 +43,9 @@ type Lifecycle interface {
 
 type CommandBoundary interface {
 	HandleCommand(cmd CommandEnv) (ExecutionState, error)
+	HandleCommandAndExecute(cmd CommandEnv) (EventEnv, error)
+	GetExecution(executionID string) (ExecutionState, bool)
+	GetByCommandID(commandID string) (ExecutionState, bool)
 	ExecutionByCommandID(commandID string) (ExecutionState, bool)
 	ExecutionByMessageID(messageID uint64) (ExecutionState, bool)
 }
@@ -58,6 +61,7 @@ type Server struct {
 	ghostID            string
 	phase              LifecyclePhase
 	registry           SeedRegistry
+	executionByID      map[string]ExecutionState
 	executionByCmdID   map[string]ExecutionState
 	commandByMessageID map[uint64]string
 }
@@ -66,6 +70,7 @@ func NewServer() *Server {
 	logs.Debug("ghost.NewServer")
 	return &Server{
 		phase:              PhaseBoot,
+		executionByID:      make(map[string]ExecutionState),
 		executionByCmdID:   make(map[string]ExecutionState),
 		commandByMessageID: make(map[uint64]string),
 	}
@@ -198,6 +203,7 @@ func (s *Server) HandleCommand(cmd CommandEnv) (ExecutionState, error) {
 	}
 
 	state := newExecutionState(cmd)
+	s.executionByID[state.ExecutionID] = state
 	s.executionByCmdID[state.CommandID] = state
 	s.commandByMessageID[state.MessageID] = state.CommandID
 	logs.Infof(
@@ -207,6 +213,53 @@ func (s *Server) HandleCommand(cmd CommandEnv) (ExecutionState, error) {
 		state.MessageID,
 	)
 	return state, nil
+}
+
+func (s *Server) completeExecution(
+	executionID string,
+	seedExec SeedExecuteEnv,
+	seedResult SeedResultEnv,
+	event EventEnv,
+) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state, ok := s.executionByID[executionID]
+	if !ok {
+		logs.Errf("ghost.Server.completeExecution missing execution_id=%q", executionID)
+		return
+	}
+
+	state.SeedExecute = seedExec
+	state.SeedResult = seedResult
+	state.Event = event
+	state.Outcome = event.Outcome
+	state.Phase = ExecutionComplete
+
+	s.executionByID[state.ExecutionID] = state
+	s.executionByCmdID[state.CommandID] = state
+	s.commandByMessageID[state.MessageID] = state.CommandID
+	logs.Debugf(
+		"ghost.Server.completeExecution execution_id=%q command_id=%q outcome=%q",
+		state.ExecutionID,
+		state.CommandID,
+		state.Outcome,
+	)
+}
+
+func (s *Server) GetExecution(executionID string) (ExecutionState, bool) {
+	key := strings.TrimSpace(executionID)
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	state, ok := s.executionByID[key]
+	logs.Debugf("ghost.Server.GetExecution execution_id=%q found=%v", key, ok)
+	return state, ok
+}
+
+func (s *Server) GetByCommandID(commandID string) (ExecutionState, bool) {
+	return s.ExecutionByCommandID(commandID)
 }
 
 func (s *Server) ExecutionByCommandID(commandID string) (ExecutionState, bool) {

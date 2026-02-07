@@ -9,6 +9,7 @@ type ExecutionPhase string
 
 const (
 	ExecutionAccepted ExecutionPhase = "accepted"
+	ExecutionComplete ExecutionPhase = "complete"
 )
 
 // ExecutionState tracks command intake state keyed by command/message ids.
@@ -21,6 +22,10 @@ type ExecutionState struct {
 	SeedSelector string
 	Operation    string
 	Args         map[string]string
+	SeedExecute  SeedExecuteEnv
+	SeedResult   SeedResultEnv
+	Event        EventEnv
+	Outcome      string
 	Phase        ExecutionPhase
 }
 

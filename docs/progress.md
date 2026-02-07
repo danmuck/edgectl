@@ -152,25 +152,25 @@ Status: `Done`
 
 ## Phase 4 — Ghost Execution Layer
 
-Status: `In Progress`
+Status: `Done`
 
 ### Tasks
 
 - [x] Lock Ghost execution flow in docs (`command -> seed.execute -> seed.result -> event`) and add/update a message-flow diagram in `docs/architecture/models/`
 - [x] Define minimal Ghost contracts in `internal/ghost` for executor, event emitter, and execution state with required correlation fields (`message_id`, `command_id`, `execution_id`, `trace_id`)
 - [x] Implement Ghost command input boundary handler for `command` envelopes with Ghost-level semantic guards
-- [ ] Implement deterministic execution pipeline: resolve seed, execute action, normalize `seed.result`, emit terminal `event` (`success` or `error`)
-- [ ] Implement in-memory execution store keyed by `execution_id` and indexed by `command_id`
-- [ ] Add query methods for execution correlation (`GetExecution`, `GetByCommandID`)
-- [ ] Add tests for success path, unknown seed, unknown action, seed error path, and correlation/state query checks
-- [ ] Verify acceptance: every valid command yields one valid terminal event
-- [ ] Verify acceptance: execution state is queryable and correlated by command/execution IDs
-- [ ] Update `docs/progress.md` as each Phase 4 task/check passes
+- [x] Implement deterministic execution pipeline: resolve seed, execute action, normalize `seed.result`, emit terminal `event` (`success` or `error`)
+- [x] Implement in-memory execution store keyed by `execution_id` and indexed by `command_id`
+- [x] Add query methods for execution correlation (`GetExecution`, `GetByCommandID`)
+- [x] Add tests for success path, unknown seed, unknown action, seed error path, and correlation/state query checks
+- [x] Verify acceptance: every valid command yields one valid terminal event
+- [x] Verify acceptance: execution state is queryable and correlated by command/execution IDs
+- [x] Update `docs/progress.md` as each Phase 4 task/check passes
 
 ### Acceptance Checks
 
-- [ ] Every valid command yields a valid event (success or error)
-- [ ] Execution state is queryable and correlated
+- [x] Every valid command yields a valid event (success or error)
+- [x] Execution state is queryable and correlated
 
 ## Post-Phase-4 MVP Steps
 
@@ -192,7 +192,7 @@ Status: `In Progress`
 - [x] 3. TLV codec (`encode_field`, `decode_fields`, typed getters)
 - [x] 4. Semantic validation (`validate_by_message_type`)
 - [ ] 5. Mirage reconcile interfaces + in-memory stores
-- [ ] 6. Ghost command dispatch + seed registry execution path
+- [x] 6. Ghost command dispatch + seed registry execution path
 - [ ] 7. Structured logging/event schema (`component`, `peer`, `trace_id`, correlation IDs)
 
 ## MVP Build Plan
