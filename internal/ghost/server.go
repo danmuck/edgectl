@@ -287,6 +287,19 @@ func (s *Server) ExecutionByMessageID(messageID uint64) (ExecutionState, bool) {
 	return state, ok
 }
 
+// SeedMetadata returns a snapshot of currently registered seed metadata.
+func (s *Server) SeedMetadata() []seeds.SeedMetadata {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.registry == nil {
+		return []seeds.SeedMetadata{}
+	}
+	list := s.registry.ListMetadata()
+	out := make([]seeds.SeedMetadata, len(list))
+	copy(out, list)
+	return out
+}
+
 func transitionError(current LifecyclePhase, expected LifecyclePhase) error {
 	return fmt.Errorf("%w: have=%s want=%s", ErrLifecycleOrder, current, expected)
 }

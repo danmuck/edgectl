@@ -37,5 +37,5 @@ Status: `In Progress`
 - [x] Repository-level governance file added at `AGENTS.md` with canonical-source and change-control requirements.
 - [x] Package `doc.go` stubs updated to reference canonical contracts before implementation changes.
 - [x] Buildlog policy, naming scheme, and TOML template added under `docs/progress/buildlog/` with scope-based log rollover and follow-up append rules.
-- [ ] `2026-02-07` verification + implementation pass completed; `go test ./...` passes and P1 protocol/framing conformance gaps are closed. Remaining gap: P2 runtime handshake/session/reliability implementation.  
+- [ ] `2026-02-07` verification + implementation passes completed; `go test ./...` passes, P1 is closed, and P2 step1/step2 runtime pieces are implemented (shared session primitives + minimal Mirage endpoint + Ghost session client) with Ghost service config/policy wiring added. Remaining gaps: TLS/mTLS enforcement and reconnect/liveness hardening test matrix.  
   Source: `p4_conformance_report.md`.

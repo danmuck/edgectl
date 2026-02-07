@@ -15,6 +15,10 @@ type fileConfig struct {
 	Heartbeat           string   `toml:"heartbeat"`
 	HeartbeatInterval   string   `toml:"heartbeat_interval"`
 	HeartbeatIntervalMS int64    `toml:"heartbeat_interval_ms"`
+	MiragePolicy        string   `toml:"mirage_policy"`
+	MirageAddress       string   `toml:"mirage_address"`
+	MiragePeerIdentity  string   `toml:"mirage_peer_identity"`
+	MirageMaxAttempts   int      `toml:"mirage_max_connect_attempts"`
 }
 
 func loadServiceConfig(path string) (ghost.ServiceConfig, error) {
@@ -55,6 +59,22 @@ func loadServiceConfig(path string) (ghost.ServiceConfig, error) {
 
 	if meta.IsDefined("heartbeat_interval_ms") {
 		cfg.HeartbeatInterval = time.Duration(raw.HeartbeatIntervalMS) * time.Millisecond
+	}
+
+	if meta.IsDefined("mirage_policy") {
+		cfg.Mirage.Policy = ghost.MirageSessionPolicy(strings.TrimSpace(raw.MiragePolicy))
+	}
+
+	if meta.IsDefined("mirage_address") {
+		cfg.Mirage.Address = strings.TrimSpace(raw.MirageAddress)
+	}
+
+	if meta.IsDefined("mirage_peer_identity") {
+		cfg.Mirage.PeerIdentity = strings.TrimSpace(raw.MiragePeerIdentity)
+	}
+
+	if meta.IsDefined("mirage_max_connect_attempts") {
+		cfg.Mirage.MaxConnectAttempts = raw.MirageMaxAttempts
 	}
 
 	return cfg, nil

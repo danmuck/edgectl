@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/seeds"
 	logs "github.com/danmuck/smplog"
 )
@@ -16,12 +18,30 @@ import (
 var (
 	ErrInvalidHeartbeatInterval = errors.New("ghost: invalid heartbeat interval")
 	ErrUnknownBuiltinSeed       = errors.New("ghost: unknown builtin seed")
+	ErrInvalidMiragePolicy      = errors.New("ghost: invalid mirage session policy")
 )
+
+type MirageSessionPolicy string
+
+const (
+	MiragePolicyHeadless MirageSessionPolicy = "headless"
+	MiragePolicyAuto     MirageSessionPolicy = "auto"
+	MiragePolicyRequired MirageSessionPolicy = "required"
+)
+
+type MirageSessionConfig struct {
+	Policy             MirageSessionPolicy
+	Address            string
+	PeerIdentity       string
+	MaxConnectAttempts int
+	SessionConfig      session.Config
+}
 
 type ServiceConfig struct {
 	GhostID           string
 	BuiltinSeedIDs    []string
 	HeartbeatInterval time.Duration
+	Mirage            MirageSessionConfig
 }
 
 func DefaultServiceConfig() ServiceConfig {
@@ -29,6 +49,10 @@ func DefaultServiceConfig() ServiceConfig {
 		GhostID:           "ghost.local",
 		BuiltinSeedIDs:    []string{"seed.flow"},
 		HeartbeatInterval: 5 * time.Second,
+		Mirage: MirageSessionConfig{
+			Policy:        MiragePolicyHeadless,
+			SessionConfig: session.DefaultConfig(),
+		},
 	}
 }
 
@@ -36,6 +60,8 @@ func DefaultServiceConfig() ServiceConfig {
 type Service struct {
 	server *Server
 	cfg    ServiceConfig
+	mu     sync.RWMutex
+	mirage *MirageSession
 }
 
 // NewService creates a Ghost service with default standalone config.
@@ -45,6 +71,12 @@ func NewService() *Service {
 
 // NewServiceWithConfig creates a Ghost service with explicit config.
 func NewServiceWithConfig(cfg ServiceConfig) *Service {
+	if cfg.Mirage.SessionConfig.ConnectTimeout <= 0 {
+		cfg.Mirage.SessionConfig = session.DefaultConfig()
+	}
+	if strings.TrimSpace(string(cfg.Mirage.Policy)) == "" {
+		cfg.Mirage.Policy = MiragePolicyHeadless
+	}
 	return &Service{
 		server: NewServer(),
 		cfg:    cfg,
@@ -70,6 +102,9 @@ func (s *Service) Server() *Server {
 func (s *Service) bootstrap() error {
 	if s.cfg.HeartbeatInterval <= 0 {
 		return ErrInvalidHeartbeatInterval
+	}
+	if err := validateMiragePolicy(s.cfg.Mirage.Policy); err != nil {
+		return err
 	}
 
 	if err := s.server.Appear(GhostConfig{GhostID: s.cfg.GhostID}); err != nil {
@@ -100,12 +135,24 @@ func (s *Service) bootstrap() error {
 func (s *Service) serve(ctx context.Context) error {
 	ticker := time.NewTicker(s.cfg.HeartbeatInterval)
 	defer ticker.Stop()
+	defer s.clearMirageSession()
+
+	sessionErr := make(chan error, 1)
+	if s.cfg.Mirage.Policy != MiragePolicyHeadless {
+		go func() {
+			sessionErr <- s.runMirageSessionLoop(ctx)
+		}()
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			logs.Infof("ghost.Service.serve shutdown")
 			return nil
+		case err := <-sessionErr:
+			if err != nil {
+				return err
+			}
 		case <-ticker.C:
 			status := s.server.Status()
 			logs.Infof(
@@ -115,6 +162,78 @@ func (s *Service) serve(ctx context.Context) error {
 				status.SeedCount,
 			)
 		}
+	}
+}
+
+func (s *Service) runMirageSessionLoop(ctx context.Context) error {
+	clientCfg := MirageClientConfig{
+		Address:            strings.TrimSpace(s.cfg.Mirage.Address),
+		GhostID:            strings.TrimSpace(s.cfg.GhostID),
+		PeerIdentity:       strings.TrimSpace(s.cfg.Mirage.PeerIdentity),
+		SeedList:           SeedInfoFromMetadata(s.server.SeedMetadata()),
+		Session:            s.cfg.Mirage.SessionConfig,
+		MaxConnectAttempts: s.cfg.Mirage.MaxConnectAttempts,
+	}
+
+	client, err := NewMirageClient(clientCfg)
+	if err != nil {
+		if s.cfg.Mirage.Policy == MiragePolicyRequired {
+			return err
+		}
+		logs.Warnf("ghost.Service.runMirageSessionLoop disabled err=%v", err)
+		return nil
+	}
+
+	sessionConn, err := client.ConnectAndRegister(ctx)
+	if err != nil {
+		if s.cfg.Mirage.Policy == MiragePolicyRequired {
+			return err
+		}
+		logs.Warnf("ghost.Service.runMirageSessionLoop connect failed err=%v", err)
+		return nil
+	}
+
+	s.setMirageSession(sessionConn)
+	logs.Infof(
+		"ghost.Service.runMirageSessionLoop connected policy=%q address=%q",
+		s.cfg.Mirage.Policy,
+		s.cfg.Mirage.Address,
+	)
+
+	<-ctx.Done()
+	return nil
+}
+
+func (s *Service) setMirageSession(conn *MirageSession) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.mirage != nil && s.mirage != conn {
+		_ = s.mirage.Close()
+	}
+	s.mirage = conn
+}
+
+func (s *Service) clearMirageSession() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.mirage != nil {
+		_ = s.mirage.Close()
+		s.mirage = nil
+	}
+}
+
+func (s *Service) MirageSession() *MirageSession {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.mirage
+}
+
+func validateMiragePolicy(policy MirageSessionPolicy) error {
+	switch policy {
+	case MiragePolicyHeadless, MiragePolicyAuto, MiragePolicyRequired:
+		return nil
+	default:
+		return fmt.Errorf("%w: %q", ErrInvalidMiragePolicy, policy)
 	}
 }
 
