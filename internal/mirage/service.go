@@ -51,6 +51,7 @@ type Service struct {
 
 	mu       sync.RWMutex
 	registry map[string]*registeredGhostState
+	conns    map[net.Conn]struct{}
 }
 
 func NewService() *Service {
@@ -67,6 +68,7 @@ func NewServiceWithConfig(cfg ServiceConfig) *Service {
 	return &Service{
 		cfg:      cfg,
 		registry: make(map[string]*registeredGhostState),
+		conns:    make(map[net.Conn]struct{}),
 	}
 }
 
@@ -88,6 +90,7 @@ func (s *Service) Serve(ctx context.Context, ln net.Listener) error {
 	defer ln.Close()
 	go func() {
 		<-ctx.Done()
+		s.closeAllConns()
 		_ = ln.Close()
 	}()
 
@@ -99,6 +102,7 @@ func (s *Service) Serve(ctx context.Context, ln net.Listener) error {
 			}
 			return err
 		}
+		s.trackConn(conn)
 		go s.handleConn(conn)
 	}
 }
@@ -117,6 +121,7 @@ func (s *Service) SnapshotRegisteredGhosts() []RegisteredGhost {
 
 func (s *Service) handleConn(conn net.Conn) {
 	defer conn.Close()
+	defer s.untrackConn(conn)
 	reader := bufio.NewReader(conn)
 
 	reg, ack := s.handleRegistration(conn, reader)
@@ -270,4 +275,25 @@ func (s *Service) unregisterGhost(ghostID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.registry, ghostID)
+}
+
+func (s *Service) trackConn(conn net.Conn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.conns[conn] = struct{}{}
+}
+
+func (s *Service) untrackConn(conn net.Conn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.conns, conn)
+}
+
+func (s *Service) closeAllConns() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for conn := range s.conns {
+		_ = conn.Close()
+		delete(s.conns, conn)
+	}
 }

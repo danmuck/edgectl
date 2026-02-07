@@ -216,6 +216,133 @@ func TestServiceServeAutoConnectsMirage(t *testing.T) {
 	}
 }
 
+func TestServiceServeAutoReconnectsAfterMirageRestart(t *testing.T) {
+	testlog.Start(t)
+
+	lnA, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen a: %v", err)
+	}
+	addr := lnA.Addr().String()
+
+	mcfg := mirage.DefaultServiceConfig()
+	mcfg.RequireIdentityBinding = true
+	mcfg.Session.HandshakeTimeout = 500 * time.Millisecond
+	mcfg.Session.ReadTimeout = 500 * time.Millisecond
+	mcfg.Session.WriteTimeout = 500 * time.Millisecond
+
+	msvcA := mirage.NewServiceWithConfig(mcfg)
+	mctxA, mcancelA := context.WithCancel(context.Background())
+	mdoneA := make(chan error, 1)
+	go func() {
+		mdoneA <- msvcA.Serve(mctxA, lnA)
+	}()
+
+	scfg := DefaultServiceConfig()
+	scfg.GhostID = "ghost.alpha"
+	scfg.BuiltinSeedIDs = []string{"seed.flow"}
+	scfg.HeartbeatInterval = 25 * time.Millisecond
+	scfg.Mirage.Policy = MiragePolicyAuto
+	scfg.Mirage.Address = addr
+	scfg.Mirage.PeerIdentity = "ghost.alpha"
+	scfg.Mirage.SessionConfig.ConnectTimeout = 200 * time.Millisecond
+	scfg.Mirage.SessionConfig.HandshakeTimeout = 500 * time.Millisecond
+	scfg.Mirage.SessionConfig.ReadTimeout = 250 * time.Millisecond
+	scfg.Mirage.SessionConfig.WriteTimeout = 250 * time.Millisecond
+	scfg.Mirage.SessionConfig.AckTimeout = 400 * time.Millisecond
+	scfg.Mirage.SessionConfig.HeartbeatInterval = 50 * time.Millisecond
+	scfg.Mirage.SessionConfig.SessionDeadAfter = 500 * time.Millisecond
+	scfg.Mirage.SessionConfig.Backoff.InitialDelay = 50 * time.Millisecond
+	scfg.Mirage.SessionConfig.Backoff.MaxDelay = 200 * time.Millisecond
+
+	svc := NewServiceWithConfig(scfg)
+	if err := svc.bootstrap(); err != nil {
+		t.Fatalf("bootstrap failed: %v", err)
+	}
+
+	sctx, scancel := context.WithCancel(context.Background())
+	sdone := make(chan error, 1)
+	go func() {
+		sdone <- svc.serve(sctx)
+	}()
+
+	if !waitForCondition(2*time.Second, 20*time.Millisecond, func() bool {
+		return len(msvcA.SnapshotRegisteredGhosts()) == 1
+	}) {
+		scancel()
+		mcancelA()
+		_ = <-sdone
+		_ = <-mdoneA
+		t.Fatalf("ghost did not register with first mirage")
+	}
+
+	mcancelA()
+	if err := <-mdoneA; err != nil {
+		scancel()
+		_ = <-sdone
+		t.Fatalf("mirage A exit err: %v", err)
+	}
+
+	lnB, err := net.Listen("tcp", addr)
+	if err != nil {
+		scancel()
+		_ = <-sdone
+		t.Fatalf("listen b: %v", err)
+	}
+	msvcB := mirage.NewServiceWithConfig(mcfg)
+	mctxB, mcancelB := context.WithCancel(context.Background())
+	defer mcancelB()
+	mdoneB := make(chan error, 1)
+	go func() {
+		mdoneB <- msvcB.Serve(mctxB, lnB)
+	}()
+
+	if !waitForCondition(4*time.Second, 25*time.Millisecond, func() bool {
+		return len(msvcB.SnapshotRegisteredGhosts()) == 1
+	}) {
+		scancel()
+		mcancelB()
+		_ = <-sdone
+		_ = <-mdoneB
+		t.Fatalf("ghost did not reconnect/register after mirage restart")
+	}
+
+	scancel()
+	if err := <-sdone; err != nil {
+		t.Fatalf("ghost serve exit err: %v", err)
+	}
+	mcancelB()
+	if err := <-mdoneB; err != nil {
+		t.Fatalf("mirage B exit err: %v", err)
+	}
+}
+
+func TestServiceServeRequiredFailsWithoutMirage(t *testing.T) {
+	testlog.Start(t)
+	svc := NewServiceWithConfig(ServiceConfig{
+		GhostID:           "ghost.alpha",
+		BuiltinSeedIDs:    []string{"seed.flow"},
+		HeartbeatInterval: 20 * time.Millisecond,
+		Mirage: MirageSessionConfig{
+			Policy:             MiragePolicyRequired,
+			Address:            "127.0.0.1:1",
+			PeerIdentity:       "ghost.alpha",
+			MaxConnectAttempts: 1,
+			SessionConfig:      session.DefaultConfig(),
+		},
+	})
+	if err := svc.bootstrap(); err != nil {
+		t.Fatalf("bootstrap failed: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	err := svc.serve(ctx)
+	if err == nil {
+		t.Fatalf("expected required mirage connection error")
+	}
+}
+
 func waitForCondition(timeout time.Duration, interval time.Duration, fn func() bool) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {

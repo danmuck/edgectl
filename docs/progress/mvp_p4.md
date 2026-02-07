@@ -25,7 +25,7 @@ Status: `Done`
 - [ ] Complete the protocol/runtime conformance checklist from `docs/progress/p4_conformance_report.md` before Mirage session implementation work
 - [ ] Add required local `config.toml` boot config for `ghostctl` and `miragectl` as the next task after conformance closure; each process requires colocated network-routing + identity bootstrap config, defaults support auto-connect or headless Ghost startup with later manual Mirage attach, and empty Ghost bootstrap must allow remote seed config/install transfer to bring fresh nodes online
 - [x] Implement P2 step1/step2 baseline: shared session/reliability primitives and minimal Mirage endpoint (`register`, `register.ack`, `event`, `event.ack`) to prepare integration step3
-- [ ] Execute P2 step3 integration wiring/tests: Ghost service runtime session wiring is in place; remaining work is reconnect/timeout/replay behavior verification and hardening
+- [ ] Execute remaining P2 step3 resilience tests: reconnect baseline is complete; remaining work is ack-timeout and replay-across-reconnect verification
 - [ ] Add Mirage↔Ghost session wiring (connect/register/ready) while preserving protocol/runtime boundaries
 - [ ] Implement single-intent loop end-to-end (`issue -> command -> seed.execute -> seed.result -> event -> report`)
 - [ ] Add failure-path tests (disconnect, timeout, duplicate IDs, validation failures) before MVP tag

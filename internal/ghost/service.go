@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -62,6 +63,7 @@ type Service struct {
 	cfg    ServiceConfig
 	mu     sync.RWMutex
 	mirage *MirageSession
+	seq    atomic.Uint64
 }
 
 // NewService creates a Ghost service with default standalone config.
@@ -166,6 +168,57 @@ func (s *Service) serve(ctx context.Context) error {
 }
 
 func (s *Service) runMirageSessionLoop(ctx context.Context) error {
+	attempt := 0
+	connectedOnce := false
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+
+		sessionConn, err := s.connectMirageSession(ctx)
+		if err != nil {
+			if errors.Is(err, ErrMirageAddressRequired) || errors.Is(err, ErrGhostIDRequired) {
+				if s.cfg.Mirage.Policy == MiragePolicyRequired && !connectedOnce {
+					return err
+				}
+				logs.Warnf("ghost.Service.runMirageSessionLoop disabled err=%v", err)
+				return nil
+			}
+			if s.cfg.Mirage.Policy == MiragePolicyRequired && !connectedOnce {
+				return err
+			}
+			attempt++
+			logs.Warnf(
+				"ghost.Service.runMirageSessionLoop connect failed attempt=%d policy=%q err=%v",
+				attempt,
+				s.cfg.Mirage.Policy,
+				err,
+			)
+			if err := s.waitReconnectBackoff(ctx, attempt); err != nil {
+				return err
+			}
+			continue
+		}
+		attempt = 0
+		connectedOnce = true
+		s.setMirageSession(sessionConn)
+		logs.Infof(
+			"ghost.Service.runMirageSessionLoop connected policy=%q address=%q",
+			s.cfg.Mirage.Policy,
+			s.cfg.Mirage.Address,
+		)
+
+		err = s.monitorMirageSession(ctx, sessionConn)
+		s.clearMirageSessionIf(sessionConn)
+		if err != nil && ctx.Err() == nil {
+			logs.Warnf("ghost.Service.runMirageSessionLoop session lost err=%v", err)
+		}
+	}
+}
+
+func (s *Service) connectMirageSession(ctx context.Context) (*MirageSession, error) {
 	clientCfg := MirageClientConfig{
 		Address:            strings.TrimSpace(s.cfg.Mirage.Address),
 		GhostID:            strings.TrimSpace(s.cfg.GhostID),
@@ -177,31 +230,37 @@ func (s *Service) runMirageSessionLoop(ctx context.Context) error {
 
 	client, err := NewMirageClient(clientCfg)
 	if err != nil {
-		if s.cfg.Mirage.Policy == MiragePolicyRequired {
-			return err
-		}
-		logs.Warnf("ghost.Service.runMirageSessionLoop disabled err=%v", err)
-		return nil
+		return nil, err
 	}
 
 	sessionConn, err := client.ConnectAndRegister(ctx)
 	if err != nil {
-		if s.cfg.Mirage.Policy == MiragePolicyRequired {
-			return err
-		}
-		logs.Warnf("ghost.Service.runMirageSessionLoop connect failed err=%v", err)
-		return nil
+		return nil, err
 	}
+	return sessionConn, nil
+}
 
-	s.setMirageSession(sessionConn)
-	logs.Infof(
-		"ghost.Service.runMirageSessionLoop connected policy=%q address=%q",
-		s.cfg.Mirage.Policy,
-		s.cfg.Mirage.Address,
-	)
+func (s *Service) monitorMirageSession(ctx context.Context, conn *MirageSession) error {
+	interval := s.cfg.Mirage.SessionConfig.HeartbeatInterval
+	if interval <= 0 {
+		interval = s.cfg.HeartbeatInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 
-	<-ctx.Done()
-	return nil
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			probeCtx, cancel := context.WithTimeout(ctx, s.sessionProbeTimeout())
+			_, err := conn.SendEventWithAck(probeCtx, s.sessionProbeEvent())
+			cancel()
+			if err != nil {
+				return err
+			}
+		}
+	}
 }
 
 func (s *Service) setMirageSession(conn *MirageSession) {
@@ -222,10 +281,58 @@ func (s *Service) clearMirageSession() {
 	}
 }
 
+func (s *Service) clearMirageSessionIf(target *MirageSession) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.mirage != target {
+		return
+	}
+	_ = s.mirage.Close()
+	s.mirage = nil
+}
+
 func (s *Service) MirageSession() *MirageSession {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.mirage
+}
+
+func (s *Service) sessionProbeTimeout() time.Duration {
+	if s.cfg.Mirage.SessionConfig.SessionDeadAfter > 0 {
+		return s.cfg.Mirage.SessionConfig.SessionDeadAfter
+	}
+	if s.cfg.Mirage.SessionConfig.AckTimeout > 0 {
+		return s.cfg.Mirage.SessionConfig.AckTimeout
+	}
+	return 5 * time.Second
+}
+
+func (s *Service) sessionProbeEvent() EventEnv {
+	now := uint64(time.Now().UnixMilli())
+	seq := s.seq.Add(1)
+	return EventEnv{
+		EventID:     fmt.Sprintf("evt.session.%s.%d", s.cfg.GhostID, seq),
+		CommandID:   fmt.Sprintf("cmd.session.heartbeat.%d", seq),
+		IntentID:    "intent.session.heartbeat",
+		GhostID:     s.cfg.GhostID,
+		SeedID:      "seed.session",
+		Outcome:     OutcomeSuccess,
+		TimestampMS: now,
+	}
+}
+
+func (s *Service) waitReconnectBackoff(ctx context.Context, attempt int) error {
+	backoffCfg := s.cfg.Mirage.SessionConfig.Backoff
+	backoffCfg.Jitter = false
+	delay := session.NextBackoffDelay(backoffCfg, attempt, nil)
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func validateMiragePolicy(policy MirageSessionPolicy) error {

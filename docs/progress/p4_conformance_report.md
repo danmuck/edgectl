@@ -32,6 +32,7 @@ Scope:
 - `PASS`: minimal Mirage session endpoint now accepts Ghost registration, enforces identity-binding policy, and returns idempotent `event.ack` by `event_id`.
 - `PASS`: Ghost-side Mirage session client now supports connect/register retry and event delivery retry-until-ack.
 - `PASS`: Ghost service runtime is now wired behind explicit config/policy (`headless`, `auto`, `required`) to establish Mirage session registration during runtime.
+- `PASS`: reconnect/liveness baseline is implemented and tested (`auto` reconnect after Mirage restart, `required` policy startup failure when Mirage is unavailable).
 - `PARTIAL`: full protocol/runtime conformance is not complete due to remaining security/runtime integration gaps.
 
 ## Conformance Gaps
@@ -44,15 +45,15 @@ Scope:
    - Impact:
      - production-mode contract (`MUST` TLS + mTLS + peer identity binding) is not yet satisfied.
 
-2. `[P2] Reconnect/session-liveness hardening remains incomplete`
+2. `[P2] Remaining step-3 resilience scenarios are not fully covered`
    - Contract:
      - `docs/architecture/transport.md`
      - `docs/architecture/definitions/handshake.toml`
      - `docs/architecture/definitions/reliability.toml`
    - Code:
-     - Ghost service now performs policy-based initial connect/register (`internal/ghost/service.go`), but does not yet actively detect broken idle sessions and perform automatic reconnect/liveness recovery loops.
+     - reconnect baseline exists, but scenario matrix is still incomplete: explicit ack-timeout failure handling and duplicate event replay behavior across reconnect are not yet covered by dedicated integration tests.
    - Impact:
-     - recovery behavior for dropped idle sessions is not yet fully enforced.
+     - runtime resilience coverage is strong but not exhaustive against all reliability contract cases.
 
 ## Closed In This Pass
 
@@ -66,9 +67,9 @@ Scope:
 - [x] Implement Ghost Mirage session client (`internal/ghost/mirage_client.go`) with connect/register retry and event ack retries.
 - [x] Add integration coverage for registration acceptance/rejection and event.ack idempotency (`internal/mirage/service_test.go`).
 - [x] Wire Ghost service runtime to use Mirage session client behind config/policy (`internal/ghost/service.go`, `cmd/ghostctl/config.go`).
+- [x] Add reconnect/liveness service tests (`internal/ghost/service_test.go`) for auto reconnect on Mirage restart and required-policy failure on startup.
 
 ## Recommended Fix Order
 
 - [ ] Add TLS/mTLS transport security enforcement and certificate-backed identity binding.
-- [ ] Wire Ghost service lifecycle to keep Mirage session active by config/policy.
-- [ ] Add step-3 integration scenarios (disconnect/reconnect, ack timeout, duplicate event replay across reconnect).
+- [ ] Add remaining step-3 integration scenarios (ack timeout, duplicate event replay across reconnect).
