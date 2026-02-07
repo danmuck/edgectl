@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -85,6 +86,9 @@ type Service struct {
 
 	connsMu sync.Mutex
 	conns   map[net.Conn]struct{}
+
+	sessionClientCount atomic.Int64
+	adminClientCount   atomic.Int64
 
 	controlClient *GhostControlClient
 	buildlogStore *GhostSeedBuildlogStore
@@ -229,6 +233,13 @@ func (s *Service) SnapshotRegisteredGhosts() []RegisteredGhost {
 func (s *Service) handleConn(conn net.Conn) {
 	defer conn.Close()
 	defer s.untrackConn(conn)
+	remote := conn.RemoteAddr().String()
+	active := s.sessionClientCount.Add(1)
+	logs.Infof("mirage.session client connected remote=%q active_clients=%d", remote, active)
+	defer func() {
+		remaining := s.sessionClientCount.Add(-1)
+		logs.Infof("mirage.session client disconnected remote=%q active_clients=%d", remote, remaining)
+	}()
 	reader := bufio.NewReader(conn)
 
 	auth, err := s.authenticateConn(conn)

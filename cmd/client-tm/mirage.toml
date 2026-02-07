@@ -1,1 +1,4 @@
-targets = []
+[[targets]]
+name = "local-mirage"
+addr = "127.0.0.1:7020"
+mirage_id = "mirage.local"

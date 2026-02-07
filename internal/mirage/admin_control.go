@@ -87,6 +87,13 @@ func (s *Service) serveAdminControl(ctx context.Context, addr string) error {
 // handleAdminConn decodes one request per line and writes one response per line.
 func (s *Service) handleAdminConn(conn net.Conn) {
 	defer conn.Close()
+	remote := conn.RemoteAddr().String()
+	active := s.adminClientCount.Add(1)
+	logs.Infof("mirage.admin client connected remote=%q active_clients=%d", remote, active)
+	defer func() {
+		remaining := s.adminClientCount.Add(-1)
+		logs.Infof("mirage.admin client disconnected remote=%q active_clients=%d", remote, remaining)
+	}()
 	reader := bufio.NewReader(conn)
 	for {
 		line, err := reader.ReadBytes('\n')
@@ -167,6 +174,8 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 		return adminControlResponse{OK: true, Data: s.server.ListIntentIDs()}
 	case "recent_reports":
 		return adminControlResponse{OK: true, Data: s.server.RecentReports(req.Limit)}
+	case "registered_ghosts":
+		return adminControlResponse{OK: true, Data: s.server.SnapshotRegisteredGhosts()}
 	case "spawn_local_ghost":
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -160,7 +161,7 @@ func (s *Server) UpsertRegistration(remoteAddr string, reg session.Registration)
 	registered := RegisteredGhost{
 		GhostID:    reg.GhostID,
 		RemoteAddr: remoteAddr,
-		SeedList:   copySeedList(reg.SeedList),
+		SeedList:   enrichSeedListForGhost(reg.GhostID, remoteAddr, reg.SeedList),
 		Connected:  true,
 	}
 
@@ -312,4 +313,67 @@ func (s *Server) appendReport(report session.Report) {
 
 func transitionError(from, to LifecyclePhase) error {
 	return fmt.Errorf("%w: %s -> %s", ErrLifecycleOrder, from, to)
+}
+
+// enrichSeedListForGhost adds runtime-discovery details to registration seed metadata.
+func enrichSeedListForGhost(ghostID string, remoteAddr string, in []session.SeedInfo) []session.SeedInfo {
+	out := copySeedList(in)
+	host := hostFromRemoteAddr(remoteAddr)
+	for i := range out {
+		seedID := strings.TrimSpace(out[i].ID)
+		desc := strings.TrimSpace(out[i].Description)
+		switch seedID {
+		case "seed.mongod":
+			uri := fmt.Sprintf("mongodb://%s/?directConnection=true", net.JoinHostPort(host, "27017"))
+			desc = appendDiscoveryField(desc, "endpoint_uri=", uri)
+			desc = appendDiscoveryField(desc, "host=", host)
+			desc = appendDiscoveryField(desc, "seed_scope=", "network_service")
+		case "seed.fs":
+			desc = appendDiscoveryField(desc, "path_root=", "local/dir")
+			desc = appendDiscoveryField(desc, "seed_scope=", "ghost_local_filesystem")
+		case "seed.kv":
+			desc = appendDiscoveryField(desc, "persistence=", "in_memory")
+			desc = appendDiscoveryField(desc, "seed_scope=", "ghost_local_cache")
+		case "seed.flow":
+			desc = appendDiscoveryField(desc, "seed_scope=", "control_plane")
+			desc = appendDiscoveryField(desc, "dispatch=", "ghost_execute")
+		default:
+			desc = appendDiscoveryField(desc, "seed_scope=", "ghost_local")
+		}
+		desc = appendDiscoveryField(desc, "ghost_id=", strings.TrimSpace(ghostID))
+		out[i].Description = desc
+	}
+	return out
+}
+
+func appendDiscoveryField(desc string, key string, value string) string {
+	v := strings.TrimSpace(value)
+	if v == "" {
+		return strings.TrimSpace(desc)
+	}
+	token := key + v
+	base := strings.TrimSpace(desc)
+	if strings.Contains(base, token) {
+		return base
+	}
+	if base == "" {
+		return token
+	}
+	return base + "; " + token
+}
+
+func hostFromRemoteAddr(remoteAddr string) string {
+	trimmed := strings.TrimSpace(remoteAddr)
+	if trimmed == "" {
+		return "127.0.0.1"
+	}
+	host, _, err := net.SplitHostPort(trimmed)
+	if err != nil {
+		return trimmed
+	}
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return "127.0.0.1"
+	}
+	return host
 }

@@ -3,6 +3,7 @@ package mirage
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,6 +63,65 @@ func TestServerRegistrationAndEventAckIdempotent(t *testing.T) {
 	ackB := srv.AcceptEvent("ghost.alpha", event)
 	if ackA.TimestampMS != ackB.TimestampMS {
 		t.Fatalf("expected idempotent event ack timestamp, a=%d b=%d", ackA.TimestampMS, ackB.TimestampMS)
+	}
+}
+
+func TestServerRegistrationEnrichesMongodDescriptionWithEndpointURI(t *testing.T) {
+	testlog.Start(t)
+
+	srv := NewServer()
+	reg := session.Registration{
+		GhostID:      "ghost.alpha",
+		PeerIdentity: "ghost.alpha",
+		SeedList: []session.SeedInfo{
+			{ID: "seed.mongod", Name: "MongoDB (mongod)", Description: "Predefined mongod service adapter for Linux hosts"},
+			{ID: "seed.flow", Name: "Flow", Description: "flow"},
+			{ID: "seed.kv", Name: "KV", Description: "Temporary key-value state storage seed for control-plane persistence"},
+			{ID: "seed.fs", Name: "Filesystem", Description: "Temporary file persistence seed scoped to local/dir"},
+		},
+	}
+	_ = srv.UpsertRegistration("10.42.0.5:9000", reg)
+
+	snapshot := srv.SnapshotRegisteredGhosts()
+	if len(snapshot) != 1 {
+		t.Fatalf("unexpected registry count: %d", len(snapshot))
+	}
+	if len(snapshot[0].SeedList) != 4 {
+		t.Fatalf("unexpected seed count: %d", len(snapshot[0].SeedList))
+	}
+
+	var mongodDesc string
+	var flowDesc string
+	var kvDesc string
+	var fsDesc string
+	for _, seed := range snapshot[0].SeedList {
+		if seed.ID == "seed.mongod" {
+			mongodDesc = seed.Description
+		}
+		if seed.ID == "seed.flow" {
+			flowDesc = seed.Description
+		}
+		if seed.ID == "seed.kv" {
+			kvDesc = seed.Description
+		}
+		if seed.ID == "seed.fs" {
+			fsDesc = seed.Description
+		}
+	}
+	if !strings.Contains(mongodDesc, "endpoint_uri=mongodb://10.42.0.5:27017/?directConnection=true") {
+		t.Fatalf("unexpected mongod description: %q", mongodDesc)
+	}
+	if !strings.Contains(mongodDesc, "host=10.42.0.5") || !strings.Contains(mongodDesc, "ghost_id=ghost.alpha") {
+		t.Fatalf("expected mongod host/ghost enrichment, got %q", mongodDesc)
+	}
+	if !strings.Contains(flowDesc, "seed_scope=control_plane") || !strings.Contains(flowDesc, "dispatch=ghost_execute") || !strings.Contains(flowDesc, "ghost_id=ghost.alpha") {
+		t.Fatalf("unexpected flow description enrichment: %q", flowDesc)
+	}
+	if !strings.Contains(kvDesc, "persistence=in_memory") || !strings.Contains(kvDesc, "seed_scope=ghost_local_cache") || !strings.Contains(kvDesc, "ghost_id=ghost.alpha") {
+		t.Fatalf("unexpected kv description enrichment: %q", kvDesc)
+	}
+	if !strings.Contains(fsDesc, "path_root=local/dir") || !strings.Contains(fsDesc, "seed_scope=ghost_local_filesystem") || !strings.Contains(fsDesc, "ghost_id=ghost.alpha") {
+		t.Fatalf("unexpected fs description enrichment: %q", fsDesc)
 	}
 }
 

@@ -3,6 +3,7 @@ package mirage
 import (
 	"testing"
 
+	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/testutil/testlog"
 )
 
@@ -45,5 +46,28 @@ func TestHandleAdminControlSubmitAndReconcileIntent(t *testing.T) {
 	})
 	if !reportsResp.OK {
 		t.Fatalf("recent_reports failed: %+v", reportsResp)
+	}
+}
+
+func TestHandleAdminControlRegisteredGhosts(t *testing.T) {
+	testlog.Start(t)
+
+	svc := NewServiceWithConfig(DefaultServiceConfig())
+	svc.Server().UpsertRegistration("127.0.0.1:41000", session.Registration{
+		GhostID:      "ghost.alpha",
+		PeerIdentity: "ghost.alpha",
+	})
+	resp := svc.handleAdminControlRequest(adminControlRequest{
+		Action: "registered_ghosts",
+	})
+	if !resp.OK {
+		t.Fatalf("registered_ghosts failed: %+v", resp)
+	}
+	list, ok := resp.Data.([]RegisteredGhost)
+	if !ok {
+		t.Fatalf("unexpected data type: %T", resp.Data)
+	}
+	if len(list) != 1 || list[0].GhostID != "ghost.alpha" {
+		t.Fatalf("unexpected list payload: %+v", list)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"net"
 	"os"
@@ -16,6 +17,8 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/danmuck/edgectl/internal/ghost"
 	"github.com/danmuck/edgectl/internal/logging"
+	"github.com/danmuck/edgectl/internal/mirage"
+	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/seeds"
 	seedflow "github.com/danmuck/edgectl/internal/seeds/flow"
 	seedmongod "github.com/danmuck/edgectl/internal/seeds/mongod"
@@ -53,8 +56,9 @@ type mirageConfigFile struct {
 }
 
 type mirageTargetConfig struct {
-	Name string `toml:"name"`
-	Addr string `toml:"addr"`
+	Name     string `toml:"name"`
+	Addr     string `toml:"addr"`
+	MirageID string `toml:"mirage_id"`
 }
 
 // GhostAdminCommand is the input envelope for admin-triggered Ghost command execution.
@@ -92,6 +96,34 @@ type GhostTarget struct {
 	Admin GhostAdmin
 }
 
+// MirageAdmin defines the client control boundary for one Mirage target.
+type MirageAdmin interface {
+	Address() string
+	Status() (mirage.LifecycleStatus, error)
+	SubmitIssue(issue MirageIssueRequest) error
+	ReconcileIntent(intentID string) (session.Report, error)
+	ReconcileAll() ([]session.Report, error)
+	SnapshotIntent(intentID string) (mirage.IntentSnapshot, bool, error)
+	ListIntents() ([]string, error)
+	RecentReports(limit int) ([]session.Report, error)
+	SpawnLocalGhost(req mirage.SpawnGhostRequest) (mirage.SpawnGhostResult, error)
+	RegisteredGhosts() ([]mirage.RegisteredGhost, error)
+	Close() error
+}
+
+// RemoteMirageAdmin is a TCP client for miragectl admin control endpoint.
+type RemoteMirageAdmin struct {
+	addr string
+	conn net.Conn
+	r    *bufio.Reader
+}
+
+// MirageTarget maps a friendly name to a concrete Mirage admin implementation.
+type MirageTarget struct {
+	Name  string
+	Admin MirageAdmin
+}
+
 // controlRequest is one line-delimited control request payload.
 type controlRequest struct {
 	Action    string                  `json:"action"`
@@ -106,6 +138,47 @@ type controlResponse struct {
 	OK    bool            `json:"ok"`
 	Error string          `json:"error,omitempty"`
 	Data  json.RawMessage `json:"data,omitempty"`
+}
+
+// MirageIssueCommand defines one command step for mirage issue submission.
+type MirageIssueCommand struct {
+	GhostID      string            `json:"ghost_id"`
+	SeedSelector string            `json:"seed_selector"`
+	Operation    string            `json:"operation"`
+	Args         map[string]string `json:"args"`
+	Blocking     bool              `json:"blocking"`
+}
+
+// MirageIssueRequest defines one issue ingress payload for mirage admin control.
+type MirageIssueRequest struct {
+	IntentID    string               `json:"intent_id"`
+	Actor       string               `json:"actor"`
+	TargetScope string               `json:"target_scope"`
+	Objective   string               `json:"objective"`
+	CommandPlan []MirageIssueCommand `json:"command_plan"`
+}
+
+type mirageControlRequest struct {
+	Action   string                   `json:"action"`
+	Limit    int                      `json:"limit,omitempty"`
+	IntentID string                   `json:"intent_id,omitempty"`
+	Issue    MirageIssueRequest       `json:"issue,omitempty"`
+	Spawn    mirage.SpawnGhostRequest `json:"spawn,omitempty"`
+}
+
+type mirageControlResponse struct {
+	OK    bool            `json:"ok"`
+	Error string          `json:"error,omitempty"`
+	Data  json.RawMessage `json:"data,omitempty"`
+}
+
+type mirageSnapshotIntentResponse struct {
+	Found    bool                  `json:"found"`
+	Snapshot mirage.IntentSnapshot `json:"snapshot"`
+}
+
+type mirageReconcileAllResponse struct {
+	Reports []session.Report `json:"reports"`
 }
 
 // executionResponse holds execute action output.
@@ -129,26 +202,36 @@ type App struct {
 	mirageCfg     mirageConfigFile
 	targets       []GhostTarget
 	activeTarget  int
+	mirageTargets []MirageTarget
+	activeMirage  int
 	clearScreen   bool
+	launchMode    string
 }
 
 func main() {
+	var mode string
+	flag.StringVar(&mode, "mode", "ghost", "client mode: ghost or mirage")
+	flag.Parse()
+
 	logging.ConfigureRuntime()
-	app := NewApp(ghostConfigPath, mirageConfigPath)
+	app := NewApp(ghostConfigPath, mirageConfigPath, mode)
 	if err := app.Run(); err != nil {
 		logs.Errf("client-tm: %v", err)
 		os.Exit(1)
 	}
 }
 
-func NewApp(ghostCfgPath string, mirageCfgPath string) *App {
+func NewApp(ghostCfgPath string, mirageCfgPath string, mode string) *App {
 	return &App{
 		reader:        bufio.NewReader(os.Stdin),
 		ghostCfgPath:  ghostCfgPath,
 		mirageCfgPath: mirageCfgPath,
 		targets:       make([]GhostTarget, 0),
 		activeTarget:  -1,
+		mirageTargets: make([]MirageTarget, 0),
+		activeMirage:  -1,
 		clearScreen:   false,
+		launchMode:    strings.ToLower(strings.TrimSpace(mode)),
 	}
 }
 
@@ -162,6 +245,12 @@ func (a *App) Run() error {
 		len(a.ghostCfg.Targets),
 		len(a.mirageCfg.Targets),
 	)
+	if a.launchMode != "" && a.launchMode != "ghost" && a.launchMode != "mirage" {
+		return fmt.Errorf("invalid mode %q (expected ghost or mirage)", a.launchMode)
+	}
+	if a.launchMode == "mirage" {
+		return a.runMirageClientLoop()
+	}
 
 	for {
 		a.printMainMenu()
@@ -235,6 +324,7 @@ func (a *App) exitClient() error {
 		logs.Warnf("save on exit failed: %v", err)
 	}
 	a.closeTargets()
+	a.closeMirageTargets()
 	logs.Infof("client-tm exiting")
 	return nil
 }
@@ -255,6 +345,7 @@ func (a *App) loadOrInitConfigs() error {
 		return fmt.Errorf("load mirage config: %w", err)
 	}
 	a.clearScreen = a.ghostCfg.ClearScreenAfterCommand
+	needsSave := false
 
 	if len(a.ghostCfg.Targets) == 0 {
 		a.ghostCfg.Targets = append(a.ghostCfg.Targets, ghostTargetConfig{
@@ -262,9 +353,16 @@ func (a *App) loadOrInitConfigs() error {
 			Addr:    "127.0.0.1:7010",
 			GhostID: "ghost.local",
 		})
+		needsSave = true
 	}
-
-	needsSave := false
+	if len(a.mirageCfg.Targets) == 0 {
+		a.mirageCfg.Targets = append(a.mirageCfg.Targets, mirageTargetConfig{
+			Name:     "local-mirage",
+			Addr:     "127.0.0.1:7020",
+			MirageID: "mirage.local",
+		})
+		needsSave = true
+	}
 	for i, cfg := range a.ghostCfg.Targets {
 		name := strings.TrimSpace(cfg.Name)
 		addr := strings.TrimSpace(cfg.Addr)
@@ -289,6 +387,31 @@ func (a *App) loadOrInitConfigs() error {
 	}
 	if len(a.targets) > 0 {
 		a.activeTarget = 0
+	}
+	for i, cfg := range a.mirageCfg.Targets {
+		name := strings.TrimSpace(cfg.Name)
+		addr := strings.TrimSpace(cfg.Addr)
+		if name == "" || addr == "" {
+			continue
+		}
+		mirageID := strings.TrimSpace(cfg.MirageID)
+		admin := NewRemoteMirageAdmin(addr)
+		if mirageID == "" {
+			if status, err := admin.Status(); err == nil && strings.TrimSpace(status.MirageID) != "" {
+				mirageID = strings.TrimSpace(status.MirageID)
+			} else {
+				mirageID = "mirage.local"
+			}
+			a.mirageCfg.Targets[i].MirageID = mirageID
+			needsSave = true
+		}
+		a.mirageTargets = append(a.mirageTargets, MirageTarget{
+			Name:  name,
+			Admin: admin,
+		})
+	}
+	if len(a.mirageTargets) > 0 {
+		a.activeMirage = 0
 	}
 	if needsSave {
 		if err := a.saveConfigs(); err != nil {
@@ -322,7 +445,7 @@ func (a *App) printMainMenu() {
 	fmt.Println()
 	fmt.Println("Client TM")
 	fmt.Printf("  ghost config:  %s (targets=%d)\n", a.ghostCfgPath, len(a.ghostCfg.Targets))
-	fmt.Printf("  mirage config: %s (targets=%d, not yet wired)\n", a.mirageCfgPath, len(a.mirageCfg.Targets))
+	fmt.Printf("  mirage config: %s (targets=%d)\n", a.mirageCfgPath, len(a.mirageCfg.Targets))
 	fmt.Printf("  clear screen after command: %v\n", a.clearScreen)
 	fmt.Println("  1) List ghost targets")
 	fmt.Println("  2) Add/provision ghost target (persist)")
@@ -334,6 +457,345 @@ func (a *App) printMainMenu() {
 	fmt.Println("  8) Reset configs to defaults")
 	fmt.Println("  9) Save configs")
 	fmt.Println(" 10) Exit")
+}
+
+// runMirageClientLoop executes Mirage-first operator navigation.
+func (a *App) runMirageClientLoop() error {
+	for {
+		a.printMirageMenu()
+		choice, err := a.promptInt("Choose", 1, 9, false, true)
+		if err != nil {
+			if errors.Is(err, ErrNavigateExit) {
+				return a.exitClient()
+			}
+			return err
+		}
+		a.clearIfEnabled()
+		switch choice {
+		case 1:
+			a.listMirageTargets()
+		case 2:
+			if err := a.addMirageTarget(); err != nil {
+				logs.Errf("add mirage target failed: %v", err)
+			}
+		case 3:
+			if err := a.selectActiveMirageTarget(); err != nil {
+				if errors.Is(err, ErrNavigateBack) {
+					continue
+				}
+				if errors.Is(err, ErrNavigateExit) {
+					return a.exitClient()
+				}
+				logs.Errf("select mirage target failed: %v", err)
+			}
+		case 4:
+			if err := a.showActiveMirageSummary(); err != nil {
+				logs.Errf("show mirage summary failed: %v", err)
+			}
+		case 5:
+			if err := a.runMirageAdminConsole(); err != nil {
+				if errors.Is(err, ErrNavigateExit) {
+					return a.exitClient()
+				}
+				logs.Errf("mirage admin console error: %v", err)
+			}
+		case 6:
+			if err := a.showMirageConnectedGhosts(); err != nil {
+				logs.Errf("show connected ghosts failed: %v", err)
+			}
+		case 7:
+			if err := a.openConnectedGhostConsole(); err != nil {
+				logs.Errf("open connected ghost console failed: %v", err)
+			}
+		case 8:
+			if err := a.saveConfigs(); err != nil {
+				logs.Errf("save failed: %v", err)
+			} else {
+				logs.Infof("config saved")
+			}
+		case 9:
+			return a.exitClient()
+		}
+	}
+}
+
+func (a *App) printMirageMenu() {
+	fmt.Println()
+	fmt.Println("Client TM (Mirage)")
+	fmt.Printf("  ghost config:  %s (targets=%d)\n", a.ghostCfgPath, len(a.ghostCfg.Targets))
+	fmt.Printf("  mirage config: %s (targets=%d)\n", a.mirageCfgPath, len(a.mirageCfg.Targets))
+	fmt.Printf("  clear screen after command: %v\n", a.clearScreen)
+	fmt.Println("  1) List mirage targets")
+	fmt.Println("  2) Add mirage target (persist)")
+	fmt.Println("  3) Select active mirage target")
+	fmt.Println("  4) Show active mirage summary")
+	fmt.Println("  5) Mirage admin console")
+	fmt.Println("  6) Show connected ghosts")
+	fmt.Println("  7) Open connected ghost admin console")
+	fmt.Println("  8) Save configs")
+	fmt.Println("  9) Exit")
+}
+
+func (a *App) activeMirageTarget() (MirageTarget, bool) {
+	if a.activeMirage < 0 || a.activeMirage >= len(a.mirageTargets) {
+		return MirageTarget{}, false
+	}
+	return a.mirageTargets[a.activeMirage], true
+}
+
+func (a *App) listMirageTargets() {
+	fmt.Println()
+	fmt.Println("Mirage Targets")
+	if len(a.mirageTargets) == 0 {
+		fmt.Println("  (none)")
+		return
+	}
+	for i := range a.mirageTargets {
+		target := a.mirageTargets[i]
+		marker := " "
+		if a.activeMirage == i {
+			marker = "*"
+		}
+		status, err := target.Admin.Status()
+		if err != nil {
+			fmt.Printf("  %s [%d] %s addr=%s (status err: %v)\n", marker, i+1, target.Name, target.Admin.Address(), err)
+			continue
+		}
+		fmt.Printf(
+			"  %s [%d] %s addr=%s mirage_id=%s phase=%s ghosts=%d intents=%d reports=%d\n",
+			marker,
+			i+1,
+			target.Name,
+			target.Admin.Address(),
+			status.MirageID,
+			status.Phase,
+			status.RegisteredGhosts,
+			status.ActiveIntents,
+			status.ReportCount,
+		)
+	}
+}
+
+func (a *App) addMirageTarget() error {
+	nameRaw, err := a.promptLine("Mirage target name")
+	if err != nil {
+		return err
+	}
+	addrRaw, err := a.promptLine("Mirage admin addr (host:port)")
+	if err != nil {
+		return err
+	}
+	name := strings.TrimSpace(nameRaw)
+	addr := strings.TrimSpace(addrRaw)
+	if name == "" || addr == "" {
+		return errors.New("name and addr are required")
+	}
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		return fmt.Errorf("invalid mirage admin addr %q", addr)
+	}
+	for _, cfg := range a.mirageCfg.Targets {
+		if strings.EqualFold(strings.TrimSpace(cfg.Name), name) || strings.EqualFold(strings.TrimSpace(cfg.Addr), addr) {
+			return fmt.Errorf("mirage target exists name=%q addr=%q", name, addr)
+		}
+	}
+	admin := NewRemoteMirageAdmin(addr)
+	mirageID := "mirage.local"
+	if status, err := admin.Status(); err == nil && strings.TrimSpace(status.MirageID) != "" {
+		mirageID = strings.TrimSpace(status.MirageID)
+	}
+	a.mirageCfg.Targets = append(a.mirageCfg.Targets, mirageTargetConfig{
+		Name:     name,
+		Addr:     addr,
+		MirageID: mirageID,
+	})
+	a.mirageTargets = append(a.mirageTargets, MirageTarget{Name: name, Admin: admin})
+	if a.activeMirage < 0 {
+		a.activeMirage = 0
+	}
+	logs.Infof("mirage target added name=%q addr=%q mirage_id=%q", name, addr, mirageID)
+	return a.saveConfigs()
+}
+
+func (a *App) selectActiveMirageTarget() error {
+	if len(a.mirageTargets) == 0 {
+		return errors.New("no mirage targets available")
+	}
+	a.listMirageTargets()
+	choice, err := a.promptInt("Select mirage target", 1, len(a.mirageTargets), true, true)
+	if err != nil {
+		return err
+	}
+	a.activeMirage = choice - 1
+	logs.Infof("active mirage target set name=%q", a.mirageTargets[a.activeMirage].Name)
+	return nil
+}
+
+func (a *App) showActiveMirageSummary() error {
+	target, ok := a.activeMirageTarget()
+	if !ok {
+		return errors.New("no active mirage target")
+	}
+	status, err := target.Admin.Status()
+	if err != nil {
+		return err
+	}
+	fmt.Println()
+	fmt.Printf("Active Mirage Target: %s\n", target.Name)
+	fmt.Printf("  addr:      %s\n", target.Admin.Address())
+	fmt.Printf("  mirage_id: %s\n", status.MirageID)
+	fmt.Printf("  phase:     %s\n", status.Phase)
+	fmt.Printf("  ghosts:    %d\n", status.RegisteredGhosts)
+	fmt.Printf("  intents:   %d\n", status.ActiveIntents)
+	fmt.Printf("  reports:   %d\n", status.ReportCount)
+	return nil
+}
+
+func (a *App) showMirageConnectedGhosts() error {
+	target, ok := a.activeMirageTarget()
+	if !ok {
+		return errors.New("no active mirage target")
+	}
+	ghosts, err := target.Admin.RegisteredGhosts()
+	if err != nil {
+		return err
+	}
+	fmt.Println()
+	fmt.Println("Connected Ghosts")
+	if len(ghosts) == 0 {
+		fmt.Println("  (none)")
+		return nil
+	}
+	for i := range ghosts {
+		g := ghosts[i]
+		fmt.Printf(
+			"  [%d] ghost_id=%s connected=%v remote=%s seeds=%d events=%d\n",
+			i+1,
+			g.GhostID,
+			g.Connected,
+			g.RemoteAddr,
+			len(g.SeedList),
+			g.EventCount,
+		)
+	}
+	return nil
+}
+
+func (a *App) openConnectedGhostConsole() error {
+	target, ok := a.activeMirageTarget()
+	if !ok {
+		return errors.New("no active mirage target")
+	}
+	ghosts, err := target.Admin.RegisteredGhosts()
+	if err != nil {
+		return err
+	}
+	if len(ghosts) == 0 {
+		return errors.New("no registered ghosts available from active mirage")
+	}
+	fmt.Println()
+	fmt.Println("Mirage Registered Ghosts")
+	for i := range ghosts {
+		fmt.Printf("  [%d] %s (connected=%v)\n", i+1, ghosts[i].GhostID, ghosts[i].Connected)
+	}
+	choice, err := a.promptInt("Choose ghost", 1, len(ghosts), true, true)
+	if err != nil {
+		return err
+	}
+	selected := ghosts[choice-1]
+	idx := a.findGhostTargetByID(selected.GhostID)
+	if idx < 0 {
+		return fmt.Errorf("ghost_id=%q is not configured in ghost targets", selected.GhostID)
+	}
+	return a.runGhostAdminConsoleForIndex(idx)
+}
+
+func (a *App) runGhostAdminConsoleForIndex(idx int) error {
+	if idx < 0 || idx >= len(a.targets) {
+		return errors.New("invalid ghost target index")
+	}
+	prev := a.activeTarget
+	a.activeTarget = idx
+	defer func() {
+		a.activeTarget = prev
+	}()
+	return a.runGhostAdminConsole()
+}
+
+func (a *App) findGhostTargetByID(ghostID string) int {
+	targetID := strings.TrimSpace(ghostID)
+	if targetID == "" {
+		return -1
+	}
+	for i := range a.targets {
+		if strings.TrimSpace(a.targets[i].Admin.GhostID()) == targetID {
+			return i
+		}
+	}
+	return -1
+}
+
+func (a *App) runMirageAdminConsole() error {
+	target, ok := a.activeMirageTarget()
+	if !ok {
+		return errors.New("no active mirage target")
+	}
+	for {
+		fmt.Println()
+		fmt.Printf("Mirage Admin Console (%s @ %s)\n", target.Name, target.Admin.Address())
+		fmt.Println("  1) Show status")
+		fmt.Println("  2) Submit issue")
+		fmt.Println("  3) List intents")
+		fmt.Println("  4) Reconcile one intent")
+		fmt.Println("  5) Reconcile all intents")
+		fmt.Println("  6) Snapshot intent")
+		fmt.Println("  7) Show recent reports")
+		fmt.Println("  8) Spawn local ghost")
+		fmt.Println("  9) Back")
+		choice, err := a.promptInt("Choose", 1, 9, true, true)
+		if err != nil {
+			if errors.Is(err, ErrNavigateBack) {
+				return nil
+			}
+			return err
+		}
+		a.clearIfEnabled()
+		switch choice {
+		case 1:
+			if err := a.showActiveMirageSummary(); err != nil {
+				logs.Errf("show mirage summary failed: %v", err)
+			}
+		case 2:
+			if err := a.submitMirageIssue(target); err != nil {
+				logs.Errf("submit issue failed: %v", err)
+			}
+		case 3:
+			if err := a.listMirageIntents(target); err != nil {
+				logs.Errf("list intents failed: %v", err)
+			}
+		case 4:
+			if err := a.reconcileMirageIntent(target); err != nil {
+				logs.Errf("reconcile intent failed: %v", err)
+			}
+		case 5:
+			if err := a.reconcileAllMirageIntents(target); err != nil {
+				logs.Errf("reconcile all failed: %v", err)
+			}
+		case 6:
+			if err := a.snapshotMirageIntent(target); err != nil {
+				logs.Errf("snapshot intent failed: %v", err)
+			}
+		case 7:
+			if err := a.showMirageReports(target); err != nil {
+				logs.Errf("show reports failed: %v", err)
+			}
+		case 8:
+			if err := a.spawnMirageLocalGhost(target); err != nil {
+				logs.Errf("spawn local ghost failed: %v", err)
+			}
+		case 9:
+			return nil
+		}
+	}
 }
 
 func (a *App) listTargets() {
@@ -462,9 +924,16 @@ func (a *App) resetToDefaultConfig() error {
 			{Name: "local-ghost", Addr: "127.0.0.1:7010", GhostID: "ghost.local"},
 		},
 	}
-	a.mirageCfg = mirageConfigFile{Targets: []mirageTargetConfig{}}
+	a.mirageCfg = mirageConfigFile{
+		Targets: []mirageTargetConfig{
+			{Name: "local-mirage", Addr: "127.0.0.1:7020", MirageID: "mirage.local"},
+		},
+	}
+	a.closeMirageTargets()
 	a.targets = []GhostTarget{{Name: "local-ghost", Admin: NewRemoteGhostAdmin("127.0.0.1:7010")}}
+	a.mirageTargets = []MirageTarget{{Name: "local-mirage", Admin: NewRemoteMirageAdmin("127.0.0.1:7020")}}
 	a.activeTarget = 0
+	a.activeMirage = 0
 	a.clearScreen = false
 	return a.saveConfigs()
 }
@@ -744,6 +1213,209 @@ func (a *App) showVerification(target GhostTarget) error {
 	return nil
 }
 
+func (a *App) submitMirageIssue(target MirageTarget) error {
+	fmt.Println()
+	fmt.Println("Submit Issue Input")
+	intentID, err := a.promptLine("intent_id")
+	if err != nil {
+		return err
+	}
+	actor, err := a.promptLine("actor")
+	if err != nil {
+		return err
+	}
+	targetScope, err := a.promptLine("target_scope (example: ghost:ghost.local)")
+	if err != nil {
+		return err
+	}
+	objective, err := a.promptLine("objective")
+	if err != nil {
+		return err
+	}
+	ghostID, err := a.promptLine("command ghost_id")
+	if err != nil {
+		return err
+	}
+	seedSelector, err := a.promptLine("command seed_selector")
+	if err != nil {
+		return err
+	}
+	operation, err := a.promptLine("command operation")
+	if err != nil {
+		return err
+	}
+	argsRaw, err := a.promptLine("command args key=value,key=value (blank = none)")
+	if err != nil {
+		return err
+	}
+	blockingRaw, err := a.promptLine("command blocking (true/false, default false)")
+	if err != nil {
+		return err
+	}
+	blocking := strings.EqualFold(strings.TrimSpace(blockingRaw), "true")
+	req := MirageIssueRequest{
+		IntentID:    strings.TrimSpace(intentID),
+		Actor:       strings.TrimSpace(actor),
+		TargetScope: strings.TrimSpace(targetScope),
+		Objective:   strings.TrimSpace(objective),
+		CommandPlan: []MirageIssueCommand{
+			{
+				GhostID:      strings.TrimSpace(ghostID),
+				SeedSelector: strings.TrimSpace(seedSelector),
+				Operation:    strings.TrimSpace(operation),
+				Args:         parseArgsCSV(argsRaw),
+				Blocking:     blocking,
+			},
+		},
+	}
+	if err := target.Admin.SubmitIssue(req); err != nil {
+		return err
+	}
+	fmt.Printf("Issue submitted intent_id=%s\n", req.IntentID)
+	return nil
+}
+
+func (a *App) listMirageIntents(target MirageTarget) error {
+	intents, err := target.Admin.ListIntents()
+	if err != nil {
+		return err
+	}
+	fmt.Println()
+	fmt.Println("Mirage Intents")
+	if len(intents) == 0 {
+		fmt.Println("  (none)")
+		return nil
+	}
+	for i := range intents {
+		fmt.Printf("  [%d] %s\n", i+1, intents[i])
+	}
+	return nil
+}
+
+func (a *App) reconcileMirageIntent(target MirageTarget) error {
+	intentID, err := a.promptLine("intent_id")
+	if err != nil {
+		return err
+	}
+	report, err := target.Admin.ReconcileIntent(strings.TrimSpace(intentID))
+	if err != nil {
+		return err
+	}
+	printMirageReport("Reconcile Result", report)
+	return nil
+}
+
+func (a *App) reconcileAllMirageIntents(target MirageTarget) error {
+	reports, err := target.Admin.ReconcileAll()
+	if err != nil {
+		return err
+	}
+	fmt.Println()
+	fmt.Printf("Reconcile All Reports: %d\n", len(reports))
+	for i := range reports {
+		printMirageReport(fmt.Sprintf("Report %d", i+1), reports[i])
+	}
+	return nil
+}
+
+func (a *App) snapshotMirageIntent(target MirageTarget) error {
+	intentID, err := a.promptLine("intent_id")
+	if err != nil {
+		return err
+	}
+	snapshot, found, err := target.Admin.SnapshotIntent(strings.TrimSpace(intentID))
+	if err != nil {
+		return err
+	}
+	fmt.Println()
+	if !found {
+		fmt.Printf("Intent %q not found\n", strings.TrimSpace(intentID))
+		return nil
+	}
+	fmt.Printf("Intent Snapshot: %s\n", snapshot.Desired.Issue.IntentID)
+	fmt.Printf("  pending_commands: %d\n", snapshot.PendingCount)
+	fmt.Printf("  has_observed:     %v\n", snapshot.HasObserved)
+	fmt.Printf("  desired_commands: %d\n", len(snapshot.Desired.Commands))
+	if snapshot.HasObserved {
+		fmt.Printf("  observed_events:  %d\n", len(snapshot.Observed.Events))
+		fmt.Printf("  observed_reports: %d\n", len(snapshot.Observed.Reports))
+	}
+	return nil
+}
+
+func (a *App) showMirageReports(target MirageTarget) error {
+	limit, err := a.promptOptionalLimit()
+	if err != nil {
+		return err
+	}
+	reports, err := target.Admin.RecentReports(limit)
+	if err != nil {
+		return err
+	}
+	fmt.Println()
+	fmt.Println("Recent Mirage Reports")
+	if len(reports) == 0 {
+		fmt.Println("  (none)")
+		return nil
+	}
+	for i := range reports {
+		printMirageReport(fmt.Sprintf("Report %d", i+1), reports[i])
+	}
+	return nil
+}
+
+func (a *App) spawnMirageLocalGhost(target MirageTarget) error {
+	name, err := a.promptLine("target_name suffix")
+	if err != nil {
+		return err
+	}
+	adminAddrRaw, err := a.promptLine("admin addr (host:port or port)")
+	if err != nil {
+		return err
+	}
+	adminAddr := strings.TrimSpace(adminAddrRaw)
+	if adminAddr == "" {
+		return errors.New("admin addr required")
+	}
+	if !strings.Contains(adminAddr, ":") {
+		adminAddr = "127.0.0.1:" + adminAddr
+	}
+	req := mirage.SpawnGhostRequest{
+		TargetName: normalizeSuffix(name),
+		AdminAddr:  adminAddr,
+	}
+	out, err := target.Admin.SpawnLocalGhost(req)
+	if err != nil {
+		return err
+	}
+	fmt.Println()
+	fmt.Println("Spawn Local Ghost Result")
+	fmt.Printf("  target_name: %s\n", out.TargetName)
+	fmt.Printf("  ghost_id:    %s\n", out.GhostID)
+	fmt.Printf("  admin_addr:  %s\n", out.AdminAddr)
+	return nil
+}
+
+func printMirageReport(header string, report session.Report) {
+	ts := ""
+	if report.TimestampMS > 0 {
+		ts = time.UnixMilli(int64(report.TimestampMS)).Format(time.RFC3339)
+	}
+	fmt.Println()
+	fmt.Println(header)
+	fmt.Printf("  intent_id:         %s\n", report.IntentID)
+	fmt.Printf("  phase:             %s\n", report.Phase)
+	fmt.Printf("  completion_state:  %s\n", report.CompletionState)
+	fmt.Printf("  summary:           %s\n", report.Summary)
+	fmt.Printf("  command_id:        %s\n", report.CommandID)
+	fmt.Printf("  execution_id:      %s\n", report.ExecutionID)
+	fmt.Printf("  event_id:          %s\n", report.EventID)
+	fmt.Printf("  outcome:           %s\n", report.Outcome)
+	if ts != "" {
+		fmt.Printf("  timestamp:         %s\n", ts)
+	}
+}
+
 func (a *App) promptOptionalLimit() (int, error) {
 	limitRaw, err := a.promptLine("limit (default 20)")
 	if err != nil {
@@ -808,6 +1480,10 @@ func (a *App) promptInt(label string, min int, max int, allowBack bool, allowExi
 
 func NewRemoteGhostAdmin(addr string) *RemoteGhostAdmin {
 	return &RemoteGhostAdmin{addr: strings.TrimSpace(addr)}
+}
+
+func NewRemoteMirageAdmin(addr string) *RemoteMirageAdmin {
+	return &RemoteMirageAdmin{addr: strings.TrimSpace(addr)}
 }
 
 func (c *RemoteGhostAdmin) GhostID() string {
@@ -960,8 +1636,166 @@ func (c *RemoteGhostAdmin) Close() error {
 	return err
 }
 
+func (c *RemoteMirageAdmin) Address() string {
+	return c.addr
+}
+
+func (c *RemoteMirageAdmin) Status() (mirage.LifecycleStatus, error) {
+	var out mirage.LifecycleStatus
+	if err := c.call(mirageControlRequest{Action: "status"}, &out); err != nil {
+		return mirage.LifecycleStatus{}, err
+	}
+	return out, nil
+}
+
+func (c *RemoteMirageAdmin) SubmitIssue(issue MirageIssueRequest) error {
+	return c.call(mirageControlRequest{Action: "submit_issue", Issue: issue}, nil)
+}
+
+func (c *RemoteMirageAdmin) ReconcileIntent(intentID string) (session.Report, error) {
+	var out session.Report
+	req := mirageControlRequest{
+		Action:   "reconcile_intent",
+		IntentID: strings.TrimSpace(intentID),
+	}
+	if err := c.call(req, &out); err != nil {
+		return session.Report{}, err
+	}
+	return out, nil
+}
+
+func (c *RemoteMirageAdmin) ReconcileAll() ([]session.Report, error) {
+	var out mirageReconcileAllResponse
+	if err := c.call(mirageControlRequest{Action: "reconcile_all"}, &out); err != nil {
+		return nil, err
+	}
+	return out.Reports, nil
+}
+
+func (c *RemoteMirageAdmin) SnapshotIntent(intentID string) (mirage.IntentSnapshot, bool, error) {
+	var out mirageSnapshotIntentResponse
+	req := mirageControlRequest{
+		Action:   "snapshot_intent",
+		IntentID: strings.TrimSpace(intentID),
+	}
+	if err := c.call(req, &out); err != nil {
+		return mirage.IntentSnapshot{}, false, err
+	}
+	return out.Snapshot, out.Found, nil
+}
+
+func (c *RemoteMirageAdmin) ListIntents() ([]string, error) {
+	var out []string
+	if err := c.call(mirageControlRequest{Action: "list_intents"}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *RemoteMirageAdmin) RecentReports(limit int) ([]session.Report, error) {
+	var out []session.Report
+	if err := c.call(mirageControlRequest{Action: "recent_reports", Limit: limit}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *RemoteMirageAdmin) SpawnLocalGhost(req mirage.SpawnGhostRequest) (mirage.SpawnGhostResult, error) {
+	var out mirage.SpawnGhostResult
+	controlReq := mirageControlRequest{
+		Action: "spawn_local_ghost",
+		Spawn:  req,
+	}
+	if err := c.call(controlReq, &out); err != nil {
+		return mirage.SpawnGhostResult{}, err
+	}
+	return out, nil
+}
+
+func (c *RemoteMirageAdmin) RegisteredGhosts() ([]mirage.RegisteredGhost, error) {
+	var out []mirage.RegisteredGhost
+	if err := c.call(mirageControlRequest{Action: "registered_ghosts"}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *RemoteMirageAdmin) call(req mirageControlRequest, out any) error {
+	if err := c.ensureConn(); err != nil {
+		return err
+	}
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+	if err := c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return err
+	}
+	payload = append(payload, '\n')
+	if _, err := c.conn.Write(payload); err != nil {
+		c.resetConn()
+		return err
+	}
+	if err := c.conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return err
+	}
+	line, err := c.r.ReadBytes('\n')
+	if err != nil {
+		c.resetConn()
+		return err
+	}
+	var resp mirageControlResponse
+	if err := json.Unmarshal(line, &resp); err != nil {
+		return err
+	}
+	if !resp.OK {
+		return errors.New(resp.Error)
+	}
+	if out == nil || len(resp.Data) == 0 {
+		return nil
+	}
+	return json.Unmarshal(resp.Data, out)
+}
+
+func (c *RemoteMirageAdmin) ensureConn() error {
+	if c.conn != nil {
+		return nil
+	}
+	conn, err := net.DialTimeout("tcp", c.addr, 3*time.Second)
+	if err != nil {
+		return err
+	}
+	c.conn = conn
+	c.r = bufio.NewReader(conn)
+	return nil
+}
+
+func (c *RemoteMirageAdmin) resetConn() {
+	if c.conn != nil {
+		_ = c.conn.Close()
+	}
+	c.conn = nil
+	c.r = nil
+}
+
+func (c *RemoteMirageAdmin) Close() error {
+	if c.conn == nil {
+		return nil
+	}
+	err := c.conn.Close()
+	c.conn = nil
+	c.r = nil
+	return err
+}
+
 func (a *App) closeTargets() {
 	for _, t := range a.targets {
+		_ = t.Admin.Close()
+	}
+}
+
+func (a *App) closeMirageTargets() {
+	for _, t := range a.mirageTargets {
 		_ = t.Admin.Close()
 	}
 }

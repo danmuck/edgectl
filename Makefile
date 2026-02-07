@@ -26,4 +26,11 @@ run-ghost:
 	go run ./cmd/ghostctl
 
 run-client:
-	go run ./cmd/client-tm
+	@printf "Run client for ghost or mirage? [ghost/mirage] (default ghost): "; \
+	read mode; \
+	if [ -z "$$mode" ]; then mode=ghost; fi; \
+	case "$$mode" in \
+		ghost|mirage) ;; \
+		*) echo "invalid mode '$$mode', expected ghost or mirage"; exit 1 ;; \
+	esac; \
+	go run ./cmd/client-tm -mode $$mode
