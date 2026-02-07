@@ -62,16 +62,16 @@ links = [
 definitions = [
 	issue = "User intent accepted by Mirage; source of desired state"
 	command = "Mirage instruction for a Ghost-scoped action"
-	seed_execute = "Ghost instruction for Seed command execution"
-	seed_result = "Seed execution output returned to Ghost"
+	seed.execute = "Ghost instruction for Seed command execution"
+	seed.result = "Seed execution output returned to Ghost"
 	event = "Ghost observation emitted to Mirage"
 	report = "Mirage summary emitted to user"
 ]
 required_fields = [
 	issue = "intent_id, actor, target_scope, objective"
 	command = "command_id, intent_id, ghost_id, seed_selector, operation"
-	seed_execute = "execution_id, command_id, seed_id, operation, args"
-	seed_result = "execution_id, seed_id, status, stdout, stderr, exit_code"
+	seed.execute = "execution_id, command_id, seed_id, operation, args"
+	seed.result = "execution_id, seed_id, status, stdout, stderr, exit_code"
 	event = "event_id, command_id, intent_id, ghost_id, seed_id, outcome"
 	report = "intent_id, phase, summary, completion_state"
 ]

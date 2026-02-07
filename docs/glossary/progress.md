@@ -2,9 +2,26 @@
 
 This file tracks the doc-to-code implementation slices for the control plane.
 
+## Phase 0 — Contract Freeze
+
+Status: `Done`
+
+### Tasks
+
+- [x] Lock canonical vocabulary: `issue`, `command`, `seed.execute`, `seed.result`, `event`, `report`
+- [x] Lock authority model: Mirage = desired/observed, Ghost = execution, Seed = service interface
+- [x] Lock required envelope fields and message type IDs
+- [x] Define exact “done” behavior for one full intent lifecycle
+
+### Acceptance Checks
+
+- [x] `design.toml` and `protocol.toml` use identical terminology
+- [x] No ambiguous command/event naming remains
+- [x] Envelope names and required fields are final
+
 ## Baseline Contracts (Locked)
 
-- [x] Lock canonical vocabulary: `issue`, `command`, `seed_execute`, `seed_result`, `event`, `report`
+- [x] Lock canonical vocabulary: `issue`, `command`, `seed.execute`, `seed.result`, `event`, `report`
 - [x] Lock authority model: Mirage = desired/observed, Ghost = execution, Seed = service interface
 - [x] Lock required envelope fields and message type IDs
 - [x] Lock supporting contracts: transport security, handshake, reliability, errors, observability
@@ -43,7 +60,7 @@ This file tracks the doc-to-code implementation slices for the control plane.
 - [ ] Implement Mirage minimal reconcile loop (single command target)
 - [ ] Implement Ghost command routing to seed registry and execution adapter
 - [ ] Implement event emission and Mirage report generation
-- [ ] Add e2e test: `issue -> command -> seed_execute -> seed_result -> event -> report`
+- [ ] Add e2e test: `issue -> command -> seed.execute -> seed.result -> event -> report`
 
 - [ ] Milestone 4: MVP hardening gate
 - [ ] Add retry/backoff + idempotency behavior per `reliability.toml`

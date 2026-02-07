@@ -51,10 +51,10 @@ This file is the canonical vocabulary for Phase 0 (Contract Freeze).
 - `command`:
   - Mirage -> Ghost
   - imperative execution instruction
-- `seed_execute`:
+- `seed.execute`:
   - Ghost -> Seed
   - concrete operation invocation
-- `seed_result`:
+- `seed.result`:
   - Seed -> Ghost
   - raw execution outcome
 - `event`:
@@ -115,7 +115,7 @@ This file is the canonical vocabulary for Phase 0 (Contract Freeze).
 ## Naming Rules
 
 - Use `Mirage`, `Ghost`, `Seed` as role names (capitalized) in docs.
-- Use `issue`, `command`, `seed_execute`, `seed_result`, `event`, `report` as canonical envelope names.
+- Use `issue`, `command`, `seed.execute`, `seed.result`, `event`, `report` as canonical envelope names.
 - Do not substitute synonyms (`task`, `job`, `action-event`, etc.) for canonical envelope names.
 - Prefer `intent_id`, `command_id`, `event_id`, `execution_id` for correlation keys.
 
@@ -123,7 +123,7 @@ This file is the canonical vocabulary for Phase 0 (Contract Freeze).
 
 - `command` is Mirage->Ghost, not User->Mirage.
 - `event` is Ghost->Mirage, not Seed->Mirage directly.
-- `seed_result` is Seed->Ghost internal boundary output.
+- `seed.result` is Seed->Ghost internal boundary output.
 - `report` is Mirage->User summary, not raw execution output.
 
 ## Phase 0 Done Criteria (Vocabulary)
