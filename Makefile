@@ -2,6 +2,7 @@
 	clear \
 	test \
 	test-override \
+	run-client \
 	run-mirage \
 	run-ghost
 
@@ -23,3 +24,6 @@ run-mirage:
 
 run-ghost:
 	go run ./cmd/ghostctl
+
+run-client:
+	go run ./cmd/client-tm
