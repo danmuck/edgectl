@@ -73,9 +73,7 @@ func NewService() *Service {
 
 // NewServiceWithConfig creates a Ghost service with explicit config.
 func NewServiceWithConfig(cfg ServiceConfig) *Service {
-	if cfg.Mirage.SessionConfig.ConnectTimeout <= 0 {
-		cfg.Mirage.SessionConfig = session.DefaultConfig()
-	}
+	cfg.Mirage.SessionConfig = cfg.Mirage.SessionConfig.WithDefaults()
 	if strings.TrimSpace(string(cfg.Mirage.Policy)) == "" {
 		cfg.Mirage.Policy = MiragePolicyHeadless
 	}

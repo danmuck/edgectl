@@ -1,7 +1,7 @@
 # P4 Conformance Report
 
 Date: `2026-02-07`
-Pass: `docs cleanup conformance verify + P2 step1/step2 runtime implementation + step3 resilience scenarios`
+Pass: `docs cleanup conformance verify + P2 step1/step2 runtime implementation + step3 resilience scenarios + TLS/mTLS enforcement`
 
 Scope:
 - verify current code behavior against canonical protocol/design docs
@@ -35,17 +35,12 @@ Scope:
 - `PASS`: reconnect/liveness baseline is implemented and tested (`auto` reconnect after Mirage restart, `required` policy startup failure when Mirage is unavailable).
 - `PASS`: explicit ack-timeout behavior is covered by integration test (`ErrAckTimeout` after retry-until-deadline against a no-ack endpoint).
 - `PASS`: duplicate event replay across reconnect now returns idempotent prior `event.ack` while preserving event count.
-- `PARTIAL`: full protocol/runtime conformance is not complete due to remaining security/runtime integration gaps.
+- `PASS`: transport security baseline is now enforced in runtime: production-mode TLS+mTLS required, cert-backed peer identity extracted from TLS peer certificate, and Mirage rejects identity/ghost binding mismatch before command/event flow.
+- `PASS`: runtime configuration now exposes security policy controls in both entrypoints (`ghostctl`, `miragectl`) with TLS/mTLS file-path settings.
 
 ## Conformance Gaps
 
-1. `[P2] Transport security baseline is not yet implemented in runtime`
-   - Contract:
-     - `docs/architecture/transport.md`
-   - Code:
-     - current Mirage/Ghost session implementation is TCP-only and does not enforce TLS/mTLS certificate-based identity.
-   - Impact:
-     - production-mode contract (`MUST` TLS + mTLS + peer identity binding) is not yet satisfied.
+- None open for the P2 transport/handshake/reliability baseline scope.
 
 ## Closed In This Pass
 
@@ -62,7 +57,12 @@ Scope:
 - [x] Add reconnect/liveness service tests (`internal/ghost/service_test.go`) for auto reconnect on Mirage restart and required-policy failure on startup.
 - [x] Add explicit ack-timeout integration coverage in Ghost client runtime (`internal/ghost/mirage_client_test.go`).
 - [x] Preserve Mirage idempotency state across reconnect and verify replayed `event.ack` semantics (`internal/mirage/service.go`, `internal/mirage/service_test.go`).
+- [x] Add transport security config + validation primitives for development/production modes and TLS/mTLS requirements (`internal/protocol/session/config.go`, `internal/protocol/session/transport_security.go`).
+- [x] Enforce TLS/mTLS in Ghost Mirage client dial path and handshake (`internal/ghost/mirage_client.go`).
+- [x] Enforce TLS/mTLS in Mirage runtime listener/session auth and bind TLS peer certificate identity to `ghost_id` (`internal/mirage/service.go`).
+- [x] Add TLS/mTLS integration tests covering accept and identity mismatch rejection paths (`internal/mirage/service_test.go`).
+- [x] Add entrypoint config plumbing for Mirage and Ghost transport security settings (`cmd/miragectl/config.go`, `cmd/ghostctl/config.go` and tests).
 
 ## Recommended Fix Order
 
-- [ ] Add TLS/mTLS transport security enforcement and certificate-backed identity binding.
+- [ ] Move to next MVP step: single-intent end-to-end loop (`issue -> command -> seed.execute -> seed.result -> event -> report`).

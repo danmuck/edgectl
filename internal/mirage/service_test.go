@@ -2,6 +2,7 @@ package mirage
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"net"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/danmuck/edgectl/internal/ghost"
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/testutil/testlog"
+	"github.com/danmuck/edgectl/internal/testutil/tlstest"
 )
 
 func TestServiceRegistrationAndEventAck(t *testing.T) {
@@ -263,4 +265,147 @@ func waitForGhostState(
 		}
 	}
 	return false
+}
+
+func TestServiceRegistrationTLSMTLSIdentityBound(t *testing.T) {
+	testlog.Start(t)
+
+	dir := t.TempDir()
+	ca := tlstest.NewAuthority(t, dir, "edgectl-test-ca")
+	serverCert, serverKey := ca.IssueServerCert(t, dir, "mirage.local", []string{"mirage.local"}, []net.IP{net.ParseIP("127.0.0.1")})
+	clientCert, clientKey := ca.IssueClientCert(t, dir, "ghost.alpha")
+
+	cfg := DefaultServiceConfig()
+	cfg.RequireIdentityBinding = true
+	cfg.Session.SecurityMode = session.SecurityModeProduction
+	cfg.Session.TLS.Enabled = true
+	cfg.Session.TLS.Mutual = true
+	cfg.Session.TLS.CertFile = serverCert
+	cfg.Session.TLS.KeyFile = serverKey
+	cfg.Session.TLS.CAFile = ca.CAFile()
+	cfg.Session.HandshakeTimeout = 2 * time.Second
+	cfg.Session.ReadTimeout = 2 * time.Second
+	cfg.Session.WriteTimeout = 2 * time.Second
+
+	svc := NewServiceWithConfig(cfg)
+	tlsCfg, err := svc.serverTLSConfig()
+	if err != nil {
+		t.Fatalf("server tls config: %v", err)
+	}
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", tlsCfg)
+	if err != nil {
+		t.Fatalf("listen tls: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- svc.Serve(ctx, ln)
+	}()
+
+	clientSessionCfg := session.DefaultConfig()
+	clientSessionCfg.SecurityMode = session.SecurityModeProduction
+	clientSessionCfg.TLS.Enabled = true
+	clientSessionCfg.TLS.Mutual = true
+	clientSessionCfg.TLS.CertFile = clientCert
+	clientSessionCfg.TLS.KeyFile = clientKey
+	clientSessionCfg.TLS.CAFile = ca.CAFile()
+	clientSessionCfg.TLS.ServerName = "mirage.local"
+
+	client, err := ghost.NewMirageClient(ghost.MirageClientConfig{
+		Address:      ln.Addr().String(),
+		GhostID:      "ghost.alpha",
+		PeerIdentity: "ghost.alpha",
+		SeedList: []session.SeedInfo{
+			{ID: "seed.flow", Name: "Flow", Description: "Deterministic control-flow seed"},
+		},
+		Session: clientSessionCfg,
+	})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	connectCtx, connectCancel := context.WithTimeout(ctx, 3*time.Second)
+	defer connectCancel()
+	gs, err := client.ConnectAndRegister(connectCtx)
+	if err != nil {
+		t.Fatalf("connect and register: %v", err)
+	}
+	defer gs.Close()
+
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("serve exit err: %v", err)
+	}
+}
+
+func TestServiceRegistrationTLSIdentityMismatchRejected(t *testing.T) {
+	testlog.Start(t)
+
+	dir := t.TempDir()
+	ca := tlstest.NewAuthority(t, dir, "edgectl-test-ca")
+	serverCert, serverKey := ca.IssueServerCert(t, dir, "mirage.local", []string{"mirage.local"}, []net.IP{net.ParseIP("127.0.0.1")})
+	clientCert, clientKey := ca.IssueClientCert(t, dir, "ghost.beta")
+
+	cfg := DefaultServiceConfig()
+	cfg.RequireIdentityBinding = true
+	cfg.Session.SecurityMode = session.SecurityModeProduction
+	cfg.Session.TLS.Enabled = true
+	cfg.Session.TLS.Mutual = true
+	cfg.Session.TLS.CertFile = serverCert
+	cfg.Session.TLS.KeyFile = serverKey
+	cfg.Session.TLS.CAFile = ca.CAFile()
+	cfg.Session.HandshakeTimeout = 2 * time.Second
+	cfg.Session.ReadTimeout = 2 * time.Second
+	cfg.Session.WriteTimeout = 2 * time.Second
+
+	svc := NewServiceWithConfig(cfg)
+	tlsCfg, err := svc.serverTLSConfig()
+	if err != nil {
+		t.Fatalf("server tls config: %v", err)
+	}
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", tlsCfg)
+	if err != nil {
+		t.Fatalf("listen tls: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- svc.Serve(ctx, ln)
+	}()
+
+	clientSessionCfg := session.DefaultConfig()
+	clientSessionCfg.SecurityMode = session.SecurityModeProduction
+	clientSessionCfg.TLS.Enabled = true
+	clientSessionCfg.TLS.Mutual = true
+	clientSessionCfg.TLS.CertFile = clientCert
+	clientSessionCfg.TLS.KeyFile = clientKey
+	clientSessionCfg.TLS.CAFile = ca.CAFile()
+	clientSessionCfg.TLS.ServerName = "mirage.local"
+
+	client, err := ghost.NewMirageClient(ghost.MirageClientConfig{
+		Address:            ln.Addr().String(),
+		GhostID:            "ghost.alpha",
+		PeerIdentity:       "ghost.alpha",
+		SeedList:           []session.SeedInfo{},
+		Session:            clientSessionCfg,
+		MaxConnectAttempts: 1,
+	})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	connectCtx, connectCancel := context.WithTimeout(ctx, 3*time.Second)
+	defer connectCancel()
+	if _, err := client.ConnectAndRegister(connectCtx); !errors.Is(err, ghost.ErrRegistrationRejected) {
+		t.Fatalf("expected ErrRegistrationRejected, got %v", err)
+	}
+
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("serve exit err: %v", err)
+	}
 }

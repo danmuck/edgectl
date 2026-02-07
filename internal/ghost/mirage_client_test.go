@@ -87,6 +87,31 @@ func TestMirageSessionSendEventWithAckTimeout(t *testing.T) {
 	}
 }
 
+func TestMirageClientProductionRequiresTLS(t *testing.T) {
+	testlog.Start(t)
+	cfg := session.DefaultConfig()
+	cfg.SecurityMode = session.SecurityModeProduction
+
+	client, err := NewMirageClient(MirageClientConfig{
+		Address:            "127.0.0.1:9000",
+		GhostID:            "ghost.alpha",
+		PeerIdentity:       "ghost.alpha",
+		SeedList:           []session.SeedInfo{},
+		Session:            cfg,
+		MaxConnectAttempts: 1,
+	})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	_, err = client.ConnectAndRegister(ctx)
+	if !errors.Is(err, session.ErrTLSRequired) {
+		t.Fatalf("expected session.ErrTLSRequired, got %v", err)
+	}
+}
+
 func serveNoAckEndpoint(ln net.Listener) error {
 	defer ln.Close()
 

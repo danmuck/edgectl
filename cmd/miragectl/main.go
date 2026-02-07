@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"os"
 
 	"github.com/danmuck/edgectl/internal/logging"
@@ -9,8 +10,18 @@ import (
 )
 
 func main() {
+	var configPath string
+	flag.StringVar(&configPath, "config", "cmd/miragectl/config.toml", "path to miragectl config.toml")
+	flag.Parse()
+
 	logging.ConfigureRuntime()
-	svc := mirage.NewService()
+	cfg, err := loadServiceConfig(configPath)
+	if err != nil {
+		logs.Errf("miragectl: %v", err)
+		os.Exit(1)
+	}
+
+	svc := mirage.NewServiceWithConfig(cfg)
 	if err := svc.Run(); err != nil {
 		logs.Errf("miragectl: %v", err)
 		os.Exit(1)

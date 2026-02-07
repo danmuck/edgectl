@@ -3,6 +3,7 @@ package session
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"math/rand"
 	"testing"
 	"time"
@@ -173,5 +174,58 @@ func TestNextBackoffDelayJitterRange(t *testing.T) {
 	got := NextBackoffDelay(cfg, 1, rng)
 	if got < 125*time.Millisecond || got > 375*time.Millisecond {
 		t.Fatalf("jitter out of range: %v", got)
+	}
+}
+
+func TestValidateClientTransportProductionRequiresTLSMTLS(t *testing.T) {
+	testlog.Start(t)
+	cfg := DefaultConfig()
+	cfg.SecurityMode = SecurityModeProduction
+	if err := cfg.ValidateClientTransport(); !errors.Is(err, ErrTLSRequired) {
+		t.Fatalf("expected ErrTLSRequired, got %v", err)
+	}
+
+	cfg.TLS.Enabled = true
+	if err := cfg.ValidateClientTransport(); !errors.Is(err, ErrMTLSRequired) {
+		t.Fatalf("expected ErrMTLSRequired, got %v", err)
+	}
+}
+
+func TestValidateClientTransportMutualRequiresCertKeyCA(t *testing.T) {
+	testlog.Start(t)
+	cfg := DefaultConfig()
+	cfg.TLS.Enabled = true
+	cfg.TLS.Mutual = true
+	if err := cfg.ValidateClientTransport(); !errors.Is(err, ErrTLSCAFileRequired) {
+		t.Fatalf("expected ErrTLSCAFileRequired, got %v", err)
+	}
+
+	cfg.TLS.CAFile = "/tmp/ca.pem"
+	if err := cfg.ValidateClientTransport(); !errors.Is(err, ErrTLSCertFileRequired) {
+		t.Fatalf("expected ErrTLSCertFileRequired, got %v", err)
+	}
+
+	cfg.TLS.CertFile = "/tmp/client.pem"
+	if err := cfg.ValidateClientTransport(); !errors.Is(err, ErrTLSKeyFileRequired) {
+		t.Fatalf("expected ErrTLSKeyFileRequired, got %v", err)
+	}
+
+	cfg.TLS.KeyFile = "/tmp/client.key"
+	if err := cfg.ValidateClientTransport(); err != nil {
+		t.Fatalf("expected valid transport config, got %v", err)
+	}
+}
+
+func TestValidateServerTransportProductionRequiresTLSMTLS(t *testing.T) {
+	testlog.Start(t)
+	cfg := DefaultConfig()
+	cfg.SecurityMode = SecurityModeProduction
+	if err := cfg.ValidateServerTransport(); !errors.Is(err, ErrTLSRequired) {
+		t.Fatalf("expected ErrTLSRequired, got %v", err)
+	}
+
+	cfg.TLS.Enabled = true
+	if err := cfg.ValidateServerTransport(); !errors.Is(err, ErrMTLSRequired) {
+		t.Fatalf("expected ErrMTLSRequired, got %v", err)
 	}
 }

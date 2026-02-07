@@ -7,6 +7,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/danmuck/edgectl/internal/ghost"
+	"github.com/danmuck/edgectl/internal/protocol/session"
 )
 
 type fileConfig struct {
@@ -19,6 +20,14 @@ type fileConfig struct {
 	MirageAddress       string   `toml:"mirage_address"`
 	MiragePeerIdentity  string   `toml:"mirage_peer_identity"`
 	MirageMaxAttempts   int      `toml:"mirage_max_connect_attempts"`
+	MirageSecurityMode  string   `toml:"mirage_security_mode"`
+	MirageTLSEnabled    bool     `toml:"mirage_tls_enabled"`
+	MirageTLSMutual     bool     `toml:"mirage_tls_mutual"`
+	MirageTLSCertFile   string   `toml:"mirage_tls_cert_file"`
+	MirageTLSKeyFile    string   `toml:"mirage_tls_key_file"`
+	MirageTLSCAFile     string   `toml:"mirage_tls_ca_file"`
+	MirageTLSServerName string   `toml:"mirage_tls_server_name"`
+	MirageTLSInsecure   bool     `toml:"mirage_tls_insecure_skip_verify"`
 }
 
 func loadServiceConfig(path string) (ghost.ServiceConfig, error) {
@@ -75,6 +84,30 @@ func loadServiceConfig(path string) (ghost.ServiceConfig, error) {
 
 	if meta.IsDefined("mirage_max_connect_attempts") {
 		cfg.Mirage.MaxConnectAttempts = raw.MirageMaxAttempts
+	}
+	if meta.IsDefined("mirage_security_mode") {
+		cfg.Mirage.SessionConfig.SecurityMode = session.SecurityMode(strings.TrimSpace(raw.MirageSecurityMode))
+	}
+	if meta.IsDefined("mirage_tls_enabled") {
+		cfg.Mirage.SessionConfig.TLS.Enabled = raw.MirageTLSEnabled
+	}
+	if meta.IsDefined("mirage_tls_mutual") {
+		cfg.Mirage.SessionConfig.TLS.Mutual = raw.MirageTLSMutual
+	}
+	if meta.IsDefined("mirage_tls_cert_file") {
+		cfg.Mirage.SessionConfig.TLS.CertFile = strings.TrimSpace(raw.MirageTLSCertFile)
+	}
+	if meta.IsDefined("mirage_tls_key_file") {
+		cfg.Mirage.SessionConfig.TLS.KeyFile = strings.TrimSpace(raw.MirageTLSKeyFile)
+	}
+	if meta.IsDefined("mirage_tls_ca_file") {
+		cfg.Mirage.SessionConfig.TLS.CAFile = strings.TrimSpace(raw.MirageTLSCAFile)
+	}
+	if meta.IsDefined("mirage_tls_server_name") {
+		cfg.Mirage.SessionConfig.TLS.ServerName = strings.TrimSpace(raw.MirageTLSServerName)
+	}
+	if meta.IsDefined("mirage_tls_insecure_skip_verify") {
+		cfg.Mirage.SessionConfig.TLS.InsecureSkipVerify = raw.MirageTLSInsecure
 	}
 
 	return cfg, nil

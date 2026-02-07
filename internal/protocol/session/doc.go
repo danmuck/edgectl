@@ -11,5 +11,6 @@
 // - docs/architecture/framing.md
 // - docs/architecture/definitions/handshake.toml
 // - docs/architecture/definitions/reliability.toml
+// - docs/architecture/definitions/transport_security.toml
 // - docs/architecture/definitions/protocol.toml
 package session

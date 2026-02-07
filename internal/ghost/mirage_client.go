@@ -3,10 +3,13 @@ package ghost
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"math/rand"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -57,9 +60,7 @@ func NewMirageClient(cfg MirageClientConfig) (*MirageClient, error) {
 	if strings.TrimSpace(cfg.PeerIdentity) == "" {
 		cfg.PeerIdentity = cfg.GhostID
 	}
-	if cfg.Session.ConnectTimeout <= 0 {
-		cfg.Session = session.DefaultConfig()
-	}
+	cfg.Session = cfg.Session.WithDefaults()
 	return &MirageClient{
 		cfg: cfg,
 		rng: rand.New(rand.NewSource(time.Now().UnixNano())),
@@ -71,7 +72,7 @@ func (c *MirageClient) ConnectAndRegister(ctx context.Context) (*MirageSession, 
 	var attempt int
 	for {
 		attempt++
-		conn, err := net.DialTimeout("tcp", c.cfg.Address, c.cfg.Session.ConnectTimeout)
+		conn, err := c.dial(ctx)
 		if err != nil {
 			logs.Warnf("ghost.MirageClient dial attempt=%d addr=%q err=%v", attempt, c.cfg.Address, err)
 			if !c.shouldRetry(attempt) {
@@ -95,6 +96,73 @@ func (c *MirageClient) ConnectAndRegister(ctx context.Context) (*MirageSession, 
 			return nil, err
 		}
 	}
+}
+
+func (c *MirageClient) dial(ctx context.Context) (net.Conn, error) {
+	if err := c.cfg.Session.ValidateClientTransport(); err != nil {
+		return nil, err
+	}
+
+	dialer := net.Dialer{Timeout: c.cfg.Session.ConnectTimeout}
+	rawConn, err := dialer.DialContext(ctx, "tcp", c.cfg.Address)
+	if err != nil {
+		return nil, err
+	}
+	if !c.cfg.Session.TLS.Enabled {
+		return rawConn, nil
+	}
+
+	tlsCfg, err := c.clientTLSConfig()
+	if err != nil {
+		_ = rawConn.Close()
+		return nil, err
+	}
+	conn := tls.Client(rawConn, tlsCfg)
+	handshakeCtx, cancel := context.WithTimeout(ctx, c.cfg.Session.HandshakeTimeout)
+	defer cancel()
+	if err := conn.HandshakeContext(handshakeCtx); err != nil {
+		_ = rawConn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
+func (c *MirageClient) clientTLSConfig() (*tls.Config, error) {
+	cfg := &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: c.cfg.Session.TLS.InsecureSkipVerify,
+	}
+
+	serverName := strings.TrimSpace(c.cfg.Session.TLS.ServerName)
+	if serverName == "" {
+		host, _, err := net.SplitHostPort(c.cfg.Address)
+		if err != nil {
+			return nil, err
+		}
+		serverName = host
+	}
+	cfg.ServerName = serverName
+
+	if caPath := strings.TrimSpace(c.cfg.Session.TLS.CAFile); caPath != "" {
+		caPEM, err := os.ReadFile(caPath)
+		if err != nil {
+			return nil, err
+		}
+		pool := x509.NewCertPool()
+		if ok := pool.AppendCertsFromPEM(caPEM); !ok {
+			return nil, fmt.Errorf("ghost: parse tls ca bundle: %s", caPath)
+		}
+		cfg.RootCAs = pool
+	}
+
+	if c.cfg.Session.TLS.Mutual {
+		cert, err := tls.LoadX509KeyPair(c.cfg.Session.TLS.CertFile, c.cfg.Session.TLS.KeyFile)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Certificates = []tls.Certificate{cert}
+	}
+	return cfg, nil
 }
 
 func (c *MirageClient) shouldRetry(attempt int) bool {

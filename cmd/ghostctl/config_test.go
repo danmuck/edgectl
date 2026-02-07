@@ -18,6 +18,13 @@ mirage_policy = "auto"
 mirage_address = "127.0.0.1:9000"
 mirage_peer_identity = "ghost.alpha"
 mirage_max_connect_attempts = 3
+mirage_security_mode = "production"
+mirage_tls_enabled = true
+mirage_tls_mutual = true
+mirage_tls_cert_file = "/etc/ghost/client.crt"
+mirage_tls_key_file = "/etc/ghost/client.key"
+mirage_tls_ca_file = "/etc/ghost/ca.crt"
+mirage_tls_server_name = "mirage.local"
 `
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -47,6 +54,27 @@ mirage_max_connect_attempts = 3
 	}
 	if cfg.Mirage.MaxConnectAttempts != 3 {
 		t.Fatalf("unexpected max connect attempts: %d", cfg.Mirage.MaxConnectAttempts)
+	}
+	if cfg.Mirage.SessionConfig.SecurityMode != "production" {
+		t.Fatalf("unexpected security mode: %q", cfg.Mirage.SessionConfig.SecurityMode)
+	}
+	if !cfg.Mirage.SessionConfig.TLS.Enabled {
+		t.Fatalf("expected tls enabled")
+	}
+	if !cfg.Mirage.SessionConfig.TLS.Mutual {
+		t.Fatalf("expected mtls enabled")
+	}
+	if cfg.Mirage.SessionConfig.TLS.CertFile != "/etc/ghost/client.crt" {
+		t.Fatalf("unexpected cert file: %q", cfg.Mirage.SessionConfig.TLS.CertFile)
+	}
+	if cfg.Mirage.SessionConfig.TLS.KeyFile != "/etc/ghost/client.key" {
+		t.Fatalf("unexpected key file: %q", cfg.Mirage.SessionConfig.TLS.KeyFile)
+	}
+	if cfg.Mirage.SessionConfig.TLS.CAFile != "/etc/ghost/ca.crt" {
+		t.Fatalf("unexpected ca file: %q", cfg.Mirage.SessionConfig.TLS.CAFile)
+	}
+	if cfg.Mirage.SessionConfig.TLS.ServerName != "mirage.local" {
+		t.Fatalf("unexpected server name: %q", cfg.Mirage.SessionConfig.TLS.ServerName)
 	}
 }
 

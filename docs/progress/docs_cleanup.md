@@ -38,5 +38,5 @@ Status: `In Progress`
 - [x] Package `doc.go` stubs updated to reference canonical contracts before implementation changes.
 - [x] Buildlog policy, naming scheme, and TOML template added under `docs/progress/buildlog/` with scope-based log rollover and follow-up append rules.
 - [x] Test tooling UX pass added `cmd/testctl` and consolidated test entrypoints to `make test` (interactive package/module selection) and `make test-override` (full suite non-interactive), with grouped test listing, indented logs, per-package/per-test result matrix, and end-of-run totals.
-- [ ] `2026-02-07` verification + implementation passes completed; `go test ./...` passes, P1 is closed, and P2 runtime now includes session primitives, minimal Mirage endpoint, Ghost client, config/policy wiring, reconnect baseline tests, and step-3 resilience scenarios (ack-timeout + replay-across-reconnect coverage). Remaining gap: TLS/mTLS enforcement.  
+- [ ] `2026-02-07` verification + implementation passes completed; `go test ./...` passes, P1 is closed, and P2 runtime now includes session primitives, minimal Mirage endpoint, Ghost client, config/policy wiring, reconnect baseline tests, step-3 resilience scenarios (ack-timeout + replay-across-reconnect coverage), and TLS/mTLS transport security enforcement with certificate-backed identity binding.  
   Source: `p4_conformance_report.md`.

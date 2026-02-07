@@ -3,8 +3,12 @@ package mirage
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
+	"fmt"
 	"net"
+	"os"
 	"os/signal"
 	"strings"
 	"sync"
@@ -46,6 +50,11 @@ type registeredGhostState struct {
 	ackByEvent map[string]session.EventAck
 }
 
+type peerAuth struct {
+	PeerIdentity  string
+	Authenticated bool
+}
+
 // Service is a minimal Mirage runtime for session/handshake contracts.
 type Service struct {
 	cfg ServiceConfig
@@ -63,9 +72,7 @@ func NewServiceWithConfig(cfg ServiceConfig) *Service {
 	if strings.TrimSpace(cfg.ListenAddr) == "" {
 		cfg.ListenAddr = DefaultServiceConfig().ListenAddr
 	}
-	if cfg.Session.ConnectTimeout <= 0 {
-		cfg.Session = session.DefaultConfig()
-	}
+	cfg.Session = cfg.Session.WithDefaults()
 	return &Service{
 		cfg:      cfg,
 		registry: make(map[string]*registeredGhostState),
@@ -78,7 +85,11 @@ func (s *Service) Run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	ln, err := net.Listen("tcp", s.cfg.ListenAddr)
+	if err := s.cfg.Session.ValidateServerTransport(); err != nil {
+		return err
+	}
+
+	ln, err := s.listen()
 	if err != nil {
 		return err
 	}
@@ -86,8 +97,22 @@ func (s *Service) Run() error {
 	return s.Serve(ctx, ln)
 }
 
+func (s *Service) listen() (net.Listener, error) {
+	if !s.cfg.Session.TLS.Enabled {
+		return net.Listen("tcp", s.cfg.ListenAddr)
+	}
+	tlsCfg, err := s.serverTLSConfig()
+	if err != nil {
+		return nil, err
+	}
+	return tls.Listen("tcp", s.cfg.ListenAddr, tlsCfg)
+}
+
 // Serve accepts Ghost sessions on an existing listener.
 func (s *Service) Serve(ctx context.Context, ln net.Listener) error {
+	if err := s.cfg.Session.ValidateServerTransport(); err != nil {
+		return err
+	}
 	defer ln.Close()
 	go func() {
 		<-ctx.Done()
@@ -125,7 +150,13 @@ func (s *Service) handleConn(conn net.Conn) {
 	defer s.untrackConn(conn)
 	reader := bufio.NewReader(conn)
 
-	reg, ack := s.handleRegistration(conn, reader)
+	auth, err := s.authenticateConn(conn)
+	if err != nil {
+		logs.Warnf("mirage.handleConn transport auth err=%v", err)
+		return
+	}
+
+	reg, ack := s.handleRegistration(conn, reader, auth)
 	if ack.Status != session.AckStatusAccepted {
 		_ = session.WriteRegistrationAck(conn, ack)
 		return
@@ -178,6 +209,7 @@ func (s *Service) handleConn(conn net.Conn) {
 func (s *Service) handleRegistration(
 	conn net.Conn,
 	reader *bufio.Reader,
+	auth peerAuth,
 ) (session.Registration, session.RegistrationAck) {
 	_ = conn.SetDeadline(time.Now().Add(s.cfg.Session.HandshakeTimeout))
 	now := uint64(time.Now().UnixMilli())
@@ -194,18 +226,50 @@ func (s *Service) handleRegistration(
 		}
 	}
 
-	if s.cfg.RequireIdentityBinding && reg.PeerIdentity != reg.GhostID {
-		logs.Warnf(
-			"mirage.handleRegistration identity bind mismatch ghost_id=%q peer_identity=%q",
-			reg.GhostID,
-			reg.PeerIdentity,
-		)
-		return reg, session.RegistrationAck{
-			Status:      session.AckStatusRejected,
-			Code:        1002,
-			Message:     "identity binding failure",
-			GhostID:     reg.GhostID,
-			TimestampMS: now,
+	if s.cfg.RequireIdentityBinding {
+		if auth.Authenticated {
+			if auth.PeerIdentity != reg.GhostID {
+				logs.Warnf(
+					"mirage.handleRegistration tls identity mismatch ghost_id=%q peer_identity=%q",
+					reg.GhostID,
+					auth.PeerIdentity,
+				)
+				return reg, session.RegistrationAck{
+					Status:      session.AckStatusRejected,
+					Code:        1002,
+					Message:     "identity binding failure",
+					GhostID:     reg.GhostID,
+					TimestampMS: now,
+				}
+			}
+			if peer := strings.TrimSpace(reg.PeerIdentity); peer != "" && peer != auth.PeerIdentity {
+				logs.Warnf(
+					"mirage.handleRegistration declared peer mismatch ghost_id=%q declared_peer=%q tls_peer=%q",
+					reg.GhostID,
+					peer,
+					auth.PeerIdentity,
+				)
+				return reg, session.RegistrationAck{
+					Status:      session.AckStatusRejected,
+					Code:        1003,
+					Message:     "declared peer mismatch",
+					GhostID:     reg.GhostID,
+					TimestampMS: now,
+				}
+			}
+		} else if reg.PeerIdentity != reg.GhostID {
+			logs.Warnf(
+				"mirage.handleRegistration identity bind mismatch ghost_id=%q peer_identity=%q",
+				reg.GhostID,
+				reg.PeerIdentity,
+			)
+			return reg, session.RegistrationAck{
+				Status:      session.AckStatusRejected,
+				Code:        1002,
+				Message:     "identity binding failure",
+				GhostID:     reg.GhostID,
+				TimestampMS: now,
+			}
 		}
 	}
 
@@ -240,6 +304,86 @@ func (s *Service) handleRegistration(
 		GhostID:     reg.GhostID,
 		TimestampMS: now,
 	}
+}
+
+func (s *Service) authenticateConn(conn net.Conn) (peerAuth, error) {
+	mode := session.NormalizeSecurityMode(s.cfg.Session.SecurityMode)
+	if !s.cfg.Session.TLS.Enabled {
+		if mode == session.SecurityModeProduction {
+			return peerAuth{}, session.ErrTLSRequired
+		}
+		return peerAuth{}, nil
+	}
+
+	tlsConn, ok := conn.(*tls.Conn)
+	if !ok {
+		return peerAuth{}, fmt.Errorf("mirage: expected tls connection")
+	}
+	_ = tlsConn.SetDeadline(time.Now().Add(s.cfg.Session.HandshakeTimeout))
+	if err := tlsConn.Handshake(); err != nil {
+		return peerAuth{}, err
+	}
+	state := tlsConn.ConnectionState()
+
+	needPeer := s.cfg.Session.TLS.Mutual || mode == session.SecurityModeProduction
+	if !needPeer && len(state.PeerCertificates) == 0 {
+		return peerAuth{}, nil
+	}
+	if len(state.PeerCertificates) == 0 {
+		return peerAuth{}, session.ErrMTLSRequired
+	}
+	peerID := peerIdentityFromCert(state.PeerCertificates[0])
+	if peerID == "" {
+		return peerAuth{}, fmt.Errorf("mirage: empty peer identity from certificate")
+	}
+	return peerAuth{PeerIdentity: peerID, Authenticated: true}, nil
+}
+
+func peerIdentityFromCert(cert *x509.Certificate) string {
+	if cert == nil {
+		return ""
+	}
+	if v := strings.TrimSpace(cert.Subject.CommonName); v != "" {
+		return v
+	}
+	if len(cert.URIs) > 0 {
+		if v := strings.TrimSpace(cert.URIs[0].String()); v != "" {
+			return v
+		}
+	}
+	if len(cert.DNSNames) > 0 {
+		if v := strings.TrimSpace(cert.DNSNames[0]); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func (s *Service) serverTLSConfig() (*tls.Config, error) {
+	cert, err := tls.LoadX509KeyPair(s.cfg.Session.TLS.CertFile, s.cfg.Session.TLS.KeyFile)
+	if err != nil {
+		return nil, err
+	}
+	cfg := &tls.Config{
+		MinVersion:   tls.VersionTLS12,
+		Certificates: []tls.Certificate{cert},
+		ClientAuth:   tls.NoClientCert,
+	}
+
+	mode := session.NormalizeSecurityMode(s.cfg.Session.SecurityMode)
+	if s.cfg.Session.TLS.Mutual || mode == session.SecurityModeProduction {
+		cfg.ClientAuth = tls.RequireAndVerifyClientCert
+		caPEM, err := os.ReadFile(s.cfg.Session.TLS.CAFile)
+		if err != nil {
+			return nil, err
+		}
+		pool := x509.NewCertPool()
+		if ok := pool.AppendCertsFromPEM(caPEM); !ok {
+			return nil, fmt.Errorf("mirage: parse tls ca bundle: %s", s.cfg.Session.TLS.CAFile)
+		}
+		cfg.ClientCAs = pool
+	}
+	return cfg, nil
 }
 
 func (s *Service) acceptEvent(ghostID string, event session.Event) session.EventAck {
