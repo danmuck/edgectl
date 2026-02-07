@@ -12,7 +12,7 @@ Status: `In Progress`
 - [x] Define `issue` ingestion contract and desired-state persistence model
 - [x] Implement `issue` ingestion path and desired-state store (in-memory first)
 - [x] Implement reconcile loop (single-ghost first)
-- [ ] Dispatch protocol command envelopes and ingest protocol event envelopes into observed state
+- [x] Dispatch protocol command envelopes and ingest protocol event envelopes into observed state
 - [ ] Emit `report` to user boundary with explicit desired vs observed transitions
 - [ ] Mirage must be able to spin up local Ghost servers
 - [x] Introduce Mirage server boundary (`internal/mirage/server.go`) for lifecycle + orchestration command boundary ownership

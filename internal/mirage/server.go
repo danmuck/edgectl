@@ -206,6 +206,11 @@ func (s *Server) AcceptEvent(ghostID string, event session.Event) session.EventA
 	return ack
 }
 
+// ObserveEvent ingests a ghost event into orchestration observed state when command is known.
+func (s *Server) ObserveEvent(event session.Event) (session.Report, bool, error) {
+	return s.loop.IngestObservedEvent(event)
+}
+
 // RegisterExecutor binds command execution for one ghost_id in the orchestration boundary.
 func (s *Server) RegisterExecutor(ghostID string, exec CommandExecutor) error {
 	return s.loop.RegisterExecutor(ghostID, exec)

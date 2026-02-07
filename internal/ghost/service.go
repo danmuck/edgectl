@@ -15,6 +15,8 @@ import (
 
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/seeds"
+	seedflow "github.com/danmuck/edgectl/internal/seeds/flow"
+	seedmongod "github.com/danmuck/edgectl/internal/seeds/mongod"
 	"github.com/danmuck/edgectl/internal/tools"
 	logs "github.com/danmuck/smplog"
 )
@@ -448,11 +450,11 @@ func buildBuiltinRegistry(seedIDs []string) (*seeds.Registry, error) {
 
 		switch id {
 		case "seed.flow", "flow":
-			if err := reg.Register(seeds.NewFlowSeed()); err != nil {
+			if err := reg.Register(seedflow.NewSeed()); err != nil {
 				return nil, err
 			}
 		case "seed.mongod", "mongod":
-			if err := reg.Register(seeds.NewMongodSeed()); err != nil {
+			if err := reg.Register(seedmongod.NewSeed()); err != nil {
 				return nil, err
 			}
 		default:

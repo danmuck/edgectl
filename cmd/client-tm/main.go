@@ -17,6 +17,8 @@ import (
 	"github.com/danmuck/edgectl/internal/ghost"
 	"github.com/danmuck/edgectl/internal/logging"
 	"github.com/danmuck/edgectl/internal/seeds"
+	seedflow "github.com/danmuck/edgectl/internal/seeds/flow"
+	seedmongod "github.com/danmuck/edgectl/internal/seeds/mongod"
 	logs "github.com/danmuck/smplog"
 )
 
@@ -1009,10 +1011,10 @@ func indentLines(in string, prefix string) string {
 func operationsForSeed(seedID string) []seeds.OperationSpec {
 	switch strings.TrimSpace(seedID) {
 	case "seed.flow":
-		s := seeds.NewFlowSeed()
+		s := seedflow.NewSeed()
 		return sortedOps(s.Operations())
 	case "seed.mongod":
-		s := seeds.NewMongodSeed()
+		s := seedmongod.NewSeed()
 		return sortedOps(s.Operations())
 	default:
 		return nil

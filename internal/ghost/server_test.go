@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/danmuck/edgectl/internal/seeds"
+	seedflow "github.com/danmuck/edgectl/internal/seeds/flow"
 	"github.com/danmuck/edgectl/internal/testutil/testlog"
 )
 
@@ -22,7 +23,7 @@ func TestServerLifecycleHappyPath(t *testing.T) {
 	}
 
 	reg := seeds.NewRegistry()
-	if err := reg.Register(seeds.NewFlowSeed()); err != nil {
+	if err := reg.Register(seedflow.NewSeed()); err != nil {
 		t.Fatalf("register flow seed: %v", err)
 	}
 	if err := s.Seed(reg); err != nil {

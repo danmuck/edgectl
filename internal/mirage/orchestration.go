@@ -306,6 +306,39 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context, intentID string) (sess
 	return report, nil
 }
 
+// IngestObservedEvent maps an external ghost event into intent observed state.
+func (o *Orchestrator) IngestObservedEvent(event session.Event) (session.Report, bool, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	intentID, plan, ok := o.findPlannedCommandByCommandID(event.CommandID)
+	if !ok {
+		return session.Report{}, false, nil
+	}
+	desired := o.desired[intentID]
+	observed := ensureObservedLocked(o, intentID)
+	if _, exists := observed.ByCommandID[event.CommandID]; exists {
+		if len(observed.Reports) == 0 {
+			report := latestReportOrSynthesizeComplete(desired, observed)
+			return report, true, nil
+		}
+		return observed.Reports[len(observed.Reports)-1], true, nil
+	}
+
+	report, ingestedEvent, err := o.ingestEventEnvelopeAndBuildReport(desired, observed, event)
+	if err != nil {
+		return session.Report{}, true, err
+	}
+	observed.ByCommandID[ingestedEvent.CommandID] = ingestedEvent
+	observed.Events = append(observed.Events, ingestedEvent)
+	observed.Reports = append(observed.Reports, report)
+	observed.ObservedAt = time.Now()
+	if plan.Blocking {
+		delete(o.seedLocks, plan.SeedKey)
+	}
+	return report, true, nil
+}
+
 // dispatchCommandEnvelope round-trips command payload through protocol framing.
 func (o *Orchestrator) dispatchCommandEnvelope(command session.Command) (session.Command, error) {
 	payload, err := session.EncodeCommandFrame(o.seq.Add(1), command)
@@ -561,6 +594,20 @@ func ensureObservedLocked(o *Orchestrator, intentID string) *ObservedIntent {
 	observed = &ObservedIntent{ByCommandID: make(map[string]session.Event)}
 	o.observed[intentID] = observed
 	return observed
+}
+
+// findPlannedCommandByCommandID resolves one command id back to its owning intent and plan entry.
+func (o *Orchestrator) findPlannedCommandByCommandID(commandID string) (string, PlannedCommand, bool) {
+	key := strings.TrimSpace(commandID)
+	for intentID, desired := range o.desired {
+		for i := range desired.Commands {
+			planned := desired.Commands[i]
+			if planned.Command.CommandID == key {
+				return intentID, planned, true
+			}
+		}
+	}
+	return "", PlannedCommand{}, false
 }
 
 // releaseSeedLock clears a held lock only when owner matches to avoid stomping newer owners.
