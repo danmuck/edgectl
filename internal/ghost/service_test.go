@@ -317,6 +317,61 @@ func TestServiceServeAutoReconnectsAfterMirageRestart(t *testing.T) {
 	}
 }
 
+func TestServiceSpawnManagedGhost(t *testing.T) {
+	testlog.Start(t)
+
+	root := NewServiceWithConfig(ServiceConfig{
+		GhostID:           "ghost.local",
+		BuiltinSeedIDs:    []string{"seed.flow", "seed.mongod"},
+		HeartbeatInterval: time.Second,
+		AdminListenAddr:   "127.0.0.1:7118",
+		EnableClusterHost: true,
+		Mirage: MirageSessionConfig{
+			Policy:        MiragePolicyHeadless,
+			SessionConfig: session.DefaultConfig(),
+		},
+	})
+	if err := root.bootstrap(); err != nil {
+		t.Fatalf("bootstrap root: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- root.serve(ctx)
+	}()
+	defer func() {
+		cancel()
+		_ = <-done
+	}()
+
+	out, err := root.SpawnManagedGhost(SpawnGhostRequest{
+		TargetName: "edge-1",
+		AdminAddr:  "127.0.0.1:7119",
+	})
+	if err != nil {
+		t.Fatalf("spawn managed ghost: %v", err)
+	}
+	if out.GhostID != "ghost.local.edge.1" {
+		t.Fatalf("unexpected ghost id: %q", out.GhostID)
+	}
+	if out.AdminAddr != "127.0.0.1:7119" {
+		t.Fatalf("unexpected admin addr: %q", out.AdminAddr)
+	}
+
+	ok := waitForCondition(2*time.Second, 50*time.Millisecond, func() bool {
+		conn, err := net.DialTimeout("tcp", out.AdminAddr, 200*time.Millisecond)
+		if err != nil {
+			return false
+		}
+		_ = conn.Close()
+		return true
+	})
+	if !ok {
+		t.Fatalf("spawned ghost admin endpoint not reachable: %s", out.AdminAddr)
+	}
+}
+
 func TestServiceServeRequiredFailsWithoutMirage(t *testing.T) {
 	testlog.Start(t)
 	svc := NewServiceWithConfig(ServiceConfig{

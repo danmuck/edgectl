@@ -27,13 +27,15 @@ const (
 
 // ghostConfigFile persists Ghost targets configured for the client.
 type ghostConfigFile struct {
-	Targets []ghostTargetConfig `toml:"targets"`
+	ClearScreenAfterCommand bool                `toml:"clear_screen_after_command"`
+	Targets                 []ghostTargetConfig `toml:"targets"`
 }
 
 // ghostTargetConfig binds a display name to a Ghost admin endpoint.
 type ghostTargetConfig struct {
-	Name string `toml:"name"`
-	Addr string `toml:"addr"`
+	Name    string `toml:"name"`
+	Addr    string `toml:"addr"`
+	GhostID string `toml:"ghost_id"`
 }
 
 // mirageConfigFile reserves future Mirage target wiring.
@@ -64,6 +66,7 @@ type GhostAdmin interface {
 	ExecutionByCommandID(commandID string) (ghost.ExecutionState, bool, error)
 	RecentEvents(limit int) ([]ghost.EventEnv, error)
 	Verification(limit int) ([]ghost.VerificationRecord, error)
+	SpawnGhost(req ghost.SpawnGhostRequest) (ghost.SpawnGhostResult, error)
 }
 
 // RemoteGhostAdmin is a TCP client for ghostctl admin control endpoint.
@@ -79,10 +82,11 @@ type GhostTarget struct {
 
 // controlRequest is one line-delimited control request payload.
 type controlRequest struct {
-	Action    string            `json:"action"`
-	Limit     int               `json:"limit,omitempty"`
-	CommandID string            `json:"command_id,omitempty"`
-	Command   GhostAdminCommand `json:"command,omitempty"`
+	Action    string                  `json:"action"`
+	Limit     int                     `json:"limit,omitempty"`
+	CommandID string                  `json:"command_id,omitempty"`
+	Command   GhostAdminCommand       `json:"command,omitempty"`
+	Spawn     ghost.SpawnGhostRequest `json:"spawn,omitempty"`
 }
 
 // controlResponse is one line-delimited control response payload.
@@ -113,6 +117,7 @@ type App struct {
 	mirageCfg     mirageConfigFile
 	targets       []GhostTarget
 	activeTarget  int
+	clearScreen   bool
 }
 
 func main() {
@@ -131,6 +136,7 @@ func NewApp(ghostCfgPath string, mirageCfgPath string) *App {
 		mirageCfgPath: mirageCfgPath,
 		targets:       make([]GhostTarget, 0),
 		activeTarget:  -1,
+		clearScreen:   false,
 	}
 }
 
@@ -147,10 +153,11 @@ func (a *App) Run() error {
 
 	for {
 		a.printMainMenu()
-		choice, err := a.promptInt("Choose", 1, 7)
+		choice, err := a.promptInt("Choose", 1, 10)
 		if err != nil {
 			return err
 		}
+		a.clearIfEnabled()
 		switch choice {
 		case 1:
 			a.listTargets()
@@ -169,12 +176,24 @@ func (a *App) Run() error {
 				logs.Errf("ghost admin console error: %v", err)
 			}
 		case 6:
+			if err := a.removeGhostTarget(); err != nil {
+				logs.Errf("remove target failed: %v", err)
+			}
+		case 7:
+			a.clearScreen = !a.clearScreen
+			a.ghostCfg.ClearScreenAfterCommand = a.clearScreen
+			logs.Infof("clear_screen_after_command=%v", a.clearScreen)
+		case 8:
+			if err := a.resetToDefaultConfig(); err != nil {
+				logs.Errf("reset config failed: %v", err)
+			}
+		case 9:
 			if err := a.saveConfigs(); err != nil {
 				logs.Errf("save failed: %v", err)
 			} else {
 				logs.Infof("config saved")
 			}
-		case 7:
+		case 10:
 			if err := a.saveConfigs(); err != nil {
 				logs.Warnf("save on exit failed: %v", err)
 			}
@@ -199,20 +218,46 @@ func (a *App) loadOrInitConfigs() error {
 	if _, err := toml.DecodeFile(a.mirageCfgPath, &a.mirageCfg); err != nil {
 		return fmt.Errorf("load mirage config: %w", err)
 	}
+	a.clearScreen = a.ghostCfg.ClearScreenAfterCommand
 
-	for _, cfg := range a.ghostCfg.Targets {
+	if len(a.ghostCfg.Targets) == 0 {
+		a.ghostCfg.Targets = append(a.ghostCfg.Targets, ghostTargetConfig{
+			Name:    "local-ghost",
+			Addr:    "127.0.0.1:7010",
+			GhostID: "ghost.local",
+		})
+	}
+
+	needsSave := false
+	for i, cfg := range a.ghostCfg.Targets {
 		name := strings.TrimSpace(cfg.Name)
 		addr := strings.TrimSpace(cfg.Addr)
 		if name == "" || addr == "" {
 			continue
 		}
+		ghostID := strings.TrimSpace(cfg.GhostID)
+		admin := NewRemoteGhostAdmin(addr)
+		if ghostID == "" {
+			if status, err := admin.Status(); err == nil && strings.TrimSpace(status.GhostID) != "" {
+				ghostID = strings.TrimSpace(status.GhostID)
+			} else {
+				ghostID = inferGhostIDFromTargetName(name)
+			}
+			a.ghostCfg.Targets[i].GhostID = ghostID
+			needsSave = true
+		}
 		a.targets = append(a.targets, GhostTarget{
 			Name:  name,
-			Admin: NewRemoteGhostAdmin(addr),
+			Admin: admin,
 		})
 	}
 	if len(a.targets) > 0 {
 		a.activeTarget = 0
+	}
+	if needsSave {
+		if err := a.saveConfigs(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -242,13 +287,17 @@ func (a *App) printMainMenu() {
 	fmt.Println("Client TM")
 	fmt.Printf("  ghost config:  %s (targets=%d)\n", a.ghostCfgPath, len(a.ghostCfg.Targets))
 	fmt.Printf("  mirage config: %s (targets=%d, not yet wired)\n", a.mirageCfgPath, len(a.mirageCfg.Targets))
+	fmt.Printf("  clear screen after command: %v\n", a.clearScreen)
 	fmt.Println("  1) List ghost targets")
-	fmt.Println("  2) Add ghost target (persist)")
+	fmt.Println("  2) Add/provision ghost target (persist)")
 	fmt.Println("  3) Select active ghost target")
 	fmt.Println("  4) Show active target summary")
 	fmt.Println("  5) Ghost admin console")
-	fmt.Println("  6) Save configs")
-	fmt.Println("  7) Exit")
+	fmt.Println("  6) Remove ghost target")
+	fmt.Println("  7) Toggle clear-screen")
+	fmt.Println("  8) Reset configs to defaults")
+	fmt.Println("  9) Save configs")
+	fmt.Println(" 10) Exit")
 }
 
 func (a *App) listTargets() {
@@ -283,7 +332,7 @@ func (a *App) listTargets() {
 }
 
 func (a *App) addGhostTarget() error {
-	nameRaw, err := a.promptLine("Target name")
+	nameRaw, err := a.promptLine("Target suffix/name")
 	if err != nil {
 		return err
 	}
@@ -296,13 +345,89 @@ func (a *App) addGhostTarget() error {
 	if name == "" || addr == "" {
 		return errors.New("name and addr are required")
 	}
+	root, ok := a.active()
+	if !ok {
+		return errors.New("no active root ghost target selected")
+	}
+	rootStatus, err := root.Admin.Status()
+	if err != nil {
+		return fmt.Errorf("active root ghost unavailable: %w", err)
+	}
+	addr, err = normalizeTargetAddr(root.Admin.Address(), addr)
+	if err != nil {
+		return err
+	}
 
-	cfg := ghostTargetConfig{Name: name, Addr: addr}
+	suffix := normalizeSuffix(name)
+	targetName := normalizeSuffix(root.Name) + "." + suffix
+	ghostID := rootStatus.GhostID + "." + suffix
+	if a.targetExists(targetName, addr) {
+		return fmt.Errorf("target exists name=%q addr=%q", targetName, addr)
+	}
+
+	spawnReq := ghost.SpawnGhostRequest{
+		TargetName: suffix,
+		AdminAddr:  addr,
+	}
+	spawnOut, spawnErr := root.Admin.SpawnGhost(spawnReq)
+	if spawnErr != nil {
+		return fmt.Errorf("provision ghost target failed: %w", spawnErr)
+	}
+	ghostID = spawnOut.GhostID
+	addr = spawnOut.AdminAddr
+
+	cfg := ghostTargetConfig{Name: targetName, Addr: addr, GhostID: ghostID}
 	a.ghostCfg.Targets = append(a.ghostCfg.Targets, cfg)
-	a.targets = append(a.targets, GhostTarget{Name: name, Admin: NewRemoteGhostAdmin(addr)})
+	a.targets = append(a.targets, GhostTarget{Name: targetName, Admin: NewRemoteGhostAdmin(addr)})
 	if a.activeTarget < 0 {
 		a.activeTarget = 0
 	}
+	logs.Infof("provisioned ghost target name=%q ghost_id=%q addr=%q", targetName, ghostID, addr)
+	return a.saveConfigs()
+}
+
+// removeGhostTarget deletes one target from runtime and persisted config.
+func (a *App) removeGhostTarget() error {
+	if len(a.targets) == 0 {
+		return errors.New("no targets to remove")
+	}
+	a.listTargets()
+	choice, err := a.promptInt("Remove target", 1, len(a.targets))
+	if err != nil {
+		return err
+	}
+	idx := choice - 1
+	name := a.targets[idx].Name
+	a.targets = append(a.targets[:idx], a.targets[idx+1:]...)
+	a.ghostCfg.Targets = append(a.ghostCfg.Targets[:idx], a.ghostCfg.Targets[idx+1:]...)
+	if len(a.targets) == 0 {
+		a.activeTarget = -1
+	} else if a.activeTarget >= len(a.targets) {
+		a.activeTarget = len(a.targets) - 1
+	}
+	logs.Infof("removed target name=%q", name)
+	return a.saveConfigs()
+}
+
+// resetToDefaultConfig removes stale targets and restores baseline files.
+func (a *App) resetToDefaultConfig() error {
+	confirm, err := a.promptLine("Type RESET to confirm")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(confirm) != "RESET" {
+		return errors.New("reset cancelled")
+	}
+	a.ghostCfg = ghostConfigFile{
+		ClearScreenAfterCommand: false,
+		Targets: []ghostTargetConfig{
+			{Name: "local-ghost", Addr: "127.0.0.1:7010", GhostID: "ghost.local"},
+		},
+	}
+	a.mirageCfg = mirageConfigFile{Targets: []mirageTargetConfig{}}
+	a.targets = []GhostTarget{{Name: "local-ghost", Admin: NewRemoteGhostAdmin("127.0.0.1:7010")}}
+	a.activeTarget = 0
+	a.clearScreen = false
 	return a.saveConfigs()
 }
 
@@ -369,6 +494,7 @@ func (a *App) runGhostAdminConsole() error {
 		if err != nil {
 			return err
 		}
+		a.clearIfEnabled()
 		switch choice {
 		case 1:
 			a.showActiveTargetSummary()
@@ -681,6 +807,19 @@ func (c *RemoteGhostAdmin) Verification(limit int) ([]ghost.VerificationRecord, 
 	return out, nil
 }
 
+// SpawnGhost asks a connected root Ghost to provision a child Ghost node.
+func (c *RemoteGhostAdmin) SpawnGhost(req ghost.SpawnGhostRequest) (ghost.SpawnGhostResult, error) {
+	var out ghost.SpawnGhostResult
+	controlReq := controlRequest{
+		Action: "spawn_ghost",
+		Spawn:  req,
+	}
+	if err := c.call(controlReq, &out); err != nil {
+		return ghost.SpawnGhostResult{}, err
+	}
+	return out, nil
+}
+
 // call sends one admin request to ghostctl and decodes the response payload.
 func (c *RemoteGhostAdmin) call(req controlRequest, out any) error {
 	conn, err := net.DialTimeout("tcp", c.addr, 3*time.Second)
@@ -784,6 +923,94 @@ func sortedOps(in []seeds.OperationSpec) []seeds.OperationSpec {
 		return out[i].Name < out[j].Name
 	})
 	return out
+}
+
+func normalizeSuffix(in string) string {
+	raw := strings.ToLower(strings.TrimSpace(in))
+	if raw == "" {
+		return "node"
+	}
+	var b strings.Builder
+	lastDot := false
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			b.WriteByte(c)
+			lastDot = false
+			continue
+		}
+		if !lastDot {
+			b.WriteByte('.')
+			lastDot = true
+		}
+	}
+	out := strings.Trim(b.String(), ".")
+	if out == "" {
+		return "node"
+	}
+	return out
+}
+
+func inferGhostIDFromTargetName(name string) string {
+	n := strings.TrimSpace(name)
+	if n == "" {
+		return "ghost.node"
+	}
+	if n == "local-ghost" {
+		return "ghost.local"
+	}
+	if strings.HasPrefix(n, "local-ghost.") {
+		suffix := strings.TrimPrefix(n, "local-ghost.")
+		return "ghost.local." + normalizeSuffix(suffix)
+	}
+	return "ghost." + normalizeSuffix(n)
+}
+
+func normalizeTargetAddr(rootAddr string, requested string) (string, error) {
+	req := strings.TrimSpace(requested)
+	if req == "" {
+		return "", errors.New("address required")
+	}
+	rootHost, _, rootErr := net.SplitHostPort(strings.TrimSpace(rootAddr))
+	if rootErr != nil {
+		rootHost = "127.0.0.1"
+	}
+	if strings.Contains(req, ":") {
+		host, port, err := net.SplitHostPort(req)
+		if err != nil {
+			return "", fmt.Errorf("invalid address %q", req)
+		}
+		if strings.TrimSpace(host) == "" {
+			host = rootHost
+		}
+		if strings.TrimSpace(port) == "" {
+			return "", fmt.Errorf("invalid address %q", req)
+		}
+		return net.JoinHostPort(host, port), nil
+	}
+	if _, err := strconv.Atoi(req); err != nil {
+		return "", fmt.Errorf("invalid port %q", req)
+	}
+	return net.JoinHostPort(rootHost, req), nil
+}
+
+func (a *App) targetExists(name string, addr string) bool {
+	for _, t := range a.ghostCfg.Targets {
+		if strings.EqualFold(strings.TrimSpace(t.Name), strings.TrimSpace(name)) {
+			return true
+		}
+		if strings.EqualFold(strings.TrimSpace(t.Addr), strings.TrimSpace(addr)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *App) clearIfEnabled() {
+	if !a.clearScreen {
+		return
+	}
+	fmt.Print("\033[H\033[2J")
 }
 
 // ensureFile creates a missing file and parent directory for config bootstrapping.

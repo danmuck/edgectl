@@ -46,6 +46,7 @@ type ServiceConfig struct {
 	BuiltinSeedIDs    []string
 	HeartbeatInterval time.Duration
 	AdminListenAddr   string
+	EnableClusterHost bool
 	Mirage            MirageSessionConfig
 }
 
@@ -56,6 +57,7 @@ func DefaultServiceConfig() ServiceConfig {
 		BuiltinSeedIDs:    []string{"seed.flow"},
 		HeartbeatInterval: 5 * time.Second,
 		AdminListenAddr:   "127.0.0.1:7010",
+		EnableClusterHost: true,
 		Mirage: MirageSessionConfig{
 			Policy:        MiragePolicyHeadless,
 			SessionConfig: session.DefaultConfig(),
@@ -75,6 +77,8 @@ type Service struct {
 	adminSeq           atomic.Uint64
 	adminEvents        []EventEnv
 	verificationEvents []VerificationRecord
+	adminClientCount   atomic.Int64
+	cluster            clusterHost
 }
 
 // Ghost service constructor using default standalone config.
@@ -93,6 +97,7 @@ func NewServiceWithConfig(cfg ServiceConfig) *Service {
 		cfg:                cfg,
 		adminEvents:        make([]EventEnv, 0),
 		verificationEvents: make([]VerificationRecord, 0),
+		cluster:            newClusterHost(),
 	}
 }
 
@@ -151,6 +156,7 @@ func (s *Service) serve(ctx context.Context) error {
 	ticker := time.NewTicker(s.cfg.HeartbeatInterval)
 	defer ticker.Stop()
 	defer s.clearMirageSession()
+	defer s.stopManagedGhosts()
 
 	sessionErr := make(chan error, 1)
 	controlErr := make(chan error, 1)
@@ -180,11 +186,17 @@ func (s *Service) serve(ctx context.Context) error {
 			}
 		case <-ticker.C:
 			status := s.server.Status()
+			adminClients := s.AdminClientCount()
+			mirageConnected := s.IsMirageConnected()
+			managedChildren := s.ManagedGhostCount()
 			logs.Infof(
-				"ghost.Service.heartbeat ghost_id=%q phase=%s seeds=%d",
+				"ghost.Service.heartbeat ghost_id=%q phase=%s seeds=%d mirage_connected=%v admin_clients=%d managed_children=%d",
 				status.GhostID,
 				status.Phase,
 				status.SeedCount,
+				mirageConnected,
+				adminClients,
+				managedChildren,
 			)
 		}
 	}
@@ -325,6 +337,23 @@ func (s *Service) MirageSession() *MirageSession {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.mirage
+}
+
+// IsMirageConnected reports whether Ghost currently has an active Mirage session.
+func (s *Service) IsMirageConnected() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.mirage != nil
+}
+
+// AdminClientCount returns the current number of attached admin control clients.
+func (s *Service) AdminClientCount() int64 {
+	return s.adminClientCount.Load()
+}
+
+// ManagedGhostCount returns number of currently managed child Ghost nodes.
+func (s *Service) ManagedGhostCount() int {
+	return s.cluster.count()
 }
 
 // Ghost session probe timeout derived from session config.

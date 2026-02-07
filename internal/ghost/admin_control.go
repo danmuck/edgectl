@@ -45,10 +45,11 @@ type VerificationRecord struct {
 
 // controlRequest is one admin action envelope consumed by ghostctl.
 type controlRequest struct {
-	Action    string       `json:"action"`
-	Limit     int          `json:"limit,omitempty"`
-	CommandID string       `json:"command_id,omitempty"`
-	Command   AdminCommand `json:"command,omitempty"`
+	Action    string            `json:"action"`
+	Limit     int               `json:"limit,omitempty"`
+	CommandID string            `json:"command_id,omitempty"`
+	Command   AdminCommand      `json:"command,omitempty"`
+	Spawn     SpawnGhostRequest `json:"spawn,omitempty"`
 }
 
 // controlResponse is one admin action result envelope emitted by ghostctl.
@@ -184,6 +185,14 @@ func (s *Service) serveAdminControl(ctx context.Context, addr string) error {
 // handleAdminConn decodes one request per line and writes one response per line.
 func (s *Service) handleAdminConn(conn net.Conn) {
 	defer conn.Close()
+	remote := conn.RemoteAddr().String()
+	active := s.adminClientCount.Add(1)
+	logs.Infof("ghost.admin client connected remote=%q active_clients=%d", remote, active)
+	defer func() {
+		remaining := s.adminClientCount.Add(-1)
+		logs.Infof("ghost.admin client disconnected remote=%q active_clients=%d", remote, remaining)
+	}()
+
 	reader := bufio.NewReader(conn)
 	for {
 		_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
@@ -239,6 +248,12 @@ func (s *Service) handleControlRequest(req controlRequest) controlResponse {
 		return controlResponse{OK: true, Data: s.RecentAdminEvents(req.Limit)}
 	case "verification":
 		return controlResponse{OK: true, Data: s.VerificationView(req.Limit)}
+	case "spawn_ghost":
+		out, err := s.SpawnManagedGhost(req.Spawn)
+		if err != nil {
+			return controlResponse{OK: false, Error: err.Error()}
+		}
+		return controlResponse{OK: true, Data: out}
 	default:
 		return controlResponse{OK: false, Error: fmt.Sprintf("unknown action: %s", req.Action)}
 	}
