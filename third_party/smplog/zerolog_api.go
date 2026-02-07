@@ -157,7 +157,7 @@ func SetFloatingPointPrecision(precision int) {
 }
 
 // SetErrorStackMarshaler configures stack marshaling behavior.
-func SetErrorStackMarshaler(marshaler func(err error) interface{}) {
+func SetErrorStackMarshaler(marshaler func(err error) any) {
 	zerolog.ErrorStackMarshaler = marshaler
 }
 

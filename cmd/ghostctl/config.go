@@ -17,6 +17,7 @@ type fileConfig struct {
 	Heartbeat           string   `toml:"heartbeat"`
 	HeartbeatInterval   string   `toml:"heartbeat_interval"`
 	HeartbeatIntervalMS int64    `toml:"heartbeat_interval_ms"`
+	AdminListen         string   `toml:"admin_listen"`
 	MiragePolicy        string   `toml:"mirage_policy"`
 	MirageAddress       string   `toml:"mirage_address"`
 	MiragePeerIdentity  string   `toml:"mirage_peer_identity"`
@@ -70,6 +71,9 @@ func loadServiceConfig(path string) (ghost.ServiceConfig, error) {
 
 	if meta.IsDefined("heartbeat_interval_ms") {
 		cfg.HeartbeatInterval = time.Duration(raw.HeartbeatIntervalMS) * time.Millisecond
+	}
+	if meta.IsDefined("admin_listen") {
+		cfg.AdminListenAddr = strings.TrimSpace(raw.AdminListen)
 	}
 
 	if meta.IsDefined("mirage_policy") {

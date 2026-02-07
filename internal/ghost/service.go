@@ -45,6 +45,7 @@ type ServiceConfig struct {
 	GhostID           string
 	BuiltinSeedIDs    []string
 	HeartbeatInterval time.Duration
+	AdminListenAddr   string
 	Mirage            MirageSessionConfig
 }
 
@@ -54,6 +55,7 @@ func DefaultServiceConfig() ServiceConfig {
 		GhostID:           "ghost.local",
 		BuiltinSeedIDs:    []string{"seed.flow"},
 		HeartbeatInterval: 5 * time.Second,
+		AdminListenAddr:   "127.0.0.1:7010",
 		Mirage: MirageSessionConfig{
 			Policy:        MiragePolicyHeadless,
 			SessionConfig: session.DefaultConfig(),
@@ -68,6 +70,11 @@ type Service struct {
 	mu     sync.RWMutex
 	mirage *MirageSession
 	seq    atomic.Uint64
+
+	adminMu            sync.Mutex
+	adminSeq           atomic.Uint64
+	adminEvents        []EventEnv
+	verificationEvents []VerificationRecord
 }
 
 // Ghost service constructor using default standalone config.
@@ -82,8 +89,10 @@ func NewServiceWithConfig(cfg ServiceConfig) *Service {
 		cfg.Mirage.Policy = MiragePolicyHeadless
 	}
 	return &Service{
-		server: NewServer(),
-		cfg:    cfg,
+		server:             NewServer(),
+		cfg:                cfg,
+		adminEvents:        make([]EventEnv, 0),
+		verificationEvents: make([]VerificationRecord, 0),
 	}
 }
 
@@ -144,9 +153,15 @@ func (s *Service) serve(ctx context.Context) error {
 	defer s.clearMirageSession()
 
 	sessionErr := make(chan error, 1)
+	controlErr := make(chan error, 1)
 	if s.cfg.Mirage.Policy != MiragePolicyHeadless {
 		go func() {
 			sessionErr <- s.runMirageSessionLoop(ctx)
+		}()
+	}
+	if strings.TrimSpace(s.cfg.AdminListenAddr) != "" {
+		go func() {
+			controlErr <- s.serveAdminControl(ctx, s.cfg.AdminListenAddr)
 		}()
 	}
 
@@ -156,6 +171,10 @@ func (s *Service) serve(ctx context.Context) error {
 			logs.Infof("ghost.Service.serve shutdown")
 			return nil
 		case err := <-sessionErr:
+			if err != nil {
+				return err
+			}
+		case err := <-controlErr:
 			if err != nil {
 				return err
 			}

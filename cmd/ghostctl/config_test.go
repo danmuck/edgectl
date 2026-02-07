@@ -14,6 +14,7 @@ func TestLoadServiceConfigDefaultsAndOverrides(t *testing.T) {
 id = "ghost.alpha"
 seeds = ["seed.flow", "none", "flow"]
 heartbeat_interval = "750ms"
+admin_listen = "127.0.0.1:7011"
 mirage_policy = "auto"
 mirage_address = "127.0.0.1:9000"
 mirage_peer_identity = "ghost.alpha"
@@ -39,6 +40,9 @@ mirage_tls_server_name = "mirage.local"
 	}
 	if cfg.HeartbeatInterval != 750*time.Millisecond {
 		t.Fatalf("unexpected heartbeat: %v", cfg.HeartbeatInterval)
+	}
+	if cfg.AdminListenAddr != "127.0.0.1:7011" {
+		t.Fatalf("unexpected admin listen: %q", cfg.AdminListenAddr)
 	}
 	if len(cfg.BuiltinSeedIDs) != 3 {
 		t.Fatalf("unexpected seeds: %+v", cfg.BuiltinSeedIDs)

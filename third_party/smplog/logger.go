@@ -210,7 +210,7 @@ func buildLogger(cfg Config) Logger {
 }
 
 func applyConsoleFormatting(console *ConsoleWriter, cfg Config) {
-	console.FormatPrepare = func(evt map[string]interface{}) error {
+	console.FormatPrepare = func(evt map[string]any) error {
 		level := strings.ToLower(fmt.Sprint(evt[zerolog.LevelFieldName]))
 		if raw, ok := evt[zerolog.LevelFieldName]; ok {
 			evt[zerolog.LevelFieldName] = colorize(
@@ -233,19 +233,19 @@ func applyConsoleFormatting(console *ConsoleWriter, cfg Config) {
 		return nil
 	}
 
-	console.FormatTimestamp = func(i interface{}) string {
+	console.FormatTimestamp = func(i any) string {
 		if i == nil {
 			return ""
 		}
 		return colorize(cfg.Colors.Timestamp, fmt.Sprint(i), cfg.NoColor)
 	}
-	console.FormatLevel = func(i interface{}) string {
+	console.FormatLevel = func(i any) string {
 		return fmt.Sprint(i)
 	}
-	console.FormatFieldName = func(i interface{}) string {
+	console.FormatFieldName = func(i any) string {
 		return colorize(cfg.Colors.FieldName, fmt.Sprint(i), cfg.NoColor)
 	}
-	console.FormatFieldValue = func(i interface{}) string {
+	console.FormatFieldValue = func(i any) string {
 		return colorize(cfg.Colors.FieldValue, fmt.Sprint(i), cfg.NoColor)
 	}
 	console.FormatErrFieldName = console.FormatFieldName

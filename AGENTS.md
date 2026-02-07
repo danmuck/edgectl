@@ -41,6 +41,12 @@ These instructions govern how agents should make changes in this repository.
 3. Keep package ownership boundaries aligned with doc contracts.
 4. Update package `doc.go` references when boundaries or contracts change.
 
+## Code Commenting Rule
+
+- All newly added code must include concise, inspection-friendly comments so IDE readers can understand structure and intent quickly.
+- At minimum, comment each type and each non-trivial function/block with purpose and boundary behavior.
+- Keep comments factual and brief; avoid noise comments that restate obvious syntax.
+
 ## Package Doc Stub Rule
 
 - `internal/*/doc.go` files must include references to the canonical contract docs they implement.
