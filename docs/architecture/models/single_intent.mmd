@@ -13,9 +13,9 @@ sequenceDiagram
         Mirage->>Ghost: command(imperative step)
 
         Ghost->>Ghost: reconcile(local mapping)
-        Ghost->>Seed: execute(seed.command)
+        Ghost->>Seed: seed.execute(operation,args)
 
-        Seed-->>Ghost: result(stdout/stderr/status)
+        Seed-->>Ghost: seed.result(status,stdout,stderr,exit_code)
         Ghost-->>Mirage: event(observed state delta)
         Mirage-->>Ghost: event.ack(accepted|rejected)
 

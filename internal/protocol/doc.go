@@ -5,11 +5,14 @@
 // - tlv payload primitives
 // - semantic validation entry points
 //
-// Relevant docs:
+// Canonical references (consult before changes):
+// - docs/index.md
 // - docs/architecture/framing.md
+// - docs/architecture/tlv.md
 // - docs/architecture/definitions/protocol.toml
 // - docs/architecture/definitions/tlv.toml
+// - docs/architecture/definitions/errors.toml
+// - docs/architecture/definitions/reliability.toml
 // - docs/glossary/frame.md
-// - docs/glossary/tlv.md
 // - docs/glossary/semantic_validation.md
 package protocol

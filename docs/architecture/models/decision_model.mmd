@@ -5,7 +5,7 @@ flowchart TD
     C -- "No" --> E["Derive command set"]
     E --> F["Send command(s) to Ghost(s)"]
     F --> G["Ghost reconcile() to local seed actions"]
-    G --> H["Execute seed command(s)"]
+    G --> H["Emit seed.execute envelope(s)"]
     H --> I["Ghost emits event(s) to Mirage"]
     I --> J["Mirage updates observed state"]
     J --> B

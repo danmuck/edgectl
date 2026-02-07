@@ -18,4 +18,4 @@ Files are intentionally non-compiling and optimized for extracting single struct
 - `mirage_reconcile.md` (stub)
 - `ghost_dispatch.md` (stub)
 - `observability.md` (stub)
-- `../progress.md` (status tracker)
+- `../progress/index.md` (status tracker)

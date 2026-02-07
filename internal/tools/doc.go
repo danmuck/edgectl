@@ -4,8 +4,10 @@
 // - command execution helpers
 // - host/runtime utility primitives
 //
-// Relevant docs:
+// Canonical references (consult before changes):
+// - docs/index.md
 // - docs/architecture/definitions/design.toml
 // - docs/architecture/definitions/protocol.toml
+// - docs/architecture/definitions/reliability.toml
 // - docs/glossary/definitions.md
 package tools

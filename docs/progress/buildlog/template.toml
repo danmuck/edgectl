@@ -1,0 +1,48 @@
+[meta]
+log_id = "YYYY-MM-DD_HH:MM"
+created_at_est = "YYYY-MM-DDTHH:MM-05:00"
+updated_at_est = "YYYY-MM-DDTHH:MM-05:00"
+agent = "codex"
+status = "in_progress"
+
+[scope]
+kind = "initial" # initial | follow_up | new_scope
+workstream = "<short workstream label>"
+scope_reason = "<why this is same scope or why a new log was created>"
+
+[prompt]
+initial = """
+<original user prompt>
+"""
+
+[[prompt_followups]]
+at_est = "YYYY-MM-DDTHH:MM-05:00"
+text = """
+<follow-up prompt text>
+"""
+
+[summary]
+goal = "<short goal for this pass>"
+result = "<short outcome summary>"
+
+[[changes]]
+path = "<file path>"
+change_type = "modify"
+summary = "<what changed>"
+justification = "<why this was necessary>"
+
+[[progress_tasks_completed]]
+checklist_file = "<docs/progress/*.md>"
+task = "<exact checklist task>"
+status = "completed"
+
+[validation]
+commands = [
+  # "go test ./..."
+]
+notes = "<verification notes>"
+
+[follow_up]
+open_items = [
+  # "<next item>"
+]

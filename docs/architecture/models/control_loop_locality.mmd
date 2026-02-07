@@ -6,15 +6,25 @@ flowchart LR
     S["State Update"]
 
     subgraph M["Mirage (Orchestration Only)"]
-        MG["local_ghost_id + locality metadata"]
+        MG["local_ghost_id + locality preference policy"]
     end
 
     subgraph LG["Local Ghost (co-located with Mirage)"]
-        GR["raft-node seed"]
+        LGR["raft-node seed (raft://local-ghost)"]
+        LGM["mongodb seed (mongodb://local-ghost)"]
+        LGD["kdht-node seed (dht://local-ghost)"]
     end
 
-    subgraph SEED["External Ghost Server"]
-        SM["mongodb seed"]
+    subgraph RG1["Remote Ghost A"]
+        RGA["raft-node seed (raft://ghost-a)"]
+        RGM["mongodb seed (mongodb://ghost-a)"]
+        RGD["kdht-node seed (dht://ghost-a)"]
+    end
+
+    subgraph RG2["Remote Ghost B"]
+        RGB["raft-node seed (raft://ghost-b)"]
+        RGBM["mongodb seed (mongodb://ghost-b)"]
+        RGBD["kdht-node seed (dht://ghost-b)"]
     end
 
     U --> I
@@ -24,8 +34,24 @@ flowchart LR
     S --> R
     MG -. "locality-aware target selection" .-> C
 
-    C -->|"Command: start/stop/configure"| SM
-    C -->|"Command: join/replicate"| GR
+    C -->|"command(join/replicate raft-node)"| LGR
+    C -->|"command(join/replicate raft-node)"| RGA
+    C -->|"command(join/replicate raft-node)"| RGB
+    C -->|"command(db-op, local preferred)"| LGM
+    C -->|"command(db-op, remote by URI)"| RGM
+    C -->|"command(db-op, remote by URI)"| RGBM
+    C -->|"command(storage.move source_uri,target_uri)"| LGM
+    C -->|"command(storage.move source_uri,target_uri)"| RGM
+    C -->|"command(dht.join/dht.store/dht.find)"| LGD
+    C -->|"command(dht.join/dht.store/dht.find)"| RGD
+    C -->|"command(dht.join/dht.store/dht.find)"| RGBD
 
-    SM -->|"Event: status/health/metrics"| C
-    GR -->|"Event: term/leader/commit"| C
+    LGR -->|"event(term/leader/commit)"| C
+    RGA -->|"event(term/leader/commit)"| C
+    RGB -->|"event(term/leader/commit)"| C
+    LGM -->|"event(db/status/health)"| C
+    RGM -->|"event(db/status/health)"| C
+    RGBM -->|"event(db/status/health)"| C
+    LGD -->|"event(dht/peer/route/replica)"| C
+    RGD -->|"event(dht/peer/route/replica)"| C
+    RGBD -->|"event(dht/peer/route/replica)"| C

@@ -12,10 +12,16 @@
 //
 // Ghost does not own desired state.
 //
-// Relevant docs:
+// Canonical references (consult before changes):
+// - docs/index.md
 // - docs/architecture/transport.md
+// - docs/architecture/control-loop.md
 // - docs/architecture/models/discovery.mmd
+// - docs/architecture/models/proto_interface_boundary.mmd
+// - docs/architecture/models/single_intent.mmd
 // - docs/architecture/definitions/protocol.toml
+// - docs/architecture/definitions/reliability.toml
+// - docs/architecture/definitions/observability.toml
 // - docs/glossary/ghost_dispatch.md
 // - docs/glossary/definitions.md
 package ghost

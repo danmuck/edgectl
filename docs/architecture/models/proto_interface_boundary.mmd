@@ -4,15 +4,15 @@ flowchart LR
     G["Ghost"]
     S["Seed"]
 
-    U -->|"issue(IntentEnvelope)"| M
-    M -->|"report(ReportEnvelope)"| U
+    U -->|"issue(...)"| M
+    M -->|"report(...)"| U
 
-    M -->|"command(CommandEnvelope)"| G
-    G -->|"event(EventEnvelope)"| M
-    M -->|"event.ack(EventAckEnvelope)"| G
+    M -->|"command(...)"| G
+    G -->|"event(...)"| M
+    M -->|"event.ack(...)"| G
 
-    G -->|"execute(SeedCommandEnvelope)"| S
-    S -->|"result(SeedResultEnvelope)"| G
+    G -->|"seed.execute(...)"| S
+    S -->|"seed.result(...)"| G
 
     P["Binary TLV Wire Contract<br/>header + optional auth + TLV fields"]
     P -. "applies to control-plane links" .- M
