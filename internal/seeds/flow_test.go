@@ -63,6 +63,20 @@ func TestFlowSeedStepDeterministic(t *testing.T) {
 	}
 }
 
+func TestFlowSeedStepUnknownDeterministicFailure(t *testing.T) {
+	seed := NewFlowSeed()
+	res, err := seed.Execute("step", map[string]string{"name": "unknown"})
+	if !errors.Is(err, ErrUnknownAction) {
+		t.Fatalf("expected ErrUnknownAction, got %v", err)
+	}
+	if res.Status != "error" || res.ExitCode != 2 {
+		t.Fatalf("unexpected step error result: %+v", res)
+	}
+	if !bytes.Equal(res.Stderr, []byte("flow step: unknown\n")) {
+		t.Fatalf("unexpected step stderr: %q", string(res.Stderr))
+	}
+}
+
 func TestFlowSeedUnknownActionDeterministicFailure(t *testing.T) {
 	seed := NewFlowSeed()
 	res, err := seed.Execute("nope", nil)
@@ -74,6 +88,17 @@ func TestFlowSeedUnknownActionDeterministicFailure(t *testing.T) {
 	}
 	if !bytes.Equal(res.Stderr, []byte("unknown action: nope\n")) {
 		t.Fatalf("unexpected stderr: %q", string(res.Stderr))
+	}
+}
+
+func TestFlowSeedEchoEmptyArgsDeterministic(t *testing.T) {
+	seed := NewFlowSeed()
+	res, err := seed.Execute("echo", nil)
+	if err != nil {
+		t.Fatalf("echo execute: %v", err)
+	}
+	if !bytes.Equal(res.Stdout, []byte("flow echo: {}\n")) {
+		t.Fatalf("unexpected empty-echo stdout: %q", string(res.Stdout))
 	}
 }
 

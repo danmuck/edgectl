@@ -34,6 +34,14 @@ func TestRegisterResolveAndDuplicate(t *testing.T) {
 	}
 }
 
+func TestResolveMissingSeed(t *testing.T) {
+	r := NewRegistry()
+	_, ok := r.Resolve("seed.missing")
+	if ok {
+		t.Fatalf("expected missing seed to return ok=false")
+	}
+}
+
 func TestListMetadataSorted(t *testing.T) {
 	r := NewRegistry()
 	_ = r.Register(fakeSeed{meta: SeedMetadata{ID: "seed.z", Name: "Z", Description: "z"}})
@@ -68,5 +76,13 @@ func TestRegisterNilSeed(t *testing.T) {
 	r := NewRegistry()
 	if err := r.Register(nil); !errors.Is(err, ErrSeedNil) {
 		t.Fatalf("expected ErrSeedNil, got %v", err)
+	}
+}
+
+func TestRegisterInvalidMetadataFails(t *testing.T) {
+	r := NewRegistry()
+	s := fakeSeed{meta: SeedMetadata{ID: "Seed.Invalid", Name: "Bad", Description: "bad id format"}}
+	if err := r.Register(s); !errors.Is(err, ErrInvalidMetadata) {
+		t.Fatalf("expected ErrInvalidMetadata, got %v", err)
 	}
 }

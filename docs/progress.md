@@ -60,7 +60,7 @@ Status: `Done`
 
 ## Phase 3 — Seed Interface Layer
 
-**Status:** `In Progress`
+**Status:** `Done`
 
 ### Tasks
 
@@ -78,14 +78,14 @@ Status: `Done`
 
 - [x] Lock seed interfaces in code (minimal, explicit)
 - [x] Define `SeedMetadata` with `id`, `name`, `description`
-- [ ] Define `Seed` interface with:
+- [x] Define `Seed` interface with:
 - [x] `Metadata() SeedMetadata`
 - [x] `Execute(action string, args map[string]string) (SeedResult, error)`
 - [x] Define `SeedResult` with deterministic fields: `status`, `stdout`, `stderr`, `exit_code`
 
 2.
 
-- [ ] Implement registry as pure in-memory contract
+- [x] Implement registry as pure in-memory contract
 - [x] `Register(seed Seed) error` (reject duplicate `id`)
 - [x] `Resolve(id string) (Seed, bool)`
 - [x] `ListMetadata() []SeedMetadata` (stable sort by `id` for deterministic tests)
@@ -93,9 +93,9 @@ Status: `Done`
 
 3.
 
-- [ ] Implement deterministic `flow` seed
+- [x] Implement deterministic `flow` seed
 - [x] Seed id: `seed.flow`
-- [ ] Supported action set:
+- [x] Supported action set:
 - [x] `status` -> always success, stable stdout payload
 - [x] `echo` -> returns deterministic render from `args` (canonical key ordering)
 - [x] `step` -> deterministic pseudo-step output from fixed mapping
@@ -103,7 +103,7 @@ Status: `Done`
 
 4.
 
-- [ ] Add unit tests (no runtime coupling)
+- [x] Add unit tests (no runtime coupling)
 
   Registry:
 
@@ -121,17 +121,17 @@ Status: `Done`
 
 5.
 
-- [ ] Update progress tracking
-- [ ] Add Phase 3 section to `docs/progress.md` (mirror your checklist)
+- [x] Update progress tracking
+- [x] Add Phase 3 section to `docs/progress.md` (mirror your checklist)
 - [x] Mark items as they pass
 - [x] Run `go test ./...` and close acceptance checks only when green
 
 ## Why this shape is best
 
-- [ ] Keeps Phase 3 independent from transport/runtime orchestration.
-- [ ] Produces a stable local execution API for Phase 4 Ghost execution layer.
-- [ ] Gives deterministic fixtures you can reuse for protocol/e2e tests later.
-- [ ] Minimizes redesign risk by locking seed contracts before distributed wiring.
+- [x] Keeps Phase 3 independent from transport/runtime orchestration.
+- [x] Produces a stable local execution API for Phase 4 Ghost execution layer.
+- [x] Gives deterministic fixtures you can reuse for protocol/e2e tests later.
+- [x] Minimizes redesign risk by locking seed contracts before distributed wiring.
 
 ## Suggested concrete file targets
 
