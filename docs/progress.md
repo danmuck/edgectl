@@ -60,57 +60,71 @@ Status: `Done`
 
 ## Phase 3 — Seed Interface Layer
 
-**Status:** `Not Started`
+**Status:** `In Progress`
 
 ### Tasks
 
-- [ ] Define seed metadata contract: `id`, `name`, `description`
-- [ ] Implement seed registry API
-- [ ] Implement one deterministic seed (`flow`) returning stable results
-- [ ] Add tests for registry and seed action behavior
+- [x] Define seed metadata contract: `id`, `name`, `description`
+- [x] Implement seed registry API
+- [x] Implement one deterministic seed (`flow`) returning stable results
+- [x] Add tests for registry and seed action behavior
 
 ### Acceptance Checks
 
-- [ ] Ghost can invoke seed actions locally with deterministic output
-- [ ] Seed metadata is available and validated
+- [x] Ghost can invoke seed actions locally with deterministic output
+- [x] Seed metadata is available and validated
 
-- [x] 1. Lock seed interfaces in code (minimal, explicit)
+1.
+
+- [x] Lock seed interfaces in code (minimal, explicit)
 - [x] Define `SeedMetadata` with `id`, `name`, `description`
 - [ ] Define `Seed` interface with:
 - [x] `Metadata() SeedMetadata`
 - [x] `Execute(action string, args map[string]string) (SeedResult, error)`
 - [x] Define `SeedResult` with deterministic fields: `status`, `stdout`, `stderr`, `exit_code`
 
-- [ ] 2. Implement registry as pure in-memory contract
+2.
+
+- [ ] Implement registry as pure in-memory contract
 - [x] `Register(seed Seed) error` (reject duplicate `id`)
 - [x] `Resolve(id string) (Seed, bool)`
 - [x] `ListMetadata() []SeedMetadata` (stable sort by `id` for deterministic tests)
 - [x] `ValidateMetadata(meta SeedMetadata) error` (non-empty fields + id format guard)
 
-- [ ] 3. Implement deterministic `flow` seed
-- [ ] Seed id: `seed.flow`
-- [ ] Supported action set:
-- [ ] `status` -> always success, stable stdout payload
-- [ ] `echo` -> returns deterministic render from `args` (canonical key ordering)
-- [ ] `step` -> deterministic pseudo-step output from fixed mapping
-- [ ] Unknown action -> deterministic error result (`status=error`, stable message, non-zero exit)
+3.
 
-- [ ] 4. Add unit tests (no runtime coupling)
-- [ ] Registry:
+- [ ] Implement deterministic `flow` seed
+- [x] Seed id: `seed.flow`
+- [ ] Supported action set:
+- [x] `status` -> always success, stable stdout payload
+- [x] `echo` -> returns deterministic render from `args` (canonical key ordering)
+- [x] `step` -> deterministic pseudo-step output from fixed mapping
+- [x] Unknown action -> deterministic error result (`status=error`, stable message, non-zero exit)
+
+4.
+
+- [ ] Add unit tests (no runtime coupling)
+
+  Registry:
+
 - [x] register success
 - [x] duplicate register failure
 - [x] resolve/list behavior
 - [x] metadata validation failures
-- [ ] Flow seed:
-- [ ] metadata correctness
-- [ ] supported actions return byte-for-byte stable output
-- [ ] unknown action deterministic failure
-- [ ] arg-order independence test for `echo`
 
-- [ ] 5. Update progress tracking
+  Flow seed:
+
+- [x] metadata correctness
+- [x] supported actions return byte-for-byte stable output
+- [x] unknown action deterministic failure
+- [x] arg-order independence test for `echo`
+
+5.
+
+- [ ] Update progress tracking
 - [ ] Add Phase 3 section to `docs/progress.md` (mirror your checklist)
-- [ ] Mark items as they pass
-- [ ] Run `go test ./...` and close acceptance checks only when green
+- [x] Mark items as they pass
+- [x] Run `go test ./...` and close acceptance checks only when green
 
 ## Why this shape is best
 
@@ -121,12 +135,12 @@ Status: `Done`
 
 ## Suggested concrete file targets
 
-- [ ] `internal/seeds/types.go` (metadata/result/contracts)
-- [ ] `internal/seeds/registry.go` (registry + validation)
-- [ ] `internal/seeds/flow.go` (deterministic seed)
-- [ ] `internal/seeds/registry_test.go`
-- [ ] `internal/seeds/flow_test.go`
-- [ ] `docs/progress.md` (Phase 3 mirror + status)
+- [x] `internal/seeds/types.go` (metadata/result/contracts)
+- [x] `internal/seeds/registry.go` (registry + validation)
+- [x] `internal/seeds/flow.go` (deterministic seed)
+- [x] `internal/seeds/registry_test.go`
+- [x] `internal/seeds/flow_test.go`
+- [x] `docs/progress.md` (Phase 3 mirror + status)
 
 ### Verify smplog interface is clean, and is able to run zerolog naked
 
