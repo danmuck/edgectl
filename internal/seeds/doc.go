@@ -7,6 +7,8 @@
 //
 // - local seed registry primitives
 //
+// - whitelist-gated seed dependency installation primitives
+//
 // Canonical references (consult before changes):
 // - docs/index.md
 //

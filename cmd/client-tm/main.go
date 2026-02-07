@@ -556,6 +556,11 @@ func (a *App) listSeedOperations(target GhostTarget) error {
 }
 
 func (a *App) executeSeedCommand(target GhostTarget) error {
+	if err := a.listSeedOperations(target); err != nil {
+		return err
+	}
+	fmt.Println()
+	fmt.Println("Execute Command Input")
 	intentIDRaw, err := a.promptLine("intent_id (blank = auto)")
 	if err != nil {
 		return err
@@ -677,23 +682,29 @@ func (a *App) showVerification(target GhostTarget) error {
 		fmt.Println("  (none)")
 		return nil
 	}
-	for _, rec := range records {
-		ts := time.UnixMilli(int64(rec.TimestampMS)).Format(time.RFC3339)
+	fmt.Printf("  records=%d\n", len(records))
+	fmt.Println()
+	fmt.Println("  #  command_id                 execution_id               outcome  seed_status  exit")
+	fmt.Println("  -- -------------------------- -------------------------- -------- ------------ ----")
+	for i, rec := range records {
 		fmt.Printf(
-			"  req=%s trace=%s msg_id=%d cmd_id=%s exec_id=%s evt_id=%s op=%s seed=%s outcome=%s seed_status=%s exit=%d ts=%s\n",
-			rec.RequestID,
-			rec.TraceID,
-			rec.CommandMessageID,
-			rec.CommandID,
-			rec.ExecutionID,
-			rec.EventID,
-			rec.Operation,
-			rec.SeedID,
-			rec.Outcome,
-			rec.SeedStatus,
+			"  %-2d %-26s %-26s %-8s %-12s %-4d\n",
+			i+1,
+			truncateRight(rec.CommandID, 26),
+			truncateRight(rec.ExecutionID, 26),
+			truncateRight(rec.Outcome, 8),
+			truncateRight(rec.SeedStatus, 12),
 			rec.ExitCode,
-			ts,
 		)
+	}
+	fmt.Println()
+	for i, rec := range records {
+		ts := time.UnixMilli(int64(rec.TimestampMS)).Format(time.RFC3339)
+		fmt.Printf("  [%d] request=%s trace=%s\n", i+1, rec.RequestID, rec.TraceID)
+		fmt.Printf("      message: id=%d type=%d -> event_type=%d\n", rec.CommandMessageID, rec.CommandMessageType, rec.EventMessageType)
+		fmt.Printf("      ids: command=%s execution=%s event=%s\n", rec.CommandID, rec.ExecutionID, rec.EventID)
+		fmt.Printf("      target: ghost=%s seed=%s operation=%s\n", rec.GhostID, rec.SeedID, rec.Operation)
+		fmt.Printf("      result: outcome=%s seed_status=%s exit=%d status=%s ts=%s\n", rec.Outcome, rec.SeedStatus, rec.ExitCode, rec.Status, ts)
 	}
 	return nil
 }
@@ -967,6 +978,19 @@ func sortedOps(in []seeds.OperationSpec) []seeds.OperationSpec {
 		return out[i].Name < out[j].Name
 	})
 	return out
+}
+
+func truncateRight(in string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	if len(in) <= max {
+		return in
+	}
+	if max <= 3 {
+		return in[:max]
+	}
+	return in[:max-3] + "..."
 }
 
 func normalizeSuffix(in string) string {

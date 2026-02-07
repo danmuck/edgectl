@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -40,10 +41,20 @@ type MirageSessionConfig struct {
 	SessionConfig      session.Config
 }
 
+// Ghost seed-install configuration for whitelist-gated dependency installation.
+type SeedInstallConfig struct {
+	Enabled       bool
+	WorkspaceRoot string
+	InstallRoot   string
+	Whitelist     []string
+	Specs         []seeds.InstallSpec
+}
+
 // ServiceConfig configures Ghost standalone runtime defaults.
 type ServiceConfig struct {
 	GhostID           string
 	BuiltinSeedIDs    []string
+	SeedInstall       SeedInstallConfig
 	HeartbeatInterval time.Duration
 	AdminListenAddr   string
 	EnableClusterHost bool
@@ -55,6 +66,7 @@ func DefaultServiceConfig() ServiceConfig {
 	return ServiceConfig{
 		GhostID:           "ghost.local",
 		BuiltinSeedIDs:    []string{"seed.flow"},
+		SeedInstall:       SeedInstallConfig{Enabled: false, InstallRoot: filepath.Join("local", "seeds")},
 		HeartbeatInterval: 5 * time.Second,
 		AdminListenAddr:   "",
 		EnableClusterHost: true,
@@ -123,6 +135,9 @@ func (s *Service) bootstrap() error {
 		return ErrInvalidHeartbeatInterval
 	}
 	if err := validateMiragePolicy(s.cfg.Mirage.Policy); err != nil {
+		return err
+	}
+	if err := s.installSeedDependencies(); err != nil {
 		return err
 	}
 
@@ -437,4 +452,25 @@ func buildBuiltinRegistry(seedIDs []string) (*seeds.Registry, error) {
 	}
 
 	return reg, nil
+}
+
+// Ghost bootstrap hook that runs configured seed dependency installations.
+func (s *Service) installSeedDependencies() error {
+	cfg := s.cfg.SeedInstall
+	if !cfg.Enabled || len(cfg.Specs) == 0 {
+		return nil
+	}
+
+	installer, err := seeds.NewInstaller(seeds.InstallerConfig{
+		WorkspaceRoot: cfg.WorkspaceRoot,
+		InstallRoot:   cfg.InstallRoot,
+		Whitelist:     cfg.Whitelist,
+	})
+	if err != nil {
+		return err
+	}
+	if err := installer.InstallAll(cfg.Specs); err != nil {
+		return err
+	}
+	return nil
 }
