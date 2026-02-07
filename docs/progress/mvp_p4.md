@@ -23,10 +23,16 @@ Status: `Done`
 ## Post-Phase-4 MVP Steps
 
 - [x] Complete the protocol/runtime conformance checklist from `docs/progress/p4_conformance_report.md` before Mirage session implementation work
-- [ ] Add required local `config.toml` boot config for `ghostctl` and `miragectl` as the next task after conformance closure; each process requires colocated network-routing + identity bootstrap config, defaults support auto-connect or headless Ghost startup with later manual Mirage attach, and empty Ghost bootstrap must allow remote seed config/install transfer to bring fresh nodes online
+- [x] Add required local `config.toml` boot config for `ghostctl` and `miragectl` as the next task after conformance closure; each process requires colocated network-routing + identity bootstrap config, defaults support auto-connect or headless Ghost startup with later manual Mirage attach, and empty Ghost bootstrap must allow remote seed config/install transfer to bring fresh nodes online
 - [x] Implement P2 step1/step2 baseline: shared session/reliability primitives and minimal Mirage endpoint (`register`, `register.ack`, `event`, `event.ack`) to prepare integration step3
 - [x] Execute remaining P2 step3 resilience tests: explicit ack-timeout and replay-across-reconnect idempotency verification
 - [x] Add Mirage↔Ghost session wiring (connect/register/ready) while preserving protocol/runtime boundaries
 - [x] Add TLS/mTLS transport security enforcement and certificate-backed identity binding for production mode contracts
 - [ ] Implement single-intent loop end-to-end (`issue -> command -> seed.execute -> seed.result -> event -> report`)
 - [ ] Add failure-path tests (disconnect, timeout, duplicate IDs, validation failures) before MVP tag
+
+## Phase 4 Closure Gate
+
+- [ ] Close single-intent end-to-end path with deterministic integration coverage
+- [ ] Close failure-path matrix coverage for session and envelope handling
+- [ ] Mark Phase 4 fully complete, then begin terminal client implementation for node operations and dev/debug root shell access

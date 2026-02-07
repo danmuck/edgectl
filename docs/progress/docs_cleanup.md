@@ -1,6 +1,6 @@
 # Docs Cleanup Progress
 
-Status: `In Progress`
+Status: `Done`
 
 - [x] [P1 | Contract Parseability] Convert canonical definition files to valid TOML syntax
 - [x] [P1 | Compatibility Semantics] Resolve unknown-field/unknown-flag behavior mismatch (drop vs preserve)
@@ -12,7 +12,7 @@ Status: `In Progress`
 - [x] [P3 | Progress Doc Hygiene] Remove/merge duplicate Phase 3 checklist blocks for unambiguous status tracking
 - [x] [P4 | Buildlog Discipline] Require TOML build logs in `docs/progress/buildlog` with EST naming and follow-up prompts appended to the initial prompt log
 - [x] [P4 | Final Pass] Verify all docs can be assumed canonical, update [`../../AGENTS.md`](../../AGENTS.md) to require explicit approval for canonical doc changes, and require canonical references in package `doc.go` stubs.
-- [ ] [P4 | Final Verify] Verify all current code aligns with the documentation.  
+- [x] [P4 | Final Verify] Verify all current code aligns with the documentation.  
   Current status: see [`p4_conformance_report.md`](p4_conformance_report.md).
 
 ## P1 Completion Notes (2026-02-07)
@@ -38,5 +38,5 @@ Status: `In Progress`
 - [x] Package `doc.go` stubs updated to reference canonical contracts before implementation changes.
 - [x] Buildlog policy, naming scheme, and TOML template added under `docs/progress/buildlog/` with scope-based log rollover and follow-up append rules.
 - [x] Test tooling UX pass added `cmd/testctl` and consolidated test entrypoints to `make test` (interactive package/module selection) and `make test-override` (full suite non-interactive), with grouped test listing, indented logs, per-package/per-test result matrix, and end-of-run totals.
-- [ ] `2026-02-07` verification + implementation passes completed; `go test ./...` passes, P1 is closed, and P2 runtime now includes session primitives, minimal Mirage endpoint, Ghost client, config/policy wiring, reconnect baseline tests, step-3 resilience scenarios (ack-timeout + replay-across-reconnect coverage), and TLS/mTLS transport security enforcement with certificate-backed identity binding.  
+- [x] `2026-02-07` verification + implementation passes completed; `go test ./...` passes, P1 is closed, and P2 runtime now includes session primitives, minimal Mirage endpoint, Ghost client, config/policy wiring, reconnect baseline tests, step-3 resilience scenarios (ack-timeout + replay-across-reconnect coverage), and TLS/mTLS transport security enforcement with certificate-backed identity binding.  
   Source: `p4_conformance_report.md`.
