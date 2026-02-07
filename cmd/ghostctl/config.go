@@ -16,6 +16,8 @@ import (
 // ghostctl config.toml key mapping to Ghost runtime settings.
 type fileConfig struct {
 	ID                   string            `toml:"id"`
+	ProjectRoot          string            `toml:"project_root"`
+	ProjectFetchOnBoot   bool              `toml:"project_fetch_on_boot"`
 	Seeds                []string          `toml:"seeds"`
 	Heartbeat            string            `toml:"heartbeat"`
 	HeartbeatInterval    string            `toml:"heartbeat_interval"`
@@ -57,7 +59,9 @@ type fileSeedInstall struct {
 // ghostctl loader for TOML config with default overlay.
 func loadServiceConfig(path string) (ghost.ServiceConfig, error) {
 	cfg := ghost.DefaultServiceConfig()
-	cfg.SeedInstall.WorkspaceRoot = resolveWorkspaceRoot(path)
+	workspaceRoot := resolveWorkspaceRoot(path)
+	cfg.ProjectRoot = workspaceRoot
+	cfg.SeedInstall.WorkspaceRoot = workspaceRoot
 
 	var raw fileConfig
 	meta, err := toml.DecodeFile(path, &raw)
@@ -70,6 +74,12 @@ func loadServiceConfig(path string) (ghost.ServiceConfig, error) {
 		if id != "" {
 			cfg.GhostID = id
 		}
+	}
+	if meta.IsDefined("project_root") {
+		cfg.ProjectRoot = strings.TrimSpace(raw.ProjectRoot)
+	}
+	if meta.IsDefined("project_fetch_on_boot") {
+		cfg.ProjectFetchOnBoot = raw.ProjectFetchOnBoot
 	}
 
 	if meta.IsDefined("seeds") {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/seeds"
+	"github.com/danmuck/edgectl/internal/tools"
 	logs "github.com/danmuck/smplog"
 )
 
@@ -52,24 +54,28 @@ type SeedInstallConfig struct {
 
 // ServiceConfig configures Ghost standalone runtime defaults.
 type ServiceConfig struct {
-	GhostID           string
-	BuiltinSeedIDs    []string
-	SeedInstall       SeedInstallConfig
-	HeartbeatInterval time.Duration
-	AdminListenAddr   string
-	EnableClusterHost bool
-	Mirage            MirageSessionConfig
+	GhostID            string
+	ProjectRoot        string
+	ProjectFetchOnBoot bool
+	BuiltinSeedIDs     []string
+	SeedInstall        SeedInstallConfig
+	HeartbeatInterval  time.Duration
+	AdminListenAddr    string
+	EnableClusterHost  bool
+	Mirage             MirageSessionConfig
 }
 
 // Ghost service defaults for standalone runtime configuration.
 func DefaultServiceConfig() ServiceConfig {
 	return ServiceConfig{
-		GhostID:           "ghost.local",
-		BuiltinSeedIDs:    []string{"seed.flow"},
-		SeedInstall:       SeedInstallConfig{Enabled: false, InstallRoot: filepath.Join("local", "seeds")},
-		HeartbeatInterval: 5 * time.Second,
-		AdminListenAddr:   "",
-		EnableClusterHost: true,
+		GhostID:            "ghost.local",
+		ProjectRoot:        "",
+		ProjectFetchOnBoot: true,
+		BuiltinSeedIDs:     []string{"seed.flow"},
+		SeedInstall:        SeedInstallConfig{Enabled: false, InstallRoot: filepath.Join("local", "seeds")},
+		HeartbeatInterval:  5 * time.Second,
+		AdminListenAddr:    "",
+		EnableClusterHost:  true,
 		Mirage: MirageSessionConfig{
 			Policy:        MiragePolicyHeadless,
 			SessionConfig: session.DefaultConfig(),
@@ -136,6 +142,9 @@ func (s *Service) bootstrap() error {
 	}
 	if err := validateMiragePolicy(s.cfg.Mirage.Policy); err != nil {
 		return err
+	}
+	if err := s.fetchProjectRepoOnBoot(); err != nil {
+		logs.Warnf("ghost.Service.bootstrap project fetch skipped err=%v", err)
 	}
 	if err := s.installSeedDependencies(); err != nil {
 		return err
@@ -472,5 +481,62 @@ func (s *Service) installSeedDependencies() error {
 	if err := installer.InstallAll(cfg.Specs); err != nil {
 		return err
 	}
+	return nil
+}
+
+// Ghost bootstrap hook that refreshes root project refs before seed install.
+func (s *Service) fetchProjectRepoOnBoot() error {
+	if !s.cfg.ProjectFetchOnBoot {
+		return nil
+	}
+
+	projectRoot := strings.TrimSpace(s.cfg.ProjectRoot)
+	if projectRoot == "" {
+		projectRoot = strings.TrimSpace(s.cfg.SeedInstall.WorkspaceRoot)
+	}
+	if projectRoot == "" {
+		return nil
+	}
+
+	projectAbs, err := filepath.Abs(projectRoot)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(projectAbs, ".git")); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+
+	runner := tools.ExecRunner{}
+	stdout, stderr, exitCode, err := runner.Run("git", "-C", projectAbs, "remote")
+	if err != nil {
+		return fmt.Errorf(
+			"ghost: git remote failed root=%q exit=%d stdout=%q stderr=%q: %w",
+			projectAbs,
+			exitCode,
+			strings.TrimSpace(string(stdout)),
+			strings.TrimSpace(string(stderr)),
+			err,
+		)
+	}
+	if strings.TrimSpace(string(stdout)) == "" {
+		logs.Infof("ghost.Service.fetchProjectRepoOnBoot skip root=%q reason=no_remotes", projectAbs)
+		return nil
+	}
+
+	stdout, stderr, exitCode, err = runner.Run("git", "-C", projectAbs, "fetch", "--all", "--prune")
+	if err != nil {
+		return fmt.Errorf(
+			"ghost: git fetch failed root=%q exit=%d stdout=%q stderr=%q: %w",
+			projectAbs,
+			exitCode,
+			strings.TrimSpace(string(stdout)),
+			strings.TrimSpace(string(stderr)),
+			err,
+		)
+	}
+	logs.Infof("ghost.Service.fetchProjectRepoOnBoot ok root=%q", projectAbs)
 	return nil
 }

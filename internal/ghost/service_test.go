@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -196,6 +197,53 @@ func TestServiceBootstrapInstallsWorkspaceCopySpec(t *testing.T) {
 	}
 	if string(out) != "seed install copy" {
 		t.Fatalf("unexpected copied content: %q", string(out))
+	}
+}
+
+func TestServiceFetchProjectRepoOnBootNoRemote(t *testing.T) {
+	testlog.Start(t)
+	repo := t.TempDir()
+	runGit(t, "init", repo)
+
+	svc := NewServiceWithConfig(ServiceConfig{
+		GhostID:            "ghost.alpha",
+		ProjectRoot:        repo,
+		ProjectFetchOnBoot: true,
+		BuiltinSeedIDs:     []string{"seed.flow"},
+		HeartbeatInterval:  time.Second,
+	})
+	if err := svc.fetchProjectRepoOnBoot(); err != nil {
+		t.Fatalf("fetch project repo: %v", err)
+	}
+}
+
+func TestServiceFetchProjectRepoOnBootWithLocalRemote(t *testing.T) {
+	testlog.Start(t)
+	remote := filepath.Join(t.TempDir(), "edgectl-remote.git")
+	runGit(t, "init", "--bare", remote)
+
+	repo := t.TempDir()
+	runGit(t, "init", repo)
+	runGit(t, "-C", repo, "remote", "add", "origin", remote)
+
+	svc := NewServiceWithConfig(ServiceConfig{
+		GhostID:            "ghost.alpha",
+		ProjectRoot:        repo,
+		ProjectFetchOnBoot: true,
+		BuiltinSeedIDs:     []string{"seed.flow"},
+		HeartbeatInterval:  time.Second,
+	})
+	if err := svc.fetchProjectRepoOnBoot(); err != nil {
+		t.Fatalf("fetch project repo: %v", err)
+	}
+}
+
+func runGit(t *testing.T, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v output=%s", args, err, string(out))
 	}
 }
 

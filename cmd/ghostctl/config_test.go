@@ -18,6 +18,9 @@ func TestLoadServiceConfigDefaultsAndOverrides(t *testing.T) {
 	if cfg.GhostID != "ghost.local" {
 		t.Fatalf("unexpected id: %q", cfg.GhostID)
 	}
+	if !cfg.ProjectFetchOnBoot {
+		t.Fatalf("expected project fetch on boot enabled")
+	}
 	if cfg.HeartbeatInterval != 5*time.Second {
 		t.Fatalf("unexpected heartbeat: %v", cfg.HeartbeatInterval)
 	}
@@ -114,6 +117,25 @@ heartbeat_interval_ms = 1200
 	}
 	if cfg.HeartbeatInterval != 1200*time.Millisecond {
 		t.Fatalf("unexpected heartbeat: %v", cfg.HeartbeatInterval)
+	}
+}
+
+func TestLoadServiceConfigProjectFetchOverride(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	content := `
+project_fetch_on_boot = false
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := loadServiceConfig(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.ProjectFetchOnBoot {
+		t.Fatalf("expected project fetch on boot disabled")
 	}
 }
 

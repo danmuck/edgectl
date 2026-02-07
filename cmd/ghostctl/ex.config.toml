@@ -2,6 +2,7 @@
 # Copy this to config.toml and adjust identity/network values per node.
 
 id = "ghost.local"
+project_fetch_on_boot = true
 seeds = ["seed.flow", "seed.mongod"]
 heartbeat_interval = "5s"
 admin_listen = "127.0.0.1:7010"
