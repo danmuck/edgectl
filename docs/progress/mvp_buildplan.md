@@ -66,6 +66,9 @@ Use phase files for detailed task execution and acceptance check tracking.
 - [x] Dispatch commands and ingest events into observed state
 - [x] Emit `report` to user boundary
 - [x] Enable Mirage local Ghost spin-up path
+- [x] Add Mirage admin control boundary and runtime reconcile actions
+- [x] Wire `mirage.toml` + `ghost.toml` coupling for local Ghost admin controller boot
+- [x] Add temporary persistence seeds (`seed.kv` and `seed.fs`) and route buildlog persistence through seed execution
 
 - [ ] Milestone 6: Boundary transport integration (`mvp_p6.md`)
 - [ ] Bind control-plane links to protocol envelopes (not ad-hoc calls)

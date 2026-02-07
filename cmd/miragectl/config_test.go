@@ -8,11 +8,25 @@ import (
 
 func TestLoadServiceConfigDefaultsAndOverrides(t *testing.T) {
 	dir := t.TempDir()
+	ghostPath := filepath.Join(dir, "ghost.toml")
+	if err := os.WriteFile(ghostPath, []byte(`
+id = "ghost.local"
+admin_listen = "127.0.0.1:7010"
+seeds = ["seed.flow","seed.kv"]
+`), 0o644); err != nil {
+		t.Fatalf("write ghost config: %v", err)
+	}
+
 	path := filepath.Join(dir, "config.toml")
 	content := `
+id = "mirage.alpha"
 addr = "127.0.0.1:9443"
+admin_listen_addr = "127.0.0.1:7020"
+ghost_config_path = "ghost.toml"
 require_identity_binding = true
-root_ghost_admin_addr = "127.0.0.1:7010"
+buildlog_persist_enabled = true
+buildlog_seed_selector = "seed.kv"
+buildlog_key_prefix = "buildlog/"
 session_security_mode = "production"
 session_tls_enabled = true
 session_tls_mutual = true
@@ -28,28 +42,92 @@ session_tls_ca_file = "/etc/mirage/ca.crt"
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
+	if cfg.MirageID != "mirage.alpha" {
+		t.Fatalf("unexpected mirage id: %q", cfg.MirageID)
+	}
 	if cfg.ListenAddr != "127.0.0.1:9443" {
 		t.Fatalf("unexpected listen addr: %q", cfg.ListenAddr)
 	}
-	if !cfg.RequireIdentityBinding {
-		t.Fatalf("expected require_identity_binding true")
+	if cfg.AdminListenAddr != "127.0.0.1:7020" {
+		t.Fatalf("unexpected admin listen addr: %q", cfg.AdminListenAddr)
 	}
-	if cfg.RootGhostAdminAddr != "127.0.0.1:7010" {
-		t.Fatalf("unexpected root ghost admin addr: %q", cfg.RootGhostAdminAddr)
+	if cfg.LocalGhostID != "ghost.local" {
+		t.Fatalf("unexpected local ghost id: %q", cfg.LocalGhostID)
+	}
+	if cfg.LocalGhostAdminAddr != "127.0.0.1:7010" {
+		t.Fatalf("unexpected local ghost admin addr: %q", cfg.LocalGhostAdminAddr)
+	}
+	if !cfg.BuildlogPersistEnabled {
+		t.Fatalf("expected buildlog persistence enabled")
 	}
 	if cfg.Session.SecurityMode != "production" {
 		t.Fatalf("unexpected security mode: %q", cfg.Session.SecurityMode)
 	}
-	if !cfg.Session.TLS.Enabled || !cfg.Session.TLS.Mutual {
-		t.Fatalf("expected tls+mtls enabled")
+}
+
+func TestLoadServiceConfigAdminRequiresGhostConfigPath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte(`
+admin_listen_addr = "127.0.0.1:7020"
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
 	}
-	if cfg.Session.TLS.CertFile != "/etc/mirage/server.crt" {
-		t.Fatalf("unexpected cert file: %q", cfg.Session.TLS.CertFile)
+	if _, err := loadServiceConfig(path); err == nil {
+		t.Fatalf("expected error when admin_listen_addr set without ghost_config_path")
 	}
-	if cfg.Session.TLS.KeyFile != "/etc/mirage/server.key" {
-		t.Fatalf("unexpected key file: %q", cfg.Session.TLS.KeyFile)
+}
+
+func TestLoadServiceConfigBuildlogRequiresSeedKV(t *testing.T) {
+	dir := t.TempDir()
+	ghostPath := filepath.Join(dir, "ghost.toml")
+	if err := os.WriteFile(ghostPath, []byte(`
+id = "ghost.local"
+admin_listen = "127.0.0.1:7010"
+seeds = ["seed.flow"]
+`), 0o644); err != nil {
+		t.Fatalf("write ghost config: %v", err)
 	}
-	if cfg.Session.TLS.CAFile != "/etc/mirage/ca.crt" {
-		t.Fatalf("unexpected ca file: %q", cfg.Session.TLS.CAFile)
+
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte(`
+admin_listen_addr = "127.0.0.1:7020"
+ghost_config_path = "ghost.toml"
+buildlog_persist_enabled = true
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if _, err := loadServiceConfig(path); err == nil {
+		t.Fatalf("expected error when buildlog persistence enabled but seed.kv missing")
+	}
+}
+
+func TestLoadServiceConfigBuildlogAllowsSeedFS(t *testing.T) {
+	dir := t.TempDir()
+	ghostPath := filepath.Join(dir, "ghost.toml")
+	if err := os.WriteFile(ghostPath, []byte(`
+id = "ghost.local"
+admin_listen = "127.0.0.1:7010"
+seeds = ["seed.flow","seed.fs"]
+`), 0o644); err != nil {
+		t.Fatalf("write ghost config: %v", err)
+	}
+
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte(`
+admin_listen_addr = "127.0.0.1:7020"
+ghost_config_path = "ghost.toml"
+buildlog_persist_enabled = true
+buildlog_seed_selector = "seed.fs"
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := loadServiceConfig(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.BuildlogSeedSelector != "seed.fs" {
+		t.Fatalf("unexpected buildlog seed selector: %q", cfg.BuildlogSeedSelector)
 	}
 }

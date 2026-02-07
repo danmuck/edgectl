@@ -21,6 +21,9 @@ Example deployment used in this flow:
 - Ghost event ingest is idempotent by `event_id`; duplicates do not produce duplicate desired/observed transitions.
 - Report emission is an explicit Mirage user boundary with bounded history for `intent` progress and terminal outcomes.
 - Mirage local Ghost spin-up is exposed through a decoupled boundary adapter to root Ghost admin (`spawn_ghost`), not by direct package coupling.
+- Mirage admin controls expose runtime reconciliation (`submit_issue`, `reconcile_intent`, `reconcile_all`, snapshots, report views) through a dedicated TCP JSON boundary.
+- Mirage admin controller requires local Ghost wiring from `ghost.toml` (`ghost_config_path` in `mirage.toml`) because Mirage always controls one local Ghost runtime.
+- Buildlog persistence is routed through Ghost seed execution (`seed.fs` default file-backed under `local/dir`, optional `seed.kv` for temporary in-memory state).
 
 Phase 5 models:
 

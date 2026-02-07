@@ -3,7 +3,7 @@
 
 id = "ghost.local"
 project_fetch_on_boot = true
-seeds = ["seed.flow", "seed.mongod"]
+seeds = ["seed.flow", "seed.mongod", "seed.kv", "seed.fs"]
 heartbeat_interval = "5s"
 admin_listen = "127.0.0.1:7010"
 

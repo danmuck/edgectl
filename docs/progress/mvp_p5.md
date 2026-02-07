@@ -16,6 +16,11 @@ Status: `In Progress`
 - [x] Emit `report` to user boundary with explicit desired vs observed transitions
 - [x] Mirage must be able to spin up local Ghost servers
 - [x] Introduce Mirage server boundary (`internal/mirage/server.go`) for lifecycle + orchestration command boundary ownership
+- [x] Add Mirage admin control boundary (`internal/mirage/admin_control.go`) for issue/reconcile/report/runtime actions
+- [x] Wire Mirage runtime reconcile path through admin controls (`reconcile_intent`, `reconcile_all`, snapshots, report history)
+- [x] Require `mirage.toml` to declare `ghost_config_path` for admin controller wiring of local Ghost identity/admin endpoint
+- [x] Add temporary persistence seeds: `seed.kv` (in-memory state) and `seed.fs` (file-backed under `local/dir`)
+- [x] Persist Mirage buildlog entries through ghost seed execution path (`seed.fs` default, `seed.kv` optional)
 - [x] Update architecture/message-flow diagrams in `docs/architecture/models` for Phase 5 behavior
 
 ### Acceptance Checks

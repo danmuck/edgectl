@@ -2,8 +2,10 @@ sequenceDiagram
     autonumber
     participant Ghost
     participant MirageSvc as Mirage Service
+    participant Admin as Mirage Admin
     participant MirageSrv as Mirage Server
     participant Loop as Orchestrator
+    participant Store as Buildlog Store
     participant User
 
     Ghost->>MirageSvc: event(event_id, command_id, intent_id, outcome)
@@ -17,12 +19,19 @@ sequenceDiagram
         Loop->>Loop: update observed state + release seed lock
         Loop-->>MirageSrv: report(intent_id, phase, completion_state)
         MirageSrv->>MirageSrv: append report history
+        MirageSrv->>Store: persist buildlog entry (seed.fs or seed.kv)
         MirageSrv-->>MirageSvc: matched report
         MirageSvc-->>User: report update
     else command not planned by Mirage
         Loop-->>MirageSrv: no match
         MirageSrv-->>MirageSvc: skip report emission
     end
+
+    User->>Admin: reconcile_intent(intent_id)
+    Admin->>MirageSrv: ReconcileIntent(intent_id)
+    MirageSrv-->>Admin: report
+    Admin->>Store: persist buildlog entry
+    Admin-->>User: reconcile result
 
     Note over Ghost,MirageSvc: Ghost retries event delivery until ack accepted or ack timeout
     Note over Loop,MirageSrv: Duplicate event_id does not duplicate state transition

@@ -27,7 +27,7 @@ func TestLoadServiceConfigDefaultsAndOverrides(t *testing.T) {
 	if cfg.AdminListenAddr != "127.0.0.1:7010" {
 		t.Fatalf("unexpected admin listen: %q", cfg.AdminListenAddr)
 	}
-	if len(cfg.BuiltinSeedIDs) != 2 {
+	if len(cfg.BuiltinSeedIDs) != 4 {
 		t.Fatalf("unexpected seeds: %+v", cfg.BuiltinSeedIDs)
 	}
 	if cfg.Mirage.Policy != "headless" {

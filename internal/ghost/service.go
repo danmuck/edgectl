@@ -15,7 +15,9 @@ import (
 
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/seeds"
+	seedfs "github.com/danmuck/edgectl/internal/seeds/fs"
 	seedflow "github.com/danmuck/edgectl/internal/seeds/flow"
+	seedkv "github.com/danmuck/edgectl/internal/seeds/kv"
 	seedmongod "github.com/danmuck/edgectl/internal/seeds/mongod"
 	"github.com/danmuck/edgectl/internal/tools"
 	logs "github.com/danmuck/smplog"
@@ -455,6 +457,14 @@ func buildBuiltinRegistry(seedIDs []string) (*seeds.Registry, error) {
 			}
 		case "seed.mongod", "mongod":
 			if err := reg.Register(seedmongod.NewSeed()); err != nil {
+				return nil, err
+			}
+		case "seed.kv", "kv":
+			if err := reg.Register(seedkv.NewSeed()); err != nil {
+				return nil, err
+			}
+		case "seed.fs", "fs":
+			if err := reg.Register(seedfs.NewSeed()); err != nil {
 				return nil, err
 			}
 		default:

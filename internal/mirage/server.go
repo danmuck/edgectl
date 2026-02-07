@@ -257,6 +257,11 @@ func (s *Server) SnapshotIntent(intentID string) (IntentSnapshot, bool) {
 	return s.loop.SnapshotIntent(intentID)
 }
 
+// ListIntentIDs returns sorted desired intent ids.
+func (s *Server) ListIntentIDs() []string {
+	return s.loop.ListIntentIDs()
+}
+
 // ObserveEvent ingests a ghost event into orchestration observed state when command is known.
 func (s *Server) ObserveEvent(event session.Event) (session.Report, bool, error) {
 	report, matched, err := s.loop.IngestObservedEvent(event)

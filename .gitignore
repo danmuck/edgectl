@@ -37,6 +37,5 @@ cmd/*/config.toml
 tmp/
 .trash/
 
-# local build logs (keep buildlog docs/template tracked)
-docs/progress/buildlog/*.toml
-!docs/progress/buildlog/template.toml
+# local runtime artifacts (including buildlogs moved under local/buildlogs)
+local/

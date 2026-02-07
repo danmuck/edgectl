@@ -1,6 +1,7 @@
 # Build Log Format and Naming
 
-This directory stores build logs in TOML, anchored to an initial prompt.
+This directory stores buildlog policy/docs and templates.
+Active buildlog TOML files live under `local/buildlogs/`.
 
 ## Required Naming Scheme
 
@@ -28,3 +29,4 @@ Examples:
 ## Template
 
 - Use: `template.toml`
+- Save active logs to: `local/buildlogs/YYYY-MM-DD_HH:MM.toml`

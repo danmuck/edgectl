@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -168,6 +169,18 @@ func (o *Orchestrator) Snapshot() OrchestratorSnapshot {
 		IntentCount:   len(o.desired),
 		ObservedCount: len(o.observed),
 	}
+}
+
+// ListIntentIDs returns sorted intent ids currently persisted in desired state.
+func (o *Orchestrator) ListIntentIDs() []string {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	out := make([]string, 0, len(o.desired))
+	for intentID := range o.desired {
+		out = append(out, intentID)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // RegisterExecutor binds one ghost_id to an execution adapter.

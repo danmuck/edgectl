@@ -40,6 +40,30 @@ func TestBuildBuiltinRegistryMongod(t *testing.T) {
 	}
 }
 
+func TestBuildBuiltinRegistryKV(t *testing.T) {
+	testlog.Start(t)
+	reg, err := buildBuiltinRegistry([]string{"seed.kv"})
+	if err != nil {
+		t.Fatalf("build registry failed: %v", err)
+	}
+	list := reg.ListMetadata()
+	if len(list) != 1 || list[0].ID != "seed.kv" {
+		t.Fatalf("unexpected registry metadata: %+v", list)
+	}
+}
+
+func TestBuildBuiltinRegistryFS(t *testing.T) {
+	testlog.Start(t)
+	reg, err := buildBuiltinRegistry([]string{"seed.fs"})
+	if err != nil {
+		t.Fatalf("build registry failed: %v", err)
+	}
+	list := reg.ListMetadata()
+	if len(list) != 1 || list[0].ID != "seed.fs" {
+		t.Fatalf("unexpected registry metadata: %+v", list)
+	}
+}
+
 func TestBuildBuiltinRegistryNone(t *testing.T) {
 	testlog.Start(t)
 	reg, err := buildBuiltinRegistry([]string{"none"})

@@ -16,6 +16,7 @@ import (
 
 // AdminCommand is the external admin execution request payload.
 type AdminCommand struct {
+	CommandID    string            `json:"command_id,omitempty"`
 	IntentID     string            `json:"intent_id"`
 	SeedSelector string            `json:"seed_selector"`
 	Operation    string            `json:"operation"`
@@ -65,7 +66,10 @@ func (s *Service) ExecuteAdminCommand(cmd AdminCommand) (ExecutionState, EventEn
 
 	status := s.server.Status()
 	messageID := s.adminSeq.Add(1)
-	commandID := fmt.Sprintf("cmd.%s.%d", status.GhostID, messageID)
+	commandID := strings.TrimSpace(cmd.CommandID)
+	if commandID == "" {
+		commandID = fmt.Sprintf("cmd.%s.%d", status.GhostID, messageID)
+	}
 	intentID := strings.TrimSpace(cmd.IntentID)
 	if intentID == "" {
 		intentID = fmt.Sprintf("intent.%s.%d", status.GhostID, messageID)

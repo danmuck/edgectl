@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -25,6 +26,13 @@ import (
 type ServiceConfig struct {
 	ListenAddr             string
 	RequireIdentityBinding bool
+	MirageID               string
+	AdminListenAddr        string
+	LocalGhostID           string
+	LocalGhostAdminAddr    string
+	BuildlogPersistEnabled bool
+	BuildlogSeedSelector   string
+	BuildlogKeyPrefix      string
 	RootGhostAdminAddr     string
 	Session                session.Config
 }
@@ -34,6 +42,13 @@ func DefaultServiceConfig() ServiceConfig {
 	return ServiceConfig{
 		ListenAddr:             ":9000",
 		RequireIdentityBinding: true,
+		MirageID:               "mirage.local",
+		AdminListenAddr:        "",
+		LocalGhostID:           "ghost.local",
+		LocalGhostAdminAddr:    "127.0.0.1:7010",
+		BuildlogPersistEnabled: false,
+		BuildlogSeedSelector:   "seed.fs",
+		BuildlogKeyPrefix:      "buildlog/",
 		RootGhostAdminAddr:     "",
 		Session:                session.DefaultConfig(),
 	}
@@ -70,6 +85,9 @@ type Service struct {
 
 	connsMu sync.Mutex
 	conns   map[net.Conn]struct{}
+
+	controlClient *GhostControlClient
+	buildlogStore *GhostSeedBuildlogStore
 }
 
 // Mirage service constructor using default configuration.
@@ -88,7 +106,19 @@ func NewServiceWithConfig(cfg ServiceConfig) *Service {
 		server: NewServer(),
 		conns:  make(map[net.Conn]struct{}),
 	}
-	if addr := strings.TrimSpace(cfg.RootGhostAdminAddr); addr != "" {
+	localAdminAddr := strings.TrimSpace(cfg.LocalGhostAdminAddr)
+	if localAdminAddr == "" {
+		localAdminAddr = strings.TrimSpace(cfg.RootGhostAdminAddr)
+	}
+	if localAdminAddr != "" {
+		svc.controlClient = NewGhostControlClient(localAdminAddr)
+		svc.server.SetGhostSpawner(NewGhostAdminSpawner(localAdminAddr))
+		svc.server.RegisterExecutor(strings.TrimSpace(cfg.LocalGhostID), NewGhostAdminCommandExecutor(svc.controlClient))
+	}
+	if cfg.BuildlogPersistEnabled && svc.controlClient != nil {
+		svc.buildlogStore = NewGhostSeedBuildlogStore(svc.controlClient, strings.TrimSpace(cfg.BuildlogSeedSelector))
+	}
+	if addr := strings.TrimSpace(cfg.RootGhostAdminAddr); addr != "" && localAdminAddr == "" {
 		svc.server.SetGhostSpawner(NewGhostAdminSpawner(addr))
 	}
 	return svc
@@ -114,7 +144,7 @@ func (s *Service) Run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if err := s.server.Appear(MirageConfig{MirageID: "mirage.local"}); err != nil {
+	if err := s.server.Appear(MirageConfig{MirageID: strings.TrimSpace(s.cfg.MirageID)}); err != nil {
 		return err
 	}
 	if err := s.server.Shimmer(); err != nil {
@@ -132,7 +162,25 @@ func (s *Service) Run() error {
 		return err
 	}
 	logs.Infof("mirage.Service.Run listening addr=%q", ln.Addr().String())
-	return s.Serve(ctx, ln)
+	controlErr := make(chan error, 1)
+	if strings.TrimSpace(s.cfg.AdminListenAddr) != "" {
+		go func() {
+			controlErr <- s.serveAdminControl(ctx, strings.TrimSpace(s.cfg.AdminListenAddr))
+		}()
+	}
+	serveErr := make(chan error, 1)
+	go func() {
+		serveErr <- s.Serve(ctx, ln)
+	}()
+	select {
+	case err := <-serveErr:
+		return err
+	case err := <-controlErr:
+		if err != nil {
+			return err
+		}
+		return <-serveErr
+	}
 }
 
 // Mirage listener builder for TCP or TLS based on transport policy.
@@ -236,6 +284,13 @@ func (s *Service) handleConn(conn net.Conn) {
 				report.CommandID,
 				report.EventID,
 			)
+			s.persistBuildlog("event_report", map[string]any{
+				"intent_id":        report.IntentID,
+				"phase":            report.Phase,
+				"completion_state": report.CompletionState,
+				"command_id":       report.CommandID,
+				"event_id":         report.EventID,
+			})
 		}
 		ack := s.server.AcceptEvent(reg.GhostID, event)
 		ackPayload, err := session.EncodeEventAckFrame(fr.Header.MessageID, ack)
@@ -248,6 +303,26 @@ func (s *Service) handleConn(conn net.Conn) {
 			logs.Warnf("mirage.handleConn write event.ack err=%v", err)
 			return
 		}
+	}
+}
+
+func (s *Service) persistBuildlog(kind string, payload any) {
+	if s.buildlogStore == nil {
+		return
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	keyPrefix := strings.TrimSpace(s.cfg.BuildlogKeyPrefix)
+	if keyPrefix == "" {
+		keyPrefix = "buildlog/"
+	}
+	key := fmt.Sprintf("%s%s/%d", keyPrefix, strings.TrimSpace(kind), time.Now().UnixNano())
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := s.buildlogStore.Persist(ctx, key, string(raw)); err != nil {
+		logs.Warnf("mirage.buildlog persist failed key=%q err=%v", key, err)
 	}
 }
 
