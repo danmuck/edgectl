@@ -85,8 +85,11 @@ This file is the canonical vocabulary for Phase 0 (Contract Freeze).
   - Mirage assumes control of command registry / intent routing surface
 - `radiate`:
   - Ghost serves its seed registry / command routing surface
+  - occurs after `seed`
+  - valid with an empty seed registry
 - `seed`:
   - registration and service-surface exchange between Mirage and Ghost
+  - prepares Ghost registry before `radiate`
 
 ## Seed Terms
 

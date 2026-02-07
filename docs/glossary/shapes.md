@@ -82,8 +82,8 @@ type Mirage interface {
 ```go
 type Ghost interface {
 	Appear(cfg GhostConfig) error
-	Radiate() error
 	Seed(reg LocalSeedRegistry) error
+	Radiate() error
 
 	Reconcile(command CommandEnv) (EventEnv, error)
 }

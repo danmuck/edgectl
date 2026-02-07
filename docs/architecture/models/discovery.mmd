@@ -9,6 +9,7 @@ sequenceDiagram
     Mirage->>Mirage: seed()
 
     Ghost->>Ghost: appear()
+    Ghost->>Ghost: seed(local registry, may be empty)
     Ghost->>Ghost: radiate()
 
     Ghost->>Seed: discover/register local services

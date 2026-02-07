@@ -150,6 +150,34 @@ Status: `Done`
 - [x] Everything happening should be logged via smplog
 - [x] Use them like colors, rather than heuristical titles for nice output
 
+## Phase 4 — Ghost Execution Layer
+
+Status: `In Progress`
+
+### Tasks
+
+- [x] Lock Ghost execution flow in docs (`command -> seed.execute -> seed.result -> event`) and add/update a message-flow diagram in `docs/architecture/models/`
+- [x] Define minimal Ghost contracts in `internal/ghost` for executor, event emitter, and execution state with required correlation fields (`message_id`, `command_id`, `execution_id`, `trace_id`)
+- [ ] Implement Ghost command input boundary handler for `command` envelopes with Ghost-level semantic guards
+- [ ] Implement deterministic execution pipeline: resolve seed, execute action, normalize `seed.result`, emit terminal `event` (`success` or `error`)
+- [ ] Implement in-memory execution store keyed by `execution_id` and indexed by `command_id`
+- [ ] Add query methods for execution correlation (`GetExecution`, `GetByCommandID`)
+- [ ] Add tests for success path, unknown seed, unknown action, seed error path, and correlation/state query checks
+- [ ] Verify acceptance: every valid command yields one valid terminal event
+- [ ] Verify acceptance: execution state is queryable and correlated by command/execution IDs
+- [ ] Update `docs/progress.md` as each Phase 4 task/check passes
+
+### Acceptance Checks
+
+- [ ] Every valid command yields a valid event (success or error)
+- [ ] Execution state is queryable and correlated
+
+## Post-Phase-4 MVP Steps
+
+- [ ] Add Mirage↔Ghost session wiring (connect/register/ready) while preserving protocol/runtime boundaries
+- [ ] Implement single-intent loop end-to-end (`issue -> command -> seed.execute -> seed.result -> event -> report`)
+- [ ] Add failure-path tests (disconnect, timeout, duplicate IDs, validation failures) before MVP tag
+
 ---
 
 # Slice Status

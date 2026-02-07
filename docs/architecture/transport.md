@@ -33,7 +33,10 @@ It builds on the architecture and protocol contracts.
 
 ## Session Lifecycle
 
-- Ghost starts runtime (`appear`) and routing surface (`radiate`) before dialing Mirage.
+- Ghost starts runtime (`appear`) first.
+- Ghost performs `seed` registration preparation before serving.
+- Ghost may seed an empty registry and still become ready.
+- Ghost transitions to serving state (`radiate`) only after `seed`.
 - Mirage accepts session, validates identity, and associates peer with `ghost_id`.
 - Ghost registers seed surface through canonical registration flow (`seed`).
 - After registration, session is used for command/event exchange.
@@ -45,6 +48,7 @@ sequenceDiagram
     participant Mirage
 
     Ghost->>Ghost: appear()
+    Ghost->>Ghost: seed(local registry, may be empty)
     Ghost->>Ghost: radiate()
     Ghost->>Mirage: TCP dial
     Mirage-->>Ghost: accept

@@ -4,4 +4,9 @@
 // The package intentionally limits itself to logger configuration and simple
 // helpers; transport and sink concerns should be handled by the configured
 // io.Writer.
+//
+// Relevant docs (project integration):
+// - docs/architecture/definitions/observability.toml
+// - docs/glossary/observability.md
+// - docs/progress.md
 package logs
