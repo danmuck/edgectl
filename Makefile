@@ -4,6 +4,7 @@
 	test-ghost \
 	test-protocol \
 	test-seeds \
+	test-seeds-live \
 	test-one \
 	test-list \
 	run-mirage \
@@ -29,6 +30,9 @@ test-protocol:
 
 test-seeds:
 	go test -v ./internal/seeds
+
+test-seeds-live:
+	GHOST_TEST_LIVE_MONGOD=1 go test -v ./internal/seeds -run 'TestMongodSeedVersionCommandLive'
 
 test-one:
 	go test -v $(PKG) -run '$(TEST)'

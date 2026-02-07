@@ -2,6 +2,7 @@ package seeds
 
 import (
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/danmuck/edgectl/internal/testutil/testlog"
@@ -26,6 +27,23 @@ func (r *fakeRunner) Run(name string, args ...string) ([]byte, []byte, int32, er
 	r.last.name = name
 	r.last.args = append([]string(nil), args...)
 	return r.result.stdout, r.result.stderr, r.result.exitCode, r.result.err
+}
+
+func logCommandOutput(t *testing.T, label string, stdout []byte, stderr []byte) {
+	t.Helper()
+	t.Logf("%s stdout:\n%s", label, formatOutput(stdout))
+	t.Logf("%s stderr:\n%s", label, formatOutput(stderr))
+}
+
+func formatOutput(out []byte) string {
+	if len(out) == 0 {
+		return "(empty)\n"
+	}
+	s := string(out)
+	if s[len(s)-1] != '\n' {
+		return s + "\n"
+	}
+	return s
 }
 
 func TestMongodSeedMetadataAndOperations(t *testing.T) {
@@ -67,6 +85,7 @@ func TestMongodSeedStatusUsesSystemctl(t *testing.T) {
 	if r.last.name != "systemctl" || len(r.last.args) != 2 || r.last.args[0] != "is-active" || r.last.args[1] != "mongod" {
 		t.Fatalf("unexpected command: name=%q args=%v", r.last.name, r.last.args)
 	}
+	logCommandOutput(t, "status", res.Stdout, res.Stderr)
 }
 
 func TestMongodSeedRestartWithUnitOverride(t *testing.T) {
@@ -110,6 +129,24 @@ func TestMongodSeedVersionCommand(t *testing.T) {
 	if r.last.name != "mongod" || len(r.last.args) != 1 || r.last.args[0] != "--version" {
 		t.Fatalf("unexpected command: name=%q args=%v", r.last.name, r.last.args)
 	}
+	logCommandOutput(t, "version", res.Stdout, res.Stderr)
+}
+
+func TestMongodSeedVersionCommandLive(t *testing.T) {
+	testlog.Start(t)
+	if os.Getenv("GHOST_TEST_LIVE_MONGOD") != "1" {
+		t.Skip("set GHOST_TEST_LIVE_MONGOD=1 to run live mongod version check")
+	}
+
+	seed := NewMongodSeed()
+	res, err := seed.Execute("version", nil)
+	if err != nil {
+		t.Fatalf("live version execute failed: %v", err)
+	}
+	if len(res.Stdout) == 0 && len(res.Stderr) == 0 {
+		t.Fatalf("expected live command output")
+	}
+	logCommandOutput(t, "live version", res.Stdout, res.Stderr)
 }
 
 func TestMongodSeedCommandFailure(t *testing.T) {
@@ -130,6 +167,7 @@ func TestMongodSeedCommandFailure(t *testing.T) {
 	if res.Status != "error" || res.ExitCode != 5 {
 		t.Fatalf("unexpected failure result: %+v", res)
 	}
+	logCommandOutput(t, "start failure", res.Stdout, res.Stderr)
 }
 
 func TestMongodSeedUnknownAction(t *testing.T) {
