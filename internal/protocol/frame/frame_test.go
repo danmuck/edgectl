@@ -6,13 +6,15 @@ import (
 	"testing"
 
 	"github.com/danmuck/edgectl/internal/protocol/tlv"
+	"github.com/danmuck/edgectl/internal/testutil/testlog"
 )
 
 func TestReadWriteFrameRoundTrip(t *testing.T) {
+	testlog.Start(t)
 	payload := tlv.EncodeFields([]tlv.Field{{ID: 1, Type: tlv.TypeString, Value: []byte("intent-1")}})
 	in := Frame{
-		Header: Header{Magic: 0xEDCE1001, Version: 1, MessageID: 42, MessageType: 1},
-		Auth:   []byte("auth"),
+		Header:  Header{Magic: 0xEDCE1001, Version: 1, MessageID: 42, MessageType: 1},
+		Auth:    []byte("auth"),
 		Payload: payload,
 	}
 	var buf bytes.Buffer
@@ -35,6 +37,7 @@ func TestReadWriteFrameRoundTrip(t *testing.T) {
 }
 
 func TestReadFrameMalformedHeaderIsDeterministic(t *testing.T) {
+	testlog.Start(t)
 	_, err := ReadFrame(bytes.NewReader([]byte{1, 2, 3}), DefaultLimits())
 	if !errors.Is(err, ErrShortHeader) {
 		t.Fatalf("expected ErrShortHeader, got %v", err)
@@ -42,6 +45,7 @@ func TestReadFrameMalformedHeaderIsDeterministic(t *testing.T) {
 }
 
 func TestReadFrameHeaderLenTooSmall(t *testing.T) {
+	testlog.Start(t)
 	h := Header{Magic: 1, Version: 1, HeaderLen: 8, MessageID: 1, MessageType: 1, PayloadLen: 0}
 	buf := EncodeHeader(h)
 	_, err := ReadFrame(bytes.NewReader(buf), DefaultLimits())
@@ -51,6 +55,7 @@ func TestReadFrameHeaderLenTooSmall(t *testing.T) {
 }
 
 func TestReadFrameAuthFlagWithoutAuthBytes(t *testing.T) {
+	testlog.Start(t)
 	h := Header{Magic: 1, Version: 1, HeaderLen: FixedHeaderLen, MessageID: 1, MessageType: 1, Flags: FlagHasAuth, PayloadLen: 0}
 	buf := EncodeHeader(h)
 	_, err := ReadFrame(bytes.NewReader(buf), DefaultLimits())

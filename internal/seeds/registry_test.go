@@ -4,6 +4,8 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+
+	"github.com/danmuck/edgectl/internal/testutil/testlog"
 )
 
 type fakeSeed struct {
@@ -19,6 +21,7 @@ func (f fakeSeed) Execute(action string, args map[string]string) (SeedResult, er
 }
 
 func TestRegisterResolveAndDuplicate(t *testing.T) {
+	testlog.Start(t)
 	r := NewRegistry()
 	s := fakeSeed{meta: SeedMetadata{ID: "seed.flow", Name: "Flow", Description: "Deterministic flow seed"}}
 
@@ -35,6 +38,7 @@ func TestRegisterResolveAndDuplicate(t *testing.T) {
 }
 
 func TestResolveMissingSeed(t *testing.T) {
+	testlog.Start(t)
 	r := NewRegistry()
 	_, ok := r.Resolve("seed.missing")
 	if ok {
@@ -43,6 +47,7 @@ func TestResolveMissingSeed(t *testing.T) {
 }
 
 func TestListMetadataSorted(t *testing.T) {
+	testlog.Start(t)
 	r := NewRegistry()
 	_ = r.Register(fakeSeed{meta: SeedMetadata{ID: "seed.z", Name: "Z", Description: "z"}})
 	_ = r.Register(fakeSeed{meta: SeedMetadata{ID: "seed.a", Name: "A", Description: "a"}})
@@ -57,6 +62,7 @@ func TestListMetadataSorted(t *testing.T) {
 }
 
 func TestValidateMetadataFailures(t *testing.T) {
+	testlog.Start(t)
 	cases := []SeedMetadata{
 		{ID: "", Name: "Flow", Description: "x"},
 		{ID: "seed.flow", Name: "", Description: "x"},
@@ -73,6 +79,7 @@ func TestValidateMetadataFailures(t *testing.T) {
 }
 
 func TestRegisterNilSeed(t *testing.T) {
+	testlog.Start(t)
 	r := NewRegistry()
 	if err := r.Register(nil); !errors.Is(err, ErrSeedNil) {
 		t.Fatalf("expected ErrSeedNil, got %v", err)
@@ -80,6 +87,7 @@ func TestRegisterNilSeed(t *testing.T) {
 }
 
 func TestRegisterInvalidMetadataFails(t *testing.T) {
+	testlog.Start(t)
 	r := NewRegistry()
 	s := fakeSeed{meta: SeedMetadata{ID: "Seed.Invalid", Name: "Bad", Description: "bad id format"}}
 	if err := r.Register(s); !errors.Is(err, ErrInvalidMetadata) {

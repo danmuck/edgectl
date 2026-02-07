@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"errors"
 	"testing"
+
+	"github.com/danmuck/edgectl/internal/testutil/testlog"
 )
 
 func TestEncodeDecodeFieldsRoundTripPreservesUnknown(t *testing.T) {
+	testlog.Start(t)
 	in := []Field{
 		{ID: 1, Type: TypeString, Value: []byte("intent-1")},
 		{ID: 9999, Type: TypeBytes, Value: []byte{0xAA, 0xBB}}, // unknown field id
@@ -25,6 +28,7 @@ func TestEncodeDecodeFieldsRoundTripPreservesUnknown(t *testing.T) {
 }
 
 func TestDecodeFieldsMalformedHeaderIsDeterministic(t *testing.T) {
+	testlog.Start(t)
 	_, err := DecodeFields([]byte{1, 2, 3})
 	if !errors.Is(err, ErrShortFieldHeader) {
 		t.Fatalf("expected ErrShortFieldHeader, got %v", err)
@@ -32,6 +36,7 @@ func TestDecodeFieldsMalformedHeaderIsDeterministic(t *testing.T) {
 }
 
 func TestDecodeFieldsMalformedLengthIsDeterministic(t *testing.T) {
+	testlog.Start(t)
 	// id=1, type=string, len=5, value only 2 bytes
 	payload := []byte{0, 1, TypeString, 0, 0, 0, 5, 'a', 'b'}
 	_, err := DecodeFields(payload)

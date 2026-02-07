@@ -4,9 +4,11 @@ import (
 	"testing"
 
 	"github.com/danmuck/edgectl/internal/protocol/tlv"
+	"github.com/danmuck/edgectl/internal/testutil/testlog"
 )
 
 func TestValidateIssueRequiredFields(t *testing.T) {
+	testlog.Start(t)
 	fields := []tlv.Field{
 		{ID: FieldIntentID, Type: tlv.TypeString, Value: []byte("intent-1")},
 		{ID: FieldActor, Type: tlv.TypeString, Value: []byte("user:dan")},
@@ -19,6 +21,7 @@ func TestValidateIssueRequiredFields(t *testing.T) {
 }
 
 func TestValidateUnknownFieldsIgnored(t *testing.T) {
+	testlog.Start(t)
 	fields := []tlv.Field{
 		{ID: FieldIntentID, Type: tlv.TypeString, Value: []byte("intent-1")},
 		{ID: FieldActor, Type: tlv.TypeString, Value: []byte("user:dan")},
@@ -32,6 +35,7 @@ func TestValidateUnknownFieldsIgnored(t *testing.T) {
 }
 
 func TestValidateMissingRequiredDeterministic(t *testing.T) {
+	testlog.Start(t)
 	fields := []tlv.Field{{ID: FieldIntentID, Type: tlv.TypeString, Value: []byte("intent-1")}}
 	err := Validate(MsgIssue, fields)
 	if err == nil {
@@ -47,6 +51,7 @@ func TestValidateMissingRequiredDeterministic(t *testing.T) {
 }
 
 func TestValidateTypeMismatchDeterministic(t *testing.T) {
+	testlog.Start(t)
 	fields := []tlv.Field{
 		{ID: FieldIntentID, Type: tlv.TypeString, Value: []byte("intent-1")},
 		{ID: FieldActor, Type: tlv.TypeString, Value: []byte("user:dan")},

@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+
+	logs "github.com/danmuck/smplog"
 )
 
 const HeaderLen = 7
@@ -32,6 +34,7 @@ type Field struct {
 }
 
 func EncodeField(f Field) []byte {
+	logs.Debugf("tlv.EncodeField id=%d type=%d len=%d", f.ID, f.Type, len(f.Value))
 	buf := make([]byte, HeaderLen+len(f.Value))
 	binary.BigEndian.PutUint16(buf[0:2], f.ID)
 	buf[2] = f.Type
@@ -41,10 +44,12 @@ func EncodeField(f Field) []byte {
 }
 
 func DecodeFields(payload []byte) ([]Field, error) {
+	logs.Debugf("tlv.DecodeFields start len=%d", len(payload))
 	fields := make([]Field, 0)
 	i := 0
 	for i < len(payload) {
 		if len(payload)-i < HeaderLen {
+			logs.Errf("tlv.DecodeFields short header offset=%d", i)
 			return nil, ErrShortFieldHeader
 		}
 		id := binary.BigEndian.Uint16(payload[i : i+2])
@@ -52,6 +57,7 @@ func DecodeFields(payload []byte) ([]Field, error) {
 		l := binary.BigEndian.Uint32(payload[i+3 : i+7])
 		i += HeaderLen
 		if uint32(len(payload)-i) < l {
+			logs.Errf("tlv.DecodeFields short value id=%d expected=%d remaining=%d", id, l, len(payload)-i)
 			return nil, ErrShortFieldValue
 		}
 		val := make([]byte, l)
@@ -59,36 +65,47 @@ func DecodeFields(payload []byte) ([]Field, error) {
 		i += int(l)
 		fields = append(fields, Field{ID: id, Type: typeID, Value: val})
 	}
+	logs.Infof("tlv.DecodeFields ok fields=%d", len(fields))
 	return fields, nil
 }
 
 func EncodeFields(fields []Field) []byte {
+	logs.Debugf("tlv.EncodeFields count=%d", len(fields))
 	out := make([]byte, 0)
 	for _, f := range fields {
 		out = append(out, EncodeField(f)...)
 	}
+	logs.Debugf("tlv.EncodeFields bytes=%d", len(out))
 	return out
 }
 
 func GetField(fields []Field, id uint16) (Field, bool) {
+	logs.Debugf("tlv.GetField id=%d count=%d", id, len(fields))
 	for _, f := range fields {
 		if f.ID == id {
+			logs.Debugf("tlv.GetField found id=%d type=%d", f.ID, f.Type)
 			return f, true
 		}
 	}
+	logs.Debugf("tlv.GetField missing id=%d", id)
 	return Field{}, false
 }
 
 func MustType(f Field, expected uint8) error {
 	if f.Type != expected {
+		logs.Errf("tlv.MustType mismatch id=%d got=%d want=%d", f.ID, f.Type, expected)
 		return fmt.Errorf("tlv: field %d type mismatch: got %d want %d", f.ID, f.Type, expected)
 	}
+	logs.Debugf("tlv.MustType ok id=%d type=%d", f.ID, f.Type)
 	return nil
 }
 
 func U32FromBytes(b []byte) (uint32, error) {
 	if len(b) != 4 {
+		logs.Errf("tlv.U32FromBytes invalid len=%d", len(b))
 		return 0, fmt.Errorf("tlv: invalid u32 length: %d", len(b))
 	}
-	return binary.BigEndian.Uint32(b), nil
+	v := binary.BigEndian.Uint32(b)
+	logs.Debugf("tlv.U32FromBytes value=%d", v)
+	return v, nil
 }

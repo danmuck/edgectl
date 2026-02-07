@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+
+	logs "github.com/danmuck/smplog"
 )
 
 const (
@@ -47,6 +49,7 @@ type Limits struct {
 }
 
 func DefaultLimits() Limits {
+	logs.Debug("frame.DefaultLimits")
 	return Limits{
 		MaxAuthBytes:    64 * 1024,
 		MaxPayloadBytes: 8 * 1024 * 1024,
@@ -54,37 +57,50 @@ func DefaultLimits() Limits {
 }
 
 func ReadFrame(r io.Reader, limits Limits) (Frame, error) {
+	logs.Debugf(
+		"frame.ReadFrame start max_auth=%d max_payload=%d",
+		limits.MaxAuthBytes,
+		limits.MaxPayloadBytes,
+	)
 	var fixed [FixedHeaderLen]byte
 	if _, err := io.ReadFull(r, fixed[:]); err != nil {
 		if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
+			logs.Err("frame.ReadFrame short fixed header")
 			return Frame{}, ErrShortHeader
 		}
+		logs.Errf("frame.ReadFrame fixed header read err=%v", err)
 		return Frame{}, err
 	}
 
 	h, err := DecodeHeader(fixed[:])
 	if err != nil {
+		logs.Errf("frame.ReadFrame decode header err=%v", err)
 		return Frame{}, err
 	}
 
 	if h.HeaderLen < FixedHeaderLen {
+		logs.Errf("frame.ReadFrame invalid header_len=%d", h.HeaderLen)
 		return Frame{}, ErrHeaderLenTooSmall
 	}
 
 	authLen := uint64(h.HeaderLen - FixedHeaderLen)
 	if h.Flags&FlagHasAuth != 0 && authLen == 0 {
+		logs.Err("frame.ReadFrame auth flag set without auth bytes")
 		return Frame{}, ErrHeaderLenMismatch
 	}
 	if authLen > limits.MaxAuthBytes {
+		logs.Errf("frame.ReadFrame auth too large auth_len=%d", authLen)
 		return Frame{}, ErrAuthTooLarge
 	}
 	if h.PayloadLen > limits.MaxPayloadBytes {
+		logs.Errf("frame.ReadFrame payload too large payload_len=%d", h.PayloadLen)
 		return Frame{}, ErrPayloadTooLarge
 	}
 
 	auth := make([]byte, authLen)
 	if authLen > 0 {
 		if _, err := io.ReadFull(r, auth); err != nil {
+			logs.Errf("frame.ReadFrame auth read err=%v", err)
 			return Frame{}, err
 		}
 	}
@@ -92,20 +108,37 @@ func ReadFrame(r io.Reader, limits Limits) (Frame, error) {
 	payload := make([]byte, h.PayloadLen)
 	if h.PayloadLen > 0 {
 		if _, err := io.ReadFull(r, payload); err != nil {
+			logs.Errf("frame.ReadFrame payload read err=%v", err)
 			return Frame{}, err
 		}
 	}
 
+	logs.Infof(
+		"frame.ReadFrame ok message_id=%d message_type=%d payload_len=%d auth_len=%d",
+		h.MessageID,
+		h.MessageType,
+		h.PayloadLen,
+		authLen,
+	)
 	return Frame{Header: h, Auth: auth, Payload: payload}, nil
 }
 
 func WriteFrame(w io.Writer, f Frame, limits Limits) error {
 	authLen := uint64(len(f.Auth))
 	payloadLen := uint64(len(f.Payload))
+	logs.Debugf(
+		"frame.WriteFrame message_id=%d message_type=%d auth_len=%d payload_len=%d",
+		f.Header.MessageID,
+		f.Header.MessageType,
+		authLen,
+		payloadLen,
+	)
 	if authLen > limits.MaxAuthBytes {
+		logs.Errf("frame.WriteFrame auth too large auth_len=%d", authLen)
 		return ErrAuthTooLarge
 	}
 	if payloadLen > limits.MaxPayloadBytes {
+		logs.Errf("frame.WriteFrame payload too large payload_len=%d", payloadLen)
 		return ErrPayloadTooLarge
 	}
 
@@ -120,22 +153,33 @@ func WriteFrame(w io.Writer, f Frame, limits Limits) error {
 
 	hb := EncodeHeader(h)
 	if _, err := w.Write(hb); err != nil {
+		logs.Errf("frame.WriteFrame write fixed header err=%v", err)
 		return err
 	}
 	if authLen > 0 {
 		if _, err := w.Write(f.Auth); err != nil {
+			logs.Errf("frame.WriteFrame write auth err=%v", err)
 			return err
 		}
 	}
 	if payloadLen > 0 {
 		if _, err := w.Write(f.Payload); err != nil {
+			logs.Errf("frame.WriteFrame write payload err=%v", err)
 			return err
 		}
 	}
+	logs.Infof(
+		"frame.WriteFrame ok message_id=%d message_type=%d payload_len=%d auth_len=%d",
+		h.MessageID,
+		h.MessageType,
+		payloadLen,
+		authLen,
+	)
 	return nil
 }
 
 func EncodeHeader(h Header) []byte {
+	logs.Debugf("frame.EncodeHeader message_id=%d message_type=%d", h.MessageID, h.MessageType)
 	buf := make([]byte, FixedHeaderLen)
 	binary.BigEndian.PutUint32(buf[0:4], h.Magic)
 	binary.BigEndian.PutUint16(buf[4:6], h.Version)
@@ -149,9 +193,10 @@ func EncodeHeader(h Header) []byte {
 
 func DecodeHeader(b []byte) (Header, error) {
 	if len(b) != int(FixedHeaderLen) {
+		logs.Errf("frame.DecodeHeader invalid length=%d", len(b))
 		return Header{}, fmt.Errorf("frame: invalid fixed header length: %d", len(b))
 	}
-	return Header{
+	h := Header{
 		Magic:       binary.BigEndian.Uint32(b[0:4]),
 		Version:     binary.BigEndian.Uint16(b[4:6]),
 		HeaderLen:   binary.BigEndian.Uint16(b[6:8]),
@@ -159,5 +204,7 @@ func DecodeHeader(b []byte) (Header, error) {
 		MessageType: binary.BigEndian.Uint32(b[16:20]),
 		Flags:       binary.BigEndian.Uint32(b[20:24]),
 		PayloadLen:  binary.BigEndian.Uint64(b[24:32]),
-	}, nil
+	}
+	logs.Debugf("frame.DecodeHeader ok message_id=%d message_type=%d", h.MessageID, h.MessageType)
+	return h, nil
 }

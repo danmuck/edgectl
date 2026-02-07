@@ -29,11 +29,11 @@ const (
 
 var (
 	// MODE keeps compatibility with the previous threshold API.
-	MODE = WARN
+	MODE = DIAGNOSTICS
 	// TRACE enables file:line prefix in String/Print helpers.
-	TRACE = false
+	TRACE = true
 	// LOGGER_enable_timestamp enables timestamp prefix in String/Print helpers.
-	LOGGER_enable_timestamp = false
+	LOGGER_enable_timestamp = true
 )
 
 // Config controls smplog and zerolog behavior.
@@ -234,6 +234,9 @@ func applyConsoleFormatting(console *ConsoleWriter, cfg Config) {
 	}
 
 	console.FormatTimestamp = func(i interface{}) string {
+		if i == nil {
+			return ""
+		}
 		return colorize(cfg.Colors.Timestamp, fmt.Sprint(i), cfg.NoColor)
 	}
 	console.FormatLevel = func(i interface{}) string {

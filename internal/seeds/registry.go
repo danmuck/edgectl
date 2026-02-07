@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	logs "github.com/danmuck/smplog"
 )
 
 var (
@@ -20,49 +22,61 @@ type Registry struct {
 
 // NewRegistry creates an empty seed registry.
 func NewRegistry() *Registry {
+	logs.Debug("seeds.NewRegistry")
 	return &Registry{items: make(map[string]Seed)}
 }
 
 // ValidateMetadata checks required metadata fields and id format.
 func ValidateMetadata(meta SeedMetadata) error {
+	logs.Debugf("seeds.ValidateMetadata id=%q", meta.ID)
 	id := strings.TrimSpace(meta.ID)
 	name := strings.TrimSpace(meta.Name)
 	desc := strings.TrimSpace(meta.Description)
 	if id == "" || name == "" || desc == "" {
+		logs.Errf("seeds.ValidateMetadata invalid-empty id=%q", meta.ID)
 		return fmt.Errorf("%w: id, name, and description are required", ErrInvalidMetadata)
 	}
 	if !isValidID(id) {
+		logs.Errf("seeds.ValidateMetadata invalid-id id=%q", id)
 		return fmt.Errorf("%w: invalid id format %q", ErrInvalidMetadata, id)
 	}
+	logs.Debugf("seeds.ValidateMetadata ok id=%q", id)
 	return nil
 }
 
 // Register adds a seed to the registry.
 func (r *Registry) Register(seed Seed) error {
+	logs.Debugf("seeds.Register start")
 	if seed == nil {
+		logs.Err("seeds.Register nil seed")
 		return ErrSeedNil
 	}
 
 	meta := seed.Metadata()
 	if err := ValidateMetadata(meta); err != nil {
+		logs.Errf("seeds.Register validate failed id=%q err=%v", meta.ID, err)
 		return err
 	}
 
 	if _, ok := r.items[meta.ID]; ok {
+		logs.Warnf("seeds.Register duplicate id=%q", meta.ID)
 		return ErrSeedExists
 	}
 	r.items[meta.ID] = seed
+	logs.Infof("seeds.Register ok id=%q", meta.ID)
 	return nil
 }
 
 // Resolve returns a seed by id.
 func (r *Registry) Resolve(id string) (Seed, bool) {
 	seed, ok := r.items[id]
+	logs.Debugf("seeds.Resolve id=%q found=%v", id, ok)
 	return seed, ok
 }
 
 // ListMetadata returns deterministic metadata ordering by id.
 func (r *Registry) ListMetadata() []SeedMetadata {
+	logs.Debugf("seeds.ListMetadata count=%d", len(r.items))
 	list := make([]SeedMetadata, 0, len(r.items))
 	for _, seed := range r.items {
 		list = append(list, seed.Metadata())
@@ -70,11 +84,14 @@ func (r *Registry) ListMetadata() []SeedMetadata {
 	sort.Slice(list, func(i, j int) bool {
 		return list[i].ID < list[j].ID
 	})
+	logs.Debugf("seeds.ListMetadata sorted_count=%d", len(list))
 	return list
 }
 
 func isValidID(id string) bool {
+	logs.Debugf("seeds.isValidID id=%q", id)
 	if id == "" {
+		logs.Debug("seeds.isValidID empty id")
 		return false
 	}
 	lastSep := false
@@ -84,17 +101,21 @@ func isValidID(id string) bool {
 		isDigit := c >= '0' && c <= '9'
 		isSep := c == '.' || c == '-' || c == '_'
 		if !(isLower || isDigit || isSep) {
+			logs.Debugf("seeds.isValidID invalid-char id=%q char=%q", id, c)
 			return false
 		}
 		if i == 0 || i == len(id)-1 {
 			if isSep {
+				logs.Debugf("seeds.isValidID edge-separator id=%q", id)
 				return false
 			}
 		}
 		if isSep && lastSep {
+			logs.Debugf("seeds.isValidID repeated-separator id=%q", id)
 			return false
 		}
 		lastSep = isSep
 	}
+	logs.Debugf("seeds.isValidID ok id=%q", id)
 	return true
 }

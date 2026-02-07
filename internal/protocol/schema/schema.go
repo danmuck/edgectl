@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/danmuck/edgectl/internal/protocol/tlv"
+	logs "github.com/danmuck/smplog"
 )
 
 // Message type IDs from tlv contract.
@@ -113,18 +114,33 @@ var requirements = map[uint32][]Requirement{
 // Validate enforces required fields and required field types for a message type.
 // Unknown fields are ignored by design.
 func Validate(messageType uint32, fields []tlv.Field) error {
+	logs.Debugf("schema.Validate message_type=%d fields=%d", messageType, len(fields))
 	reqs, ok := requirements[messageType]
 	if !ok {
+		logs.Errf("schema.Validate unknown message_type=%d", messageType)
 		return ValidationError{MessageType: messageType, Reason: "unknown message_type"}
 	}
 	for _, req := range reqs {
 		f, found := tlv.GetField(fields, req.ID)
 		if !found {
+			logs.Errf(
+				"schema.Validate missing field message_type=%d field_id=%d",
+				messageType,
+				req.ID,
+			)
 			return ValidationError{MessageType: messageType, FieldID: req.ID, Reason: "missing required field"}
 		}
 		if f.Type != req.Type {
+			logs.Errf(
+				"schema.Validate type mismatch message_type=%d field_id=%d got=%d want=%d",
+				messageType,
+				req.ID,
+				f.Type,
+				req.Type,
+			)
 			return ValidationError{MessageType: messageType, FieldID: req.ID, Reason: "type mismatch"}
 		}
 	}
+	logs.Infof("schema.Validate ok message_type=%d", messageType)
 	return nil
 }

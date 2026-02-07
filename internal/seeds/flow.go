@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	logs "github.com/danmuck/smplog"
 )
 
 var ErrUnknownAction = errors.New("unknown seed action")
@@ -14,10 +16,12 @@ type FlowSeed struct{}
 
 // NewFlowSeed creates the deterministic flow seed.
 func NewFlowSeed() FlowSeed {
+	logs.Debug("seeds.NewFlowSeed")
 	return FlowSeed{}
 }
 
 func (s FlowSeed) Metadata() SeedMetadata {
+	logs.Debug("seeds.FlowSeed.Metadata")
 	return SeedMetadata{
 		ID:          "seed.flow",
 		Name:        "Flow",
@@ -26,8 +30,10 @@ func (s FlowSeed) Metadata() SeedMetadata {
 }
 
 func (s FlowSeed) Execute(action string, args map[string]string) (SeedResult, error) {
+	logs.Debugf("seeds.FlowSeed.Execute action=%q args=%d", action, len(args))
 	switch action {
 	case "status":
+		logs.Infof("seeds.FlowSeed.Execute status")
 		return SeedResult{
 			Status:   "ok",
 			Stdout:   []byte("flow status: ok\n"),
@@ -35,6 +41,7 @@ func (s FlowSeed) Execute(action string, args map[string]string) (SeedResult, er
 			ExitCode: 0,
 		}, nil
 	case "echo":
+		logs.Infof("seeds.FlowSeed.Execute echo")
 		return SeedResult{
 			Status:   "ok",
 			Stdout:   []byte(renderArgs(args)),
@@ -43,8 +50,10 @@ func (s FlowSeed) Execute(action string, args map[string]string) (SeedResult, er
 		}, nil
 	case "step":
 		name := strings.TrimSpace(args["name"])
+		logs.Infof("seeds.FlowSeed.Execute step name=%q", name)
 		msg, code := deterministicStep(name)
 		if code != 0 {
+			logs.Warnf("seeds.FlowSeed.Execute step failed name=%q code=%d", name, code)
 			return SeedResult{
 				Status:   "error",
 				Stdout:   nil,
@@ -52,6 +61,7 @@ func (s FlowSeed) Execute(action string, args map[string]string) (SeedResult, er
 				ExitCode: int32(code),
 			}, ErrUnknownAction
 		}
+		logs.Infof("seeds.FlowSeed.Execute step ok name=%q", name)
 		return SeedResult{
 			Status:   "ok",
 			Stdout:   []byte(msg + "\n"),
@@ -60,6 +70,7 @@ func (s FlowSeed) Execute(action string, args map[string]string) (SeedResult, er
 		}, nil
 	default:
 		errMsg := fmt.Sprintf("unknown action: %s", action)
+		logs.Warnf("seeds.FlowSeed.Execute unknown action=%q", action)
 		return SeedResult{
 			Status:   "error",
 			Stdout:   nil,
@@ -70,6 +81,7 @@ func (s FlowSeed) Execute(action string, args map[string]string) (SeedResult, er
 }
 
 func renderArgs(args map[string]string) string {
+	logs.Debugf("seeds.renderArgs args=%d", len(args))
 	if len(args) == 0 {
 		return "flow echo: {}\n"
 	}
@@ -86,6 +98,7 @@ func renderArgs(args map[string]string) string {
 }
 
 func deterministicStep(name string) (string, int) {
+	logs.Debugf("seeds.deterministicStep name=%q", name)
 	switch name {
 	case "init":
 		return "flow step: init -> ready", 0

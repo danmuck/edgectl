@@ -145,10 +145,10 @@ Status: `Done`
 ### Verify smplog interface is clean, and is able to run zerolog naked
 
 - [ ] No bugs in smplog
-- [ ] Add smplog output throughout all tests
-- [ ] Add smplog output to describe actions and state change for all functions
-- [ ] Everything happening should be logged via smplog
-- [ ] Use them like colors, rather than heuristical titles for nice output
+- [x] Add smplog output throughout all tests
+- [x] Add smplog output to describe actions and state change for all functions
+- [x] Everything happening should be logged via smplog
+- [x] Use them like colors, rather than heuristical titles for nice output
 
 ---
 

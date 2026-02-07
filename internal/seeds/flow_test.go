@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"errors"
 	"testing"
+
+	"github.com/danmuck/edgectl/internal/testutil/testlog"
 )
 
 func TestFlowSeedMetadata(t *testing.T) {
+	testlog.Start(t)
 	seed := NewFlowSeed()
 	meta := seed.Metadata()
 	if meta.ID != "seed.flow" {
@@ -18,6 +21,7 @@ func TestFlowSeedMetadata(t *testing.T) {
 }
 
 func TestFlowSeedStatusDeterministic(t *testing.T) {
+	testlog.Start(t)
 	seed := NewFlowSeed()
 	res, err := seed.Execute("status", nil)
 	if err != nil {
@@ -32,6 +36,7 @@ func TestFlowSeedStatusDeterministic(t *testing.T) {
 }
 
 func TestFlowSeedEchoArgOrderIndependent(t *testing.T) {
+	testlog.Start(t)
 	seed := NewFlowSeed()
 	resA, err := seed.Execute("echo", map[string]string{"b": "2", "a": "1"})
 	if err != nil {
@@ -50,6 +55,7 @@ func TestFlowSeedEchoArgOrderIndependent(t *testing.T) {
 }
 
 func TestFlowSeedStepDeterministic(t *testing.T) {
+	testlog.Start(t)
 	seed := NewFlowSeed()
 	res, err := seed.Execute("step", map[string]string{"name": "plan"})
 	if err != nil {
@@ -64,6 +70,7 @@ func TestFlowSeedStepDeterministic(t *testing.T) {
 }
 
 func TestFlowSeedStepUnknownDeterministicFailure(t *testing.T) {
+	testlog.Start(t)
 	seed := NewFlowSeed()
 	res, err := seed.Execute("step", map[string]string{"name": "unknown"})
 	if !errors.Is(err, ErrUnknownAction) {
@@ -78,6 +85,7 @@ func TestFlowSeedStepUnknownDeterministicFailure(t *testing.T) {
 }
 
 func TestFlowSeedUnknownActionDeterministicFailure(t *testing.T) {
+	testlog.Start(t)
 	seed := NewFlowSeed()
 	res, err := seed.Execute("nope", nil)
 	if !errors.Is(err, ErrUnknownAction) {
@@ -92,6 +100,7 @@ func TestFlowSeedUnknownActionDeterministicFailure(t *testing.T) {
 }
 
 func TestFlowSeedEchoEmptyArgsDeterministic(t *testing.T) {
+	testlog.Start(t)
 	seed := NewFlowSeed()
 	res, err := seed.Execute("echo", nil)
 	if err != nil {
@@ -103,6 +112,7 @@ func TestFlowSeedEchoEmptyArgsDeterministic(t *testing.T) {
 }
 
 func TestFlowSeedLocalRegistryInvoke(t *testing.T) {
+	testlog.Start(t)
 	r := NewRegistry()
 	seed := NewFlowSeed()
 	if err := r.Register(seed); err != nil {
