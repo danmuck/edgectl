@@ -67,11 +67,14 @@ type GhostAdmin interface {
 	RecentEvents(limit int) ([]ghost.EventEnv, error)
 	Verification(limit int) ([]ghost.VerificationRecord, error)
 	SpawnGhost(req ghost.SpawnGhostRequest) (ghost.SpawnGhostResult, error)
+	Close() error
 }
 
 // RemoteGhostAdmin is a TCP client for ghostctl admin control endpoint.
 type RemoteGhostAdmin struct {
 	addr string
+	conn net.Conn
+	r    *bufio.Reader
 }
 
 // GhostTarget maps a friendly name to a concrete Ghost admin implementation.
@@ -197,6 +200,7 @@ func (a *App) Run() error {
 			if err := a.saveConfigs(); err != nil {
 				logs.Warnf("save on exit failed: %v", err)
 			}
+			a.closeTargets()
 			logs.Infof("client-tm exiting")
 			return nil
 		}
@@ -398,8 +402,10 @@ func (a *App) removeGhostTarget() error {
 	}
 	idx := choice - 1
 	name := a.targets[idx].Name
+	admin := a.targets[idx].Admin
 	a.targets = append(a.targets[:idx], a.targets[idx+1:]...)
 	a.ghostCfg.Targets = append(a.ghostCfg.Targets[:idx], a.ghostCfg.Targets[idx+1:]...)
+	_ = admin.Close()
 	if len(a.targets) == 0 {
 		a.activeTarget = -1
 	} else if a.activeTarget >= len(a.targets) {
@@ -822,27 +828,27 @@ func (c *RemoteGhostAdmin) SpawnGhost(req ghost.SpawnGhostRequest) (ghost.SpawnG
 
 // call sends one admin request to ghostctl and decodes the response payload.
 func (c *RemoteGhostAdmin) call(req controlRequest, out any) error {
-	conn, err := net.DialTimeout("tcp", c.addr, 3*time.Second)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
-	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+	if err := c.ensureConn(); err != nil {
 		return err
 	}
 	payload, err := json.Marshal(req)
 	if err != nil {
 		return err
 	}
-	payload = append(payload, '\n')
-	if _, err := conn.Write(payload); err != nil {
+	if err := c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		return err
 	}
-
-	reader := bufio.NewReader(conn)
-	line, err := reader.ReadBytes('\n')
+	payload = append(payload, '\n')
+	if _, err := c.conn.Write(payload); err != nil {
+		c.resetConn()
+		return err
+	}
+	if err := c.conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return err
+	}
+	line, err := c.r.ReadBytes('\n')
 	if err != nil {
+		c.resetConn()
 		return err
 	}
 	var resp controlResponse
@@ -859,6 +865,44 @@ func (c *RemoteGhostAdmin) call(req controlRequest, out any) error {
 		return nil
 	}
 	return json.Unmarshal(resp.Data, out)
+}
+
+func (c *RemoteGhostAdmin) ensureConn() error {
+	if c.conn != nil {
+		return nil
+	}
+	conn, err := net.DialTimeout("tcp", c.addr, 3*time.Second)
+	if err != nil {
+		return err
+	}
+	c.conn = conn
+	c.r = bufio.NewReader(conn)
+	return nil
+}
+
+func (c *RemoteGhostAdmin) resetConn() {
+	if c.conn != nil {
+		_ = c.conn.Close()
+	}
+	c.conn = nil
+	c.r = nil
+}
+
+// Close terminates the persistent admin connection for this target.
+func (c *RemoteGhostAdmin) Close() error {
+	if c.conn == nil {
+		return nil
+	}
+	err := c.conn.Close()
+	c.conn = nil
+	c.r = nil
+	return err
+}
+
+func (a *App) closeTargets() {
+	for _, t := range a.targets {
+		_ = t.Admin.Close()
+	}
 }
 
 func parseArgsCSV(in string) map[string]string {

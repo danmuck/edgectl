@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"strings"
-	"time"
 
 	"github.com/danmuck/edgectl/internal/protocol/schema"
 	"github.com/danmuck/edgectl/internal/seeds"
@@ -195,7 +194,6 @@ func (s *Service) handleAdminConn(conn net.Conn) {
 
 	reader := bufio.NewReader(conn)
 	for {
-		_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 		line, err := reader.ReadBytes('\n')
 		if err != nil {
 			if err != io.EOF {

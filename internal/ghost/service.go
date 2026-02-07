@@ -56,7 +56,7 @@ func DefaultServiceConfig() ServiceConfig {
 		GhostID:           "ghost.local",
 		BuiltinSeedIDs:    []string{"seed.flow"},
 		HeartbeatInterval: 5 * time.Second,
-		AdminListenAddr:   "127.0.0.1:7010",
+		AdminListenAddr:   "",
 		EnableClusterHost: true,
 		Mirage: MirageSessionConfig{
 			Policy:        MiragePolicyHeadless,
