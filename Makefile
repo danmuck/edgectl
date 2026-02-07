@@ -20,25 +20,25 @@ clear:
 ### TEST
 test:
 	go clean -testcache
-	go test -v ./...
+	go run ./cmd/testctl -mode run -pkg ./...
 
 test-ghost:
-	go test -v ./internal/ghost
+	go run ./cmd/testctl -mode run -pkg ./internal/ghost
 
 test-protocol:
-	go test -v ./internal/protocol/...
+	go run ./cmd/testctl -mode run -pkg ./internal/protocol/...
 
 test-seeds:
-	go test -v ./internal/seeds
+	go run ./cmd/testctl -mode run -pkg ./internal/seeds
 
 test-seeds-live:
-	GHOST_TEST_LIVE_MONGOD=1 go test -v ./internal/seeds -run 'TestMongodSeedVersionCommandLive'
+	GHOST_TEST_LIVE_MONGOD=1 go run ./cmd/testctl -mode run -pkg ./internal/seeds -run 'TestMongodSeedVersionCommandLive'
 
 test-one:
-	go test -v $(PKG) -run '$(TEST)'
+	go run ./cmd/testctl -mode run -pkg '$(PKG)' -run '$(TEST)'
 
 test-list:
-	go test $(PKG) -list .
+	go run ./cmd/testctl -mode list -pkg '$(PKG)'
 
 ###  RUN
 run-mirage:
