@@ -25,6 +25,9 @@ run-mirage:
 run-ghost:
 	go run ./cmd/ghostctl
 
+run-pi:
+	go run ./cmd/ghostctl -config cmd/ghostctl/pi.config.toml
+
 run-client:
 	@printf "Run client for ghost or mirage? [g/m] (default g): "; \
 	read mode; \
