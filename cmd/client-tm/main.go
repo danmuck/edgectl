@@ -109,6 +109,7 @@ type MirageAdmin interface {
 	ListIntents() ([]string, error)
 	RecentReports(limit int) ([]session.Report, error)
 	SpawnLocalGhost(req mirage.SpawnGhostRequest) (mirage.SpawnGhostResult, error)
+	AttachGhostAdmin(addr string) (MirageAttachGhostResponse, error)
 	RegisteredGhosts() ([]mirage.RegisteredGhost, error)
 	Close() error
 }
@@ -160,12 +161,18 @@ type MirageIssueRequest struct {
 	CommandPlan []MirageIssueCommand `json:"command_plan"`
 }
 
+type MirageAttachGhostResponse struct {
+	GhostID   string `json:"ghost_id"`
+	AdminAddr string `json:"admin_addr"`
+}
+
 type mirageControlRequest struct {
-	Action   string                   `json:"action"`
-	Limit    int                      `json:"limit,omitempty"`
-	IntentID string                   `json:"intent_id,omitempty"`
-	Issue    MirageIssueRequest       `json:"issue,omitempty"`
-	Spawn    mirage.SpawnGhostRequest `json:"spawn,omitempty"`
+	Action         string                   `json:"action"`
+	Limit          int                      `json:"limit,omitempty"`
+	IntentID       string                   `json:"intent_id,omitempty"`
+	Issue          MirageIssueRequest       `json:"issue,omitempty"`
+	Spawn          mirage.SpawnGhostRequest `json:"spawn,omitempty"`
+	GhostAdminAddr string                   `json:"ghost_admin_addr,omitempty"`
 }
 
 type mirageControlResponse struct {
@@ -233,7 +240,7 @@ func NewApp(ghostCfgPath string, mirageCfgPath string, mode string) *App {
 		mirageTargets: make([]MirageTarget, 0),
 		activeMirage:  -1,
 		clearScreen:   false,
-		launchMode:    strings.ToLower(strings.TrimSpace(mode)),
+		launchMode:    normalizeClientMode(mode),
 	}
 }
 
@@ -656,8 +663,9 @@ func (a *App) runMirageAdminConsole() error {
 		fmt.Println("  6) Snapshot intent")
 		fmt.Println("  7) Show recent reports")
 		fmt.Println("  8) Spawn local ghost")
-		fmt.Println("  9) Back")
-		choice, err := a.promptInt("Choose", 1, 9, true, true)
+		fmt.Println("  9) Attach remote ghost admin")
+		fmt.Println(" 10) Back")
+		choice, err := a.promptInt("Choose", 1, 10, true, true)
 		if err != nil {
 			if errors.Is(err, ErrNavigateBack) {
 				return nil
@@ -699,6 +707,10 @@ func (a *App) runMirageAdminConsole() error {
 				logs.Errf("spawn local ghost failed: %v", err)
 			}
 		case 9:
+			if err := a.attachGhostToMirage(target); err != nil {
+				logs.Errf("attach ghost admin failed: %v", err)
+			}
+		case 10:
 			return nil
 		}
 	}
@@ -1313,6 +1325,29 @@ func (a *App) spawnMirageLocalGhost(target MirageTarget) error {
 	return nil
 }
 
+func (a *App) attachGhostToMirage(target MirageTarget) error {
+	adminAddr, err := a.promptLine("remote ghost admin addr (host:port)")
+	if err != nil {
+		return err
+	}
+	addr := strings.TrimSpace(adminAddr)
+	if addr == "" {
+		return errors.New("remote ghost admin addr required")
+	}
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		return fmt.Errorf("invalid ghost admin addr %q", addr)
+	}
+	out, err := target.Admin.AttachGhostAdmin(addr)
+	if err != nil {
+		return err
+	}
+	fmt.Println()
+	fmt.Println("Attach Ghost Admin Result")
+	fmt.Printf("  ghost_id:   %s\n", out.GhostID)
+	fmt.Printf("  admin_addr: %s\n", out.AdminAddr)
+	return nil
+}
+
 func printMirageReport(header string, report session.Report) {
 	ts := ""
 	if report.TimestampMS > 0 {
@@ -1369,10 +1404,10 @@ func (a *App) promptInt(label string, min int, max int, allowBack bool, allowExi
 	for {
 		rangePrompt := fmt.Sprintf("%s [%d-%d", label, min, max)
 		if allowBack {
-			rangePrompt += "|back"
+			rangePrompt += "|back|b"
 		}
 		if allowExit {
-			rangePrompt += "|exit"
+			rangePrompt += "|exit|e"
 		}
 		rangePrompt += "]"
 		line, err := a.promptLine(rangePrompt)
@@ -1380,10 +1415,10 @@ func (a *App) promptInt(label string, min int, max int, allowBack bool, allowExi
 			return 0, err
 		}
 		trimmed := strings.ToLower(strings.TrimSpace(line))
-		if allowBack && trimmed == "back" {
+		if allowBack && (trimmed == "back" || trimmed == "b") {
 			return 0, ErrNavigateBack
 		}
-		if allowExit && trimmed == "exit" {
+		if allowExit && (trimmed == "exit" || trimmed == "e") {
 			return 0, ErrNavigateExit
 		}
 		v, err := strconv.Atoi(trimmed)
@@ -1629,6 +1664,18 @@ func (c *RemoteMirageAdmin) SpawnLocalGhost(req mirage.SpawnGhostRequest) (mirag
 	return out, nil
 }
 
+func (c *RemoteMirageAdmin) AttachGhostAdmin(addr string) (MirageAttachGhostResponse, error) {
+	var out MirageAttachGhostResponse
+	req := mirageControlRequest{
+		Action:         "attach_ghost_admin",
+		GhostAdminAddr: strings.TrimSpace(addr),
+	}
+	if err := c.call(req, &out); err != nil {
+		return MirageAttachGhostResponse{}, err
+	}
+	return out, nil
+}
+
 func (c *RemoteMirageAdmin) RegisteredGhosts() ([]mirage.RegisteredGhost, error) {
 	var out []mirage.RegisteredGhost
 	if err := c.call(mirageControlRequest{Action: "registered_ghosts"}, &out); err != nil {
@@ -1861,6 +1908,17 @@ func normalizeTargetAddr(rootAddr string, requested string) (string, error) {
 		return "", fmt.Errorf("invalid port %q", req)
 	}
 	return net.JoinHostPort(rootHost, req), nil
+}
+
+func normalizeClientMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "g", "ghost":
+		return "ghost"
+	case "m", "mirage":
+		return "mirage"
+	default:
+		return strings.ToLower(strings.TrimSpace(mode))
+	}
 }
 
 func (a *App) targetExists(name string, addr string) bool {

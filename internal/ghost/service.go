@@ -15,8 +15,8 @@ import (
 
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/seeds"
-	seedfs "github.com/danmuck/edgectl/internal/seeds/fs"
 	seedflow "github.com/danmuck/edgectl/internal/seeds/flow"
+	seedfs "github.com/danmuck/edgectl/internal/seeds/fs"
 	seedkv "github.com/danmuck/edgectl/internal/seeds/kv"
 	seedmongod "github.com/danmuck/edgectl/internal/seeds/mongod"
 	"github.com/danmuck/edgectl/internal/tools"
@@ -268,7 +268,7 @@ func (s *Service) runMirageSessionLoop(ctx context.Context) error {
 		attempt = 0
 		connectedOnce = true
 		s.setMirageSession(sessionConn)
-		logs.Infof(
+		logs.Warnf(
 			"ghost.Service.runMirageSessionLoop connected policy=%q address=%q",
 			s.cfg.Mirage.Policy,
 			s.cfg.Mirage.Address,

@@ -190,10 +190,10 @@ func (s *Service) handleAdminConn(conn net.Conn) {
 	defer conn.Close()
 	remote := conn.RemoteAddr().String()
 	active := s.adminClientCount.Add(1)
-	logs.Infof("ghost.admin client connected remote=%q active_clients=%d", remote, active)
+	logs.Warnf("ghost.admin client connected remote=%q active_clients=%d", remote, active)
 	defer func() {
 		remaining := s.adminClientCount.Add(-1)
-		logs.Infof("ghost.admin client disconnected remote=%q active_clients=%d", remote, remaining)
+		logs.Warnf("ghost.admin client disconnected remote=%q active_clients=%d", remote, remaining)
 	}()
 
 	reader := bufio.NewReader(conn)

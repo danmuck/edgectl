@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -92,6 +93,9 @@ type Service struct {
 
 	controlClient *GhostControlClient
 	buildlogStore *GhostSeedBuildlogStore
+
+	adminGhostMu    sync.RWMutex
+	adminGhostAddrs map[string]string
 }
 
 // Mirage service constructor using default configuration.
@@ -106,9 +110,10 @@ func NewServiceWithConfig(cfg ServiceConfig) *Service {
 	}
 	cfg.Session = cfg.Session.WithDefaults()
 	svc := &Service{
-		cfg:    cfg,
-		server: NewServer(),
-		conns:  make(map[net.Conn]struct{}),
+		cfg:             cfg,
+		server:          NewServer(),
+		conns:           make(map[net.Conn]struct{}),
+		adminGhostAddrs: make(map[string]string),
 	}
 	localAdminAddr := strings.TrimSpace(cfg.LocalGhostAdminAddr)
 	if localAdminAddr == "" {
@@ -117,7 +122,11 @@ func NewServiceWithConfig(cfg ServiceConfig) *Service {
 	if localAdminAddr != "" {
 		svc.controlClient = NewGhostControlClient(localAdminAddr)
 		svc.server.SetGhostSpawner(NewGhostAdminSpawner(localAdminAddr))
-		svc.server.RegisterExecutor(strings.TrimSpace(cfg.LocalGhostID), NewGhostAdminCommandExecutor(svc.controlClient))
+		localGhostID := strings.TrimSpace(cfg.LocalGhostID)
+		if localGhostID != "" {
+			svc.server.RegisterExecutor(localGhostID, NewGhostAdminCommandExecutor(svc.controlClient))
+			svc.bindGhostAdmin(localGhostID, localAdminAddr)
+		}
 	}
 	if cfg.BuildlogPersistEnabled && svc.controlClient != nil {
 		svc.buildlogStore = NewGhostSeedBuildlogStore(svc.controlClient, strings.TrimSpace(cfg.BuildlogSeedSelector))
@@ -227,6 +236,72 @@ func (s *Service) Serve(ctx context.Context, ln net.Listener) error {
 // Mirage snapshot of observed Ghost registration state.
 func (s *Service) SnapshotRegisteredGhosts() []RegisteredGhost {
 	return s.server.SnapshotRegisteredGhosts()
+}
+
+// SnapshotConnectedGhosts merges session-registered ghosts with admin-bound ghost endpoints.
+// Admin-bound entries are actively probed via status on each call for connection visibility.
+func (s *Service) SnapshotConnectedGhosts() []RegisteredGhost {
+	base := s.server.SnapshotRegisteredGhosts()
+	byID := make(map[string]RegisteredGhost, len(base))
+	for i := range base {
+		g := base[i]
+		byID[g.GhostID] = g
+	}
+	bound := s.snapshotGhostAdmins()
+	now := time.Now()
+	for ghostID, adminAddr := range bound {
+		client := NewGhostControlClient(adminAddr)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		status, err := client.Status(ctx)
+		cancel()
+		resolvedID := strings.TrimSpace(status.GhostID)
+		if resolvedID != "" && resolvedID != ghostID {
+			s.bindGhostAdmin(resolvedID, adminAddr)
+			ghostID = resolvedID
+		}
+		entry, ok := byID[ghostID]
+		if !ok {
+			entry = RegisteredGhost{
+				GhostID:      ghostID,
+				RegisteredAt: now,
+			}
+		}
+		entry.RemoteAddr = adminAddr
+		entry.Connected = err == nil
+		if entry.RegisteredAt.IsZero() {
+			entry.RegisteredAt = now
+		}
+		byID[ghostID] = entry
+	}
+	out := make([]RegisteredGhost, 0, len(byID))
+	for _, g := range byID {
+		out = append(out, g)
+	}
+	sort.Slice(out, func(i int, j int) bool {
+		return out[i].GhostID < out[j].GhostID
+	})
+	return out
+}
+
+func (s *Service) bindGhostAdmin(ghostID string, adminAddr string) {
+	id := strings.TrimSpace(ghostID)
+	addr := strings.TrimSpace(adminAddr)
+	if id == "" || addr == "" {
+		return
+	}
+	s.adminGhostMu.Lock()
+	defer s.adminGhostMu.Unlock()
+	s.adminGhostAddrs[id] = addr
+}
+
+func (s *Service) snapshotGhostAdmins() map[string]string {
+	s.adminGhostMu.RLock()
+	defer s.adminGhostMu.RUnlock()
+	out := make(map[string]string, len(s.adminGhostAddrs))
+	for ghostID, adminAddr := range s.adminGhostAddrs {
+		out[ghostID] = adminAddr
+	}
+	return out
 }
 
 // Mirage connection handler for registration and event ingestion.

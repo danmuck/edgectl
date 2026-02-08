@@ -15,6 +15,7 @@ import (
 const (
 	spawnGhostAction = "spawn_ghost"
 	executeAction    = "execute"
+	statusAction     = "status"
 )
 
 type ghostControlRequest struct {
@@ -49,6 +50,13 @@ type ghostEvent struct {
 
 type ghostExecuteResponse struct {
 	Event ghostEvent `json:"event"`
+}
+
+type ghostLifecycleStatus struct {
+	// GhostID accepts snake_case payloads if they are introduced later.
+	GhostID string `json:"ghost_id"`
+	// GhostIDLegacy accepts the current Ghost admin status shape from untagged Go structs.
+	GhostIDLegacy string `json:"GhostID"`
 }
 
 // GhostControlClient is a TCP JSON control client for one root/local ghost admin endpoint.
@@ -95,6 +103,18 @@ func (c *GhostControlClient) ExecuteAdminCommand(ctx context.Context, command gh
 		Outcome:     strings.TrimSpace(out.Event.Outcome),
 		TimestampMS: out.Event.TimestampMS,
 	}, nil
+}
+
+// Status reads ghost identity/state from the ghost admin endpoint.
+func (c *GhostControlClient) Status(ctx context.Context) (ghostLifecycleStatus, error) {
+	var out ghostLifecycleStatus
+	if err := c.call(ctx, ghostControlRequest{Action: statusAction}, &out); err != nil {
+		return ghostLifecycleStatus{}, err
+	}
+	if strings.TrimSpace(out.GhostID) == "" {
+		out.GhostID = strings.TrimSpace(out.GhostIDLegacy)
+	}
+	return out, nil
 }
 
 func (c *GhostControlClient) call(ctx context.Context, req ghostControlRequest, out any) error {

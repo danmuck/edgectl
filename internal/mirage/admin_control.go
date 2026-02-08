@@ -44,12 +44,19 @@ type AdminReconcileAllResponse struct {
 	Reports []session.Report `json:"reports"`
 }
 
+// AdminAttachGhostResponse captures one remote ghost admin binding.
+type AdminAttachGhostResponse struct {
+	GhostID   string `json:"ghost_id"`
+	AdminAddr string `json:"admin_addr"`
+}
+
 type adminControlRequest struct {
-	Action   string            `json:"action"`
-	Limit    int               `json:"limit,omitempty"`
-	IntentID string            `json:"intent_id,omitempty"`
-	Issue    AdminIssueRequest `json:"issue,omitempty"`
-	Spawn    SpawnGhostRequest `json:"spawn,omitempty"`
+	Action         string            `json:"action"`
+	Limit          int               `json:"limit,omitempty"`
+	IntentID       string            `json:"intent_id,omitempty"`
+	Issue          AdminIssueRequest `json:"issue,omitempty"`
+	Spawn          SpawnGhostRequest `json:"spawn,omitempty"`
+	GhostAdminAddr string            `json:"ghost_admin_addr,omitempty"`
 }
 
 type adminControlResponse struct {
@@ -175,7 +182,38 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 	case "recent_reports":
 		return adminControlResponse{OK: true, Data: s.server.RecentReports(req.Limit)}
 	case "registered_ghosts":
-		return adminControlResponse{OK: true, Data: s.server.SnapshotRegisteredGhosts()}
+		return adminControlResponse{OK: true, Data: s.SnapshotConnectedGhosts()}
+	case "attach_ghost_admin":
+		addr := strings.TrimSpace(req.GhostAdminAddr)
+		if addr == "" {
+			return adminControlResponse{OK: false, Error: "ghost_admin_addr required"}
+		}
+		if _, _, err := net.SplitHostPort(addr); err != nil {
+			return adminControlResponse{OK: false, Error: fmt.Sprintf("invalid ghost_admin_addr: %s", addr)}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		client := NewGhostControlClient(addr)
+		status, err := client.Status(ctx)
+		if err != nil {
+			return adminControlResponse{OK: false, Error: err.Error()}
+		}
+		ghostID := strings.TrimSpace(status.GhostID)
+		if ghostID == "" {
+			return adminControlResponse{OK: false, Error: "ghost status missing ghost_id"}
+		}
+		if err := s.server.RegisterExecutor(ghostID, NewGhostAdminCommandExecutor(client)); err != nil {
+			return adminControlResponse{OK: false, Error: err.Error()}
+		}
+		s.bindGhostAdmin(ghostID, addr)
+		s.persistBuildlog("attach_ghost_admin", map[string]any{
+			"ghost_id":   ghostID,
+			"admin_addr": addr,
+		})
+		return adminControlResponse{OK: true, Data: AdminAttachGhostResponse{
+			GhostID:   ghostID,
+			AdminAddr: addr,
+		}}
 	case "spawn_local_ghost":
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -183,6 +221,7 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 		if err != nil {
 			return adminControlResponse{OK: false, Error: err.Error()}
 		}
+		s.bindGhostAdmin(out.GhostID, out.AdminAddr)
 		s.persistBuildlog("spawn_local_ghost", out)
 		return adminControlResponse{OK: true, Data: out}
 	default:
