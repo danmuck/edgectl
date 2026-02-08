@@ -18,9 +18,13 @@ Status: `In Progress`
 - [x] Introduce Mirage server boundary (`internal/mirage/server.go`) for lifecycle + orchestration command boundary ownership
 - [x] Add Mirage admin control boundary (`internal/mirage/admin_control.go`) for issue/reconcile/report/runtime actions
 - [x] Wire Mirage runtime reconcile path through admin controls (`reconcile_intent`, `reconcile_all`, snapshots, report history)
-- [x] Require `mirage.toml` to declare `ghost_config_path` for admin controller wiring of local Ghost identity/admin endpoint
+- [x] Define Mirage-owned local Ghost runtime config in `mirage.toml` (`local_ghost_id`, `local_ghost_admin_addr`, local runtime settings)
+- [x] Run managed local Ghost from `miragectl` in-process with default admin `127.0.0.1:7010` and keep standalone `ghostctl` default on `127.0.0.1:7011`
 - [x] Add temporary persistence seeds: `seed.kv` (in-memory state) and `seed.fs` (file-backed under `local/dir`)
 - [x] Persist Mirage buildlog entries through ghost seed execution path (`seed.fs` default, `seed.kv` optional)
+- [x] Emit connection lifecycle logs as `WARN` for both Mirage and Ghost runtime boundaries
+- [x] Expose admin discovery views for connected ghosts, routing table, and available services
+- [x] Support admin attach flow for existing remote ghost admin endpoints (`attach_ghost_admin`)
 - [x] Update architecture/message-flow diagrams in `docs/architecture/models` for Phase 5 behavior
 
 ### Acceptance Checks

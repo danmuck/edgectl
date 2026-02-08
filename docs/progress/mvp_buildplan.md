@@ -1,6 +1,6 @@
 # MVP Build Plan and Slices (Canonical)
 
-Status: `Phase 4 complete; Phase 5 in planning; Phases 6-9 templated`
+Status: `Phase 4 complete; Phase 5 in implementation; Phases 6-9 templated`
 
 This is the canonical high-level schedule for `mvp_p0.md` through `mvp_p9.md`.
 Use phase files for detailed task execution and acceptance check tracking.
@@ -67,7 +67,9 @@ Use phase files for detailed task execution and acceptance check tracking.
 - [x] Emit `report` to user boundary
 - [x] Enable Mirage local Ghost spin-up path
 - [x] Add Mirage admin control boundary and runtime reconcile actions
-- [x] Wire `mirage.toml` + `ghost.toml` coupling for local Ghost admin controller boot
+- [x] Add Mirage-owned local Ghost runtime config and boot managed local Ghost from `miragectl`
+- [x] Separate default admin ports (`miragectl` managed local ghost `7010`, standalone `ghostctl` `7011`) to avoid bind collisions
+- [x] Add admin discovery/read-model surfaces (`registered_ghosts`, `routing_table`, `available_services`) and remote attach flow (`attach_ghost_admin`)
 - [x] Add temporary persistence seeds (`seed.kv` and `seed.fs`) and route buildlog persistence through seed execution
 
 - [ ] Milestone 6: Boundary transport integration (`mvp_p6.md`)

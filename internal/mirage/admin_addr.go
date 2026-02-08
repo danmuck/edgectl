@@ -45,4 +45,3 @@ func normalizeGhostAdminAddr(rawAddr string) (string, error) {
 	}
 	return net.JoinHostPort(ips[0].String(), port), nil
 }
-

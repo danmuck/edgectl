@@ -24,7 +24,10 @@ session_tls_mutual = true
 session_tls_cert_file = "/etc/mirage/server.crt"
 session_tls_key_file = "/etc/mirage/server.key"
 session_tls_ca_file = "/etc/mirage/ca.crt"
-`
+[[preload_ghost_admins]]
+ghost_id = "ghost.remote.a"
+admin_addr = "localhost:7011"
+	`
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -53,6 +56,15 @@ session_tls_ca_file = "/etc/mirage/ca.crt"
 	}
 	if cfg.Session.SecurityMode != "production" {
 		t.Fatalf("unexpected security mode: %q", cfg.Session.SecurityMode)
+	}
+	if len(cfg.PreloadGhostAdmins) != 1 {
+		t.Fatalf("expected one preload ghost admin, got %d", len(cfg.PreloadGhostAdmins))
+	}
+	if cfg.PreloadGhostAdmins[0].GhostID != "ghost.remote.a" {
+		t.Fatalf("unexpected preload ghost id: %q", cfg.PreloadGhostAdmins[0].GhostID)
+	}
+	if cfg.PreloadGhostAdmins[0].AdminAddr != "localhost:7011" {
+		t.Fatalf("unexpected preload admin addr: %q", cfg.PreloadGhostAdmins[0].AdminAddr)
 	}
 }
 
@@ -132,5 +144,23 @@ local_ghost_project_fetch_on_boot = false
 	}
 	if gCfg.ProjectFetchOnBoot {
 		t.Fatalf("expected managed ghost project fetch disabled")
+	}
+}
+
+func TestLoadServiceConfigPreloadGhostAdminsRequireFields(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte(`
+admin_listen_addr = "127.0.0.1:7020"
+[[preload_ghost_admins]]
+ghost_id = ""
+admin_addr = "127.0.0.1:7012"
+	`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := loadServiceConfig(path)
+	if err == nil {
+		t.Fatalf("expected preload ghost validation error")
 	}
 }

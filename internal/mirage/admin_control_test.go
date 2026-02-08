@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/danmuck/edgectl/internal/protocol/session"
@@ -209,9 +210,17 @@ func TestHandleAdminControlAttachGhostAdmin(t *testing.T) {
 	}()
 
 	svc := NewServiceWithConfig(DefaultServiceConfig())
+	host, port, splitErr := net.SplitHostPort(ln.Addr().String())
+	if splitErr != nil {
+		t.Fatalf("split listen addr: %v", splitErr)
+	}
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	inputAddr := net.JoinHostPort("localhost", port)
 	resp := svc.handleAdminControlRequest(adminControlRequest{
 		Action:         "attach_ghost_admin",
-		GhostAdminAddr: ln.Addr().String(),
+		GhostAdminAddr: inputAddr,
 	})
 	if !resp.OK {
 		t.Fatalf("attach_ghost_admin failed: %+v", resp)
@@ -222,6 +231,9 @@ func TestHandleAdminControlAttachGhostAdmin(t *testing.T) {
 	}
 	if out.GhostID != "ghost.remote.a" {
 		t.Fatalf("unexpected attach response: %+v", out)
+	}
+	if !strings.HasPrefix(out.AdminAddr, "127.0.0.1:") {
+		t.Fatalf("expected normalized localhost addr, got %q", out.AdminAddr)
 	}
 	reports := svc.handleAdminControlRequest(adminControlRequest{Action: "registered_ghosts"})
 	if !reports.OK {
@@ -262,6 +274,75 @@ func TestHandleAdminControlAttachGhostAdmin(t *testing.T) {
 	}
 	if len(serviceList) == 0 || serviceList[0].SeedID == "" {
 		t.Fatalf("unexpected available_services payload: %+v", serviceList)
+	}
+	<-done
+}
+
+func TestServicePreloadGhostAdmins(t *testing.T) {
+	testlog.Start(t)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 2; i++ {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			reader := bufio.NewReader(conn)
+			line, err := reader.ReadBytes('\n')
+			if err != nil {
+				_ = conn.Close()
+				return
+			}
+			var req ghostControlRequest
+			if err := json.Unmarshal(line, &req); err != nil {
+				_ = conn.Close()
+				return
+			}
+			resp := ghostControlResponse{OK: true}
+			switch req.Action {
+			case statusAction:
+				resp.Data = mustJSON(t, map[string]any{
+					"GhostID": "ghost.remote.preload",
+				})
+			case bindMirageAction:
+				// no payload required for this test.
+			default:
+				_ = conn.Close()
+				return
+			}
+			payload, _ := json.Marshal(resp)
+			payload = append(payload, '\n')
+			_, _ = conn.Write(payload)
+			_ = conn.Close()
+		}
+	}()
+
+	cfg := DefaultServiceConfig()
+	cfg.LocalGhostID = ""
+	cfg.LocalGhostAdminAddr = ""
+	_, preloadPort, splitErr := net.SplitHostPort(ln.Addr().String())
+	if splitErr != nil {
+		t.Fatalf("split preload addr: %v", splitErr)
+	}
+	cfg.PreloadGhostAdmins = []GhostAdminTarget{
+		{GhostID: "ghost.remote.preload", AdminAddr: net.JoinHostPort("localhost", preloadPort)},
+	}
+	svc := NewServiceWithConfig(cfg)
+	bound := svc.snapshotGhostAdmins()
+	addr, ok := bound["ghost.remote.preload"]
+	if !ok {
+		t.Fatalf("expected preloaded ghost route, got %+v", bound)
+	}
+	if !strings.HasPrefix(addr, "127.0.0.1:") {
+		t.Fatalf("expected normalized preload addr, got %q", addr)
 	}
 	<-done
 }

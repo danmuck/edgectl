@@ -1974,6 +1974,10 @@ func normalizeTargetAddr(rootAddr string, requested string) (string, error) {
 	if rootErr != nil {
 		rootHost = "127.0.0.1"
 	}
+	rootHost, hostErr := resolveEndpointHost(rootHost)
+	if hostErr != nil {
+		rootHost = "127.0.0.1"
+	}
 	if strings.Contains(req, ":") {
 		host, port, err := net.SplitHostPort(req)
 		if err != nil {
@@ -1981,6 +1985,10 @@ func normalizeTargetAddr(rootAddr string, requested string) (string, error) {
 		}
 		if strings.TrimSpace(host) == "" {
 			host = rootHost
+		}
+		host, err = resolveEndpointHost(host)
+		if err != nil {
+			return "", err
 		}
 		if strings.TrimSpace(port) == "" {
 			return "", fmt.Errorf("invalid address %q", req)
@@ -1991,6 +1999,27 @@ func normalizeTargetAddr(rootAddr string, requested string) (string, error) {
 		return "", fmt.Errorf("invalid port %q", req)
 	}
 	return net.JoinHostPort(rootHost, req), nil
+}
+
+// resolveEndpointHost normalizes localhost and resolvable DNS names to stable IP addresses.
+func resolveEndpointHost(rawHost string) (string, error) {
+	host := strings.TrimSpace(rawHost)
+	if host == "" || strings.EqualFold(host, "localhost") {
+		return "127.0.0.1", nil
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.String(), nil
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil || len(ips) == 0 {
+		return "", fmt.Errorf("resolve host %q: %w", host, err)
+	}
+	for i := range ips {
+		if v4 := ips[i].To4(); v4 != nil {
+			return v4.String(), nil
+		}
+	}
+	return ips[0].String(), nil
 }
 
 func normalizeClientMode(mode string) string {
