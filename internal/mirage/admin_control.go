@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"strings"
 	"time"
 
@@ -194,38 +193,23 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 		if addr == "" {
 			return adminControlResponse{OK: false, Error: "ghost_admin_addr required"}
 		}
-		if _, _, err := net.SplitHostPort(addr); err != nil {
-			return adminControlResponse{OK: false, Error: fmt.Sprintf("invalid ghost_admin_addr: %s", addr)}
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		client := NewGhostControlClient(addr)
-		status, err := client.Status(ctx)
+		out, err := s.attachGhostAdmin("", addr)
 		if err != nil {
 			return adminControlResponse{OK: false, Error: err.Error()}
 		}
-		ghostID := strings.TrimSpace(status.GhostID)
-		if ghostID == "" {
-			return adminControlResponse{OK: false, Error: "ghost status missing ghost_id"}
-		}
-		if err := s.server.RegisterExecutor(ghostID, NewGhostAdminCommandExecutor(client)); err != nil {
-			return adminControlResponse{OK: false, Error: err.Error()}
-		}
-		_ = client.BindMirage(ctx, s.cfg.MirageID)
-		s.bindGhostAdmin(ghostID, addr)
 		s.persistBuildlog("attach_ghost_admin", map[string]any{
-			"ghost_id":   ghostID,
-			"admin_addr": addr,
+			"ghost_id":   out.GhostID,
+			"admin_addr": out.AdminAddr,
 		})
-		return adminControlResponse{OK: true, Data: AdminAttachGhostResponse{
-			GhostID:   ghostID,
-			AdminAddr: addr,
-		}}
+		return adminControlResponse{OK: true, Data: out}
 	case "spawn_local_ghost":
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		out, err := s.server.SpawnLocalGhost(ctx, req.Spawn)
 		if err != nil {
+			return adminControlResponse{OK: false, Error: err.Error()}
+		}
+		if err := s.bindGhostToMirage(out.GhostID, out.AdminAddr); err != nil {
 			return adminControlResponse{OK: false, Error: err.Error()}
 		}
 		s.bindGhostAdmin(out.GhostID, out.AdminAddr)
@@ -234,6 +218,40 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 	default:
 		return adminControlResponse{OK: false, Error: fmt.Sprintf("unknown action: %s", req.Action)}
 	}
+}
+
+func (s *Service) attachGhostAdmin(expectedGhostID string, adminAddr string) (AdminAttachGhostResponse, error) {
+	addr, err := normalizeGhostAdminAddr(adminAddr)
+	if err != nil {
+		return AdminAttachGhostResponse{}, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client := NewGhostControlClient(addr)
+	status, err := client.Status(ctx)
+	if err != nil {
+		return AdminAttachGhostResponse{}, err
+	}
+	ghostID := strings.TrimSpace(status.GhostID)
+	if ghostID == "" {
+		return AdminAttachGhostResponse{}, fmt.Errorf("ghost status missing ghost_id")
+	}
+	expected := strings.TrimSpace(expectedGhostID)
+	if expected != "" && ghostID != expected {
+		return AdminAttachGhostResponse{}, fmt.Errorf(
+			"ghost_id mismatch expected=%q reported=%q",
+			expected,
+			ghostID,
+		)
+	}
+	if err := s.server.RegisterExecutor(ghostID, NewGhostAdminCommandExecutor(client)); err != nil {
+		return AdminAttachGhostResponse{}, err
+	}
+	if err := s.bindGhostToMirage(ghostID, addr); err != nil {
+		return AdminAttachGhostResponse{}, err
+	}
+	s.bindGhostAdmin(ghostID, addr)
+	return AdminAttachGhostResponse{GhostID: ghostID, AdminAddr: addr}, nil
 }
 
 func mapAdminIssue(in AdminIssueRequest) IssueEnv {

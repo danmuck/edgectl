@@ -25,6 +25,7 @@ type fileConfig struct {
 	LocalGhostHeartbeatMS        int64    `toml:"local_ghost_heartbeat_interval_ms"`
 	LocalGhostProjectRoot        string   `toml:"local_ghost_project_root"`
 	LocalGhostProjectFetchOnBoot bool     `toml:"local_ghost_project_fetch_on_boot"`
+	PreloadGhostAdmins           []preloadGhostAdmin
 	BuildlogPersist              bool     `toml:"buildlog_persist_enabled"`
 	BuildlogSeed                 string   `toml:"buildlog_seed_selector"`
 	BuildlogKeyPrefix            string   `toml:"buildlog_key_prefix"`
@@ -34,6 +35,12 @@ type fileConfig struct {
 	SessionTLSCertFile           string   `toml:"session_tls_cert_file"`
 	SessionTLSKeyFile            string   `toml:"session_tls_key_file"`
 	SessionTLSCAFile             string   `toml:"session_tls_ca_file"`
+}
+
+// preloadGhostAdmin maps one preload_ghost_admins TOML table row.
+type preloadGhostAdmin struct {
+	GhostID   string `toml:"ghost_id"`
+	AdminAddr string `toml:"admin_addr"`
 }
 
 // miragectl loader for TOML config with default overlay.
@@ -66,6 +73,13 @@ func loadServiceConfig(path string) (mirage.ServiceConfig, error) {
 	}
 	if meta.IsDefined("local_ghost_admin_addr") {
 		cfg.LocalGhostAdminAddr = strings.TrimSpace(raw.LocalGhostAdminAddr)
+	}
+	if meta.IsDefined("preload_ghost_admins") {
+		targets, normErr := normalizePreloadGhostAdmins(raw.PreloadGhostAdmins)
+		if normErr != nil {
+			return mirage.ServiceConfig{}, normErr
+		}
+		cfg.PreloadGhostAdmins = targets
 	}
 	if meta.IsDefined("buildlog_persist_enabled") {
 		cfg.BuildlogPersistEnabled = raw.BuildlogPersist
@@ -128,6 +142,29 @@ func loadServiceConfig(path string) (mirage.ServiceConfig, error) {
 
 	cfg.Session = cfg.Session.WithDefaults()
 	return cfg, nil
+}
+
+func normalizePreloadGhostAdmins(raw []preloadGhostAdmin) ([]mirage.GhostAdminTarget, error) {
+	if len(raw) == 0 {
+		return []mirage.GhostAdminTarget{}, nil
+	}
+	out := make([]mirage.GhostAdminTarget, 0, len(raw))
+	for i := range raw {
+		row := raw[i]
+		id := strings.TrimSpace(row.GhostID)
+		addr := strings.TrimSpace(row.AdminAddr)
+		if id == "" {
+			return nil, fmt.Errorf("load mirage config: preload_ghost_admins[%d].ghost_id required", i)
+		}
+		if addr == "" {
+			return nil, fmt.Errorf("load mirage config: preload_ghost_admins[%d].admin_addr required", i)
+		}
+		out = append(out, mirage.GhostAdminTarget{
+			GhostID:   id,
+			AdminAddr: addr,
+		})
+	}
+	return out, nil
 }
 
 // loadRuntimeConfigs loads mirage config and managed local-ghost config.

@@ -54,7 +54,7 @@ func defaultConfig(profile Profile) logs.Config {
 		cfg.Timestamp = false
 	default:
 		cfg.Level = logs.InfoLevel
-		cfg.Timestamp = true
+		cfg.Timestamp = false
 	}
 	return cfg
 }

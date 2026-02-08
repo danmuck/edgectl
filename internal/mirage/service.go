@@ -32,6 +32,7 @@ type ServiceConfig struct {
 	AdminListenAddr        string
 	LocalGhostID           string
 	LocalGhostAdminAddr    string
+	PreloadGhostAdmins     []GhostAdminTarget
 	BuildlogPersistEnabled bool
 	BuildlogSeedSelector   string
 	BuildlogKeyPrefix      string
@@ -139,11 +140,10 @@ func NewServiceWithConfig(cfg ServiceConfig) *Service {
 		if localGhostID != "" {
 			svc.server.RegisterExecutor(localGhostID, NewGhostAdminCommandExecutor(svc.controlClient))
 			svc.bindGhostAdmin(localGhostID, localAdminAddr)
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			_ = svc.controlClient.BindMirage(ctx, strings.TrimSpace(cfg.MirageID))
-			cancel()
+			_ = svc.bindGhostToMirage(localGhostID, localAdminAddr)
 		}
 	}
+	svc.preloadGhostAdmins()
 	if cfg.BuildlogPersistEnabled && svc.controlClient != nil {
 		svc.buildlogStore = NewGhostSeedBuildlogStore(svc.controlClient, strings.TrimSpace(cfg.BuildlogSeedSelector))
 	}
@@ -379,6 +379,43 @@ func (s *Service) snapshotGhostAdmins() map[string]string {
 		out[ghostID] = adminAddr
 	}
 	return out
+}
+
+func (s *Service) preloadGhostAdmins() {
+	for i := range s.cfg.PreloadGhostAdmins {
+		target := s.cfg.PreloadGhostAdmins[i]
+		if _, err := s.attachGhostAdmin(target.GhostID, target.AdminAddr); err != nil {
+			logs.Warnf(
+				"mirage.admin preload ghost attach failed ghost_id=%q addr=%q err=%v",
+				strings.TrimSpace(target.GhostID),
+				strings.TrimSpace(target.AdminAddr),
+				err,
+			)
+		}
+	}
+}
+
+func (s *Service) bindGhostToMirage(ghostID string, adminAddr string) error {
+	id := strings.TrimSpace(ghostID)
+	addr := strings.TrimSpace(adminAddr)
+	if id == "" || addr == "" {
+		return fmt.Errorf("mirage: ghost bind requires ghost_id and admin_addr")
+	}
+	client := NewGhostControlClient(addr)
+	var lastErr error
+	for attempt := 1; attempt <= 5; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err := client.BindMirage(ctx, strings.TrimSpace(s.cfg.MirageID))
+		cancel()
+		if err == nil {
+			logs.Warnf("mirage.admin ghost bind success ghost_id=%q addr=%q attempt=%d", id, addr, attempt)
+			return nil
+		}
+		lastErr = err
+		logs.Warnf("mirage.admin ghost bind retry ghost_id=%q addr=%q attempt=%d err=%v", id, addr, attempt, err)
+		time.Sleep(200 * time.Millisecond)
+	}
+	return lastErr
 }
 
 // Mirage connection handler for registration and event ingestion.
