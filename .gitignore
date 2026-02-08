@@ -39,3 +39,5 @@ tmp/
 
 # local runtime artifacts (including buildlogs moved under local/buildlogs)
 local/
+cmd/ghostctl/pi.*
+cmd/miragectl/mac.*
