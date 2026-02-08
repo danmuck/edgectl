@@ -1,147 +1,387 @@
 package mirage
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"strings"
+	"sync"
 	"time"
 
-	"github.com/danmuck/edgectl/internal/ghost"
-	"github.com/danmuck/edgectl/internal/node"
-	"github.com/danmuck/edgectl/internal/observability"
-	"github.com/gin-contrib/cors"
-	"github.com/gin-gonic/gin"
-	"github.com/rs/zerolog/log"
+	"github.com/danmuck/edgectl/internal/protocol/session"
 )
 
-// Mirage:edgectl -- main system brain
-type Mirage struct {
-	Name       string
-	addr       string
-	httpRouter *gin.Engine
-	appeared   time.Time
+var (
+	ErrInvalidMirageID = errors.New("mirage: invalid mirage id")
+	ErrLifecycleOrder  = errors.New("mirage: invalid lifecycle transition")
+	ErrNoGhostSpawner  = errors.New("mirage: no ghost spawner configured")
+)
 
-	// local repo
-	ghostBank map[string]ghost.Ghost
-	local     map[string]*ghost.Ghost
+// LifecyclePhase describes Mirage runtime phase transitions.
+type LifecyclePhase string
+
+const (
+	PhaseBoot     LifecyclePhase = "boot"
+	PhaseAppeared LifecyclePhase = "appeared"
+	PhaseShimmer  LifecyclePhase = "shimmer"
+	PhaseSeeded   LifecyclePhase = "seeded"
+)
+
+// MirageConfig configures identity at Mirage appear time.
+type MirageConfig struct {
+	MirageID string
 }
 
-func Appear(name, addr string, corsOrigins []string) *Mirage {
-	observability.RegisterMetrics()
-	r := gin.New()
+// LifecycleStatus reports current Mirage identity and registration/orchestration shape.
+type LifecycleStatus struct {
+	MirageID         string
+	Phase            LifecyclePhase
+	RegisteredGhosts int
+	ActiveIntents    int
+	ReportCount      int
+}
 
-	// Middleware: keep it lean
-	r.Use(gin.Recovery())
-	r.Use(observability.RequestLogger(log.Logger))
-	r.Use(observability.RequestMetricsMiddleware(name))
-	r.Use(cors.New(cors.Config{
-		AllowOrigins: normalizeOrigins(corsOrigins),
-		AllowMethods: []string{"GET", "POST"},
-		AllowHeaders: []string{"Origin", "Content-Type"},
-		MaxAge:       12 * time.Hour,
-	}))
-	_ = r.SetTrustedProxies([]string{"127.0.0.1", "::1"})
-	g := &Mirage{
-		Name:       name,
-		addr:       addr,
-		httpRouter: r,
-		appeared:   time.Now(),
+// SpawnGhostRequest defines one local Ghost provisioning request from Mirage.
+type SpawnGhostRequest struct {
+	TargetName string
+	AdminAddr  string
+}
+
+// SpawnGhostResult describes one provisioned local Ghost endpoint.
+type SpawnGhostResult struct {
+	TargetName string
+	GhostID    string
+	AdminAddr  string
+}
+
+// GhostSpawner provisions local Ghost nodes via a boundary adapter.
+type GhostSpawner interface {
+	SpawnLocalGhost(ctx context.Context, req SpawnGhostRequest) (SpawnGhostResult, error)
+}
+
+// Server owns Mirage lifecycle, orchestration boundary, and observed ghost registry.
+type Server struct {
+	mu sync.RWMutex
+
+	mirageID string
+	phase    LifecyclePhase
+
+	registry map[string]*registeredGhostState
+
+	loop *Orchestrator
+
+	reports []session.Report
+	spawner GhostSpawner
+}
+
+// NewServer constructs Mirage server state in boot phase.
+func NewServer() *Server {
+	return &Server{
+		phase:    PhaseBoot,
+		registry: make(map[string]*registeredGhostState),
+		loop:     NewOrchestrator(),
+		reports:  make([]session.Report, 0),
 	}
-	return g
 }
 
-func (g *Mirage) Serve() error {
-	g.RegisterRoutesTMP()
-	err := g.httpRouter.Run(g.addr)
-	return err
-}
-
-// refresh Ghosts, update local repo
-func (g *Mirage) RefreshGhosts() error {
+// Appear sets immutable Mirage identity and transitions boot->appeared.
+func (s *Server) Appear(cfg MirageConfig) error {
+	id := strings.TrimSpace(cfg.MirageID)
+	if id == "" {
+		return ErrInvalidMirageID
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.phase != PhaseBoot {
+		return transitionError(s.phase, PhaseAppeared)
+	}
+	s.mirageID = id
+	s.phase = PhaseAppeared
 	return nil
 }
 
-func (g *Mirage) Ghost(id string) (ghost.Ghost, bool) {
-	ghost, ok := g.ghostBank[id]
-	return ghost, ok
+// Shimmer transitions appeared->shimmer to represent orchestration boundary ownership.
+func (s *Server) Shimmer() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.phase != PhaseAppeared {
+		return transitionError(s.phase, PhaseShimmer)
+	}
+	s.phase = PhaseShimmer
+	return nil
 }
 
-func (g *Mirage) Ghosts() []ghost.Ghost {
-	ghosts := make([]ghost.Ghost, 0, len(g.ghostBank))
-	for _, ghost := range g.ghostBank {
-		ghosts = append(ghosts, ghost)
+// Seed transitions shimmer->seeded once runtime connectors are wired.
+func (s *Server) Seed() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.phase != PhaseShimmer {
+		return transitionError(s.phase, PhaseSeeded)
 	}
-	return ghosts
+	s.phase = PhaseSeeded
+	return nil
 }
 
-func (g *Mirage) CreateLocalGhost(id string, basePath string) *ghost.Ghost {
-	if g.local == nil {
-		g.local = map[string]*ghost.Ghost{}
-	}
-	if g.ghostBank == nil {
-		g.ghostBank = map[string]ghost.Ghost{}
-	}
-	if existing, ok := g.local[id]; ok {
-		return existing
-	}
-	localGhost := ghost.Attach(id, g.httpRouter, basePath, nil)
-	if registered, ok := g.ghostBank[id]; ok {
-		localGhost.Host = registered.Host
-		localGhost.Addr = registered.Addr
-		localGhost.Group = registered.Group
-		localGhost.Exec = registered.Exec
-		localGhost.Seeds = registered.Seeds
-		localGhost.Auth = registered.Auth
-	} else {
-		localGhost.Host = "localhost"
-		localGhost.Addr = g.addr
-	}
-	g.local[id] = localGhost
-	g.ghostBank[id] = *localGhost
-	log.Info().
-		Str("ghost", localGhost.ID).
-		Str("base_path", basePath).
-		Msg("local ghost attached")
-	return localGhost
-}
+// Status returns current Mirage lifecycle and boundary state.
+func (s *Server) Status() LifecycleStatus {
+	s.mu.RLock()
+	id := s.mirageID
+	phase := s.phase
+	ghosts := len(s.registry)
+	reports := len(s.reports)
+	s.mu.RUnlock()
 
-func (g *Mirage) LocalGhost(id string) (*ghost.Ghost, bool) {
-	if g.local == nil {
-		return nil, false
-	}
-	local, ok := g.local[id]
-	return local, ok
-}
-
-func (g *Mirage) NodeID() string {
-	return g.Name
-}
-
-func (g *Mirage) Kind() string {
-	return "mirage"
-}
-
-func (g *Mirage) HTTPRouter() *gin.Engine {
-	return g.httpRouter
-}
-
-var _ node.Node = (*Mirage)(nil)
-
-func (g *Mirage) LoadGhosts(ghosts []ghost.Ghost) {
-	if g.ghostBank == nil {
-		g.ghostBank = map[string]ghost.Ghost{}
-	}
-	for _, ghost := range ghosts {
-		g.ghostBank[ghost.ID] = ghost
-		log.Info().
-			Str("ghost", ghost.ID).
-			Str("addr", ghost.Addr).
-			Str("host", ghost.Host).
-			Bool("exec", ghost.Exec).
-			Msg("ghost registered")
+	snapshot := s.loop.Snapshot()
+	return LifecycleStatus{
+		MirageID:         id,
+		Phase:            phase,
+		RegisteredGhosts: ghosts,
+		ActiveIntents:    snapshot.IntentCount,
+		ReportCount:      reports,
 	}
 }
 
-func normalizeOrigins(origins []string) []string {
-	if len(origins) == 0 {
-		return []string{"http://localhost:3000"}
+// SnapshotRegisteredGhosts returns observed registration state for all ghosts.
+func (s *Server) SnapshotRegisteredGhosts() []RegisteredGhost {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]RegisteredGhost, 0, len(s.registry))
+	for _, state := range s.registry {
+		meta := state.meta
+		meta.SeedList = copySeedList(meta.SeedList)
+		out = append(out, meta)
 	}
-	return origins
+	return out
+}
+
+// UpsertRegistration records registration metadata and returns accepted ack payload.
+func (s *Server) UpsertRegistration(remoteAddr string, reg session.Registration) session.RegistrationAck {
+	now := uint64(time.Now().UnixMilli())
+	registered := RegisteredGhost{
+		GhostID:    reg.GhostID,
+		RemoteAddr: remoteAddr,
+		SeedList:   enrichSeedListForGhost(reg.GhostID, remoteAddr, reg.SeedList),
+		Connected:  true,
+	}
+
+	s.mu.Lock()
+	state, ok := s.registry[reg.GhostID]
+	if !ok {
+		state = &registeredGhostState{ackByEvent: make(map[string]session.EventAck)}
+		s.registry[reg.GhostID] = state
+	}
+	if state.meta.RegisteredAt.IsZero() {
+		state.meta.RegisteredAt = time.Now()
+	}
+	registered.RegisteredAt = state.meta.RegisteredAt
+	registered.LastEventAt = state.meta.LastEventAt
+	registered.EventCount = state.meta.EventCount
+	state.meta = registered
+	s.mu.Unlock()
+
+	return session.RegistrationAck{
+		Status:      session.AckStatusAccepted,
+		Code:        0,
+		Message:     "registered",
+		GhostID:     reg.GhostID,
+		TimestampMS: now,
+	}
+}
+
+// MarkGhostDisconnected marks the connection state while preserving observed counters.
+func (s *Server) MarkGhostDisconnected(ghostID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, ok := s.registry[ghostID]
+	if !ok {
+		return
+	}
+	state.meta.Connected = false
+	state.meta.RemoteAddr = ""
+}
+
+// AcceptEvent ingests one event and returns deterministic idempotent event.ack.
+func (s *Server) AcceptEvent(ghostID string, event session.Event) session.EventAck {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, ok := s.registry[ghostID]
+	if !ok {
+		state = &registeredGhostState{
+			meta: RegisteredGhost{
+				GhostID:      ghostID,
+				RegisteredAt: time.Now(),
+			},
+			ackByEvent: make(map[string]session.EventAck),
+		}
+		s.registry[ghostID] = state
+	}
+	if ack, ok := state.ackByEvent[event.EventID]; ok {
+		return ack
+	}
+	ack := session.EventAck{
+		EventID:     event.EventID,
+		CommandID:   event.CommandID,
+		GhostID:     ghostID,
+		AckStatus:   session.AckStatusAccepted,
+		AckCode:     0,
+		TimestampMS: uint64(time.Now().UnixMilli()),
+	}
+	state.ackByEvent[event.EventID] = ack
+	state.meta.LastEventAt = time.Now()
+	state.meta.EventCount++
+	return ack
+}
+
+// RegisterExecutor binds command execution for one ghost_id in the orchestration boundary.
+func (s *Server) RegisterExecutor(ghostID string, exec CommandExecutor) error {
+	return s.loop.RegisterExecutor(ghostID, exec)
+}
+
+// SubmitIssue ingests desired state into Mirage orchestration.
+func (s *Server) SubmitIssue(issue IssueEnv) error {
+	return s.loop.SubmitIssue(issue)
+}
+
+// ReconcileIntent executes one orchestration pass for an intent.
+func (s *Server) ReconcileIntent(ctx context.Context, intentID string) (session.Report, error) {
+	report, err := s.loop.ReconcileOnce(ctx, intentID)
+	if err != nil {
+		return session.Report{}, err
+	}
+	s.appendReport(report)
+	return report, nil
+}
+
+// SnapshotIntent returns desired/observed state for one intent.
+func (s *Server) SnapshotIntent(intentID string) (IntentSnapshot, bool) {
+	return s.loop.SnapshotIntent(intentID)
+}
+
+// ListIntentIDs returns sorted desired intent ids.
+func (s *Server) ListIntentIDs() []string {
+	return s.loop.ListIntentIDs()
+}
+
+// ObserveEvent ingests a ghost event into orchestration observed state when command is known.
+func (s *Server) ObserveEvent(event session.Event) (session.Report, bool, error) {
+	report, matched, err := s.loop.IngestObservedEvent(event)
+	if err != nil || !matched {
+		return report, matched, err
+	}
+	s.appendReport(report)
+	return report, matched, nil
+}
+
+// RecentReports returns bounded report history for user-boundary emission.
+func (s *Server) RecentReports(limit int) []session.Report {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if limit <= 0 || len(s.reports) <= limit {
+		out := make([]session.Report, len(s.reports))
+		copy(out, s.reports)
+		return out
+	}
+	out := make([]session.Report, limit)
+	copy(out, s.reports[len(s.reports)-limit:])
+	return out
+}
+
+// SetGhostSpawner binds a local-ghost provisioning adapter.
+func (s *Server) SetGhostSpawner(spawner GhostSpawner) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.spawner = spawner
+}
+
+// SpawnLocalGhost provisions one local ghost endpoint through configured spawner.
+func (s *Server) SpawnLocalGhost(ctx context.Context, req SpawnGhostRequest) (SpawnGhostResult, error) {
+	s.mu.RLock()
+	spawner := s.spawner
+	s.mu.RUnlock()
+	if spawner == nil {
+		return SpawnGhostResult{}, ErrNoGhostSpawner
+	}
+	return spawner.SpawnLocalGhost(ctx, req)
+}
+
+func (s *Server) appendReport(report session.Report) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reports = append(s.reports, report)
+}
+
+func transitionError(from, to LifecyclePhase) error {
+	return fmt.Errorf("%w: %s -> %s", ErrLifecycleOrder, from, to)
+}
+
+// enrichSeedListForGhost adds runtime-discovery details to registration seed metadata.
+func enrichSeedListForGhost(ghostID string, remoteAddr string, in []session.SeedInfo) []session.SeedInfo {
+	out := copySeedList(in)
+	host := hostFromRemoteAddr(remoteAddr)
+	for i := range out {
+		seedID := strings.TrimSpace(out[i].ID)
+		desc := strings.TrimSpace(out[i].Description)
+		switch seedID {
+		case "seed.mongod":
+			uri := fmt.Sprintf("mongodb://%s/?directConnection=true", net.JoinHostPort(host, "27017"))
+			desc = appendDiscoveryField(desc, "endpoint_uri=", uri)
+			desc = appendDiscoveryField(desc, "host=", host)
+			desc = appendDiscoveryField(desc, "seed_scope=", "network_service")
+		case "seed.fs":
+			desc = appendDiscoveryField(desc, "path_root=", fsSeedRootForGhost(ghostID))
+			desc = appendDiscoveryField(desc, "seed_scope=", "ghost_local_filesystem")
+		case "seed.kv":
+			desc = appendDiscoveryField(desc, "persistence=", "in_memory")
+			desc = appendDiscoveryField(desc, "seed_scope=", "ghost_local_cache")
+		case "seed.flow":
+			desc = appendDiscoveryField(desc, "seed_scope=", "control_plane")
+			desc = appendDiscoveryField(desc, "dispatch=", "ghost_execute")
+		default:
+			desc = appendDiscoveryField(desc, "seed_scope=", "ghost_local")
+		}
+		desc = appendDiscoveryField(desc, "ghost_id=", strings.TrimSpace(ghostID))
+		out[i].Description = desc
+	}
+	return out
+}
+
+func fsSeedRootForGhost(ghostID string) string {
+	id := strings.TrimSpace(ghostID)
+	if id == "" {
+		id = "ghost.local"
+	}
+	return "local/dir/" + id
+}
+
+func appendDiscoveryField(desc string, key string, value string) string {
+	v := strings.TrimSpace(value)
+	if v == "" {
+		return strings.TrimSpace(desc)
+	}
+	token := key + v
+	base := strings.TrimSpace(desc)
+	if strings.Contains(base, token) {
+		return base
+	}
+	if base == "" {
+		return token
+	}
+	return base + "; " + token
+}
+
+func hostFromRemoteAddr(remoteAddr string) string {
+	trimmed := strings.TrimSpace(remoteAddr)
+	if trimmed == "" {
+		return "127.0.0.1"
+	}
+	host, _, err := net.SplitHostPort(trimmed)
+	if err != nil {
+		return trimmed
+	}
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return "127.0.0.1"
+	}
+	return host
 }

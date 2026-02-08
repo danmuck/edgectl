@@ -1,0 +1,32 @@
+flowchart LR
+    U["User Boundary"]
+    A["Mirage Admin Control Boundary"]
+    M["Mirage Service (Session/Transport)"]
+    S["Mirage Server (Lifecycle + Command Boundary)"]
+    O["Mirage Orchestrator (Desired/Observed/Seed Locks)"]
+    R["Report History Boundary"]
+    G["Ghost Admin Boundary (spawn_ghost + execute)"]
+    X["Root Ghost"]
+    B["Buildlog Persistence Store"]
+    Z["Ghost Sessions"]
+
+    U -->|"admin action (submit/reconcile/snapshot)"| A
+    A -->|"runtime action"| S
+    U -->|"issue(intent + command plan)"| M
+    M -->|"submit issue"| S
+    S --> O
+    O -->|"report updates"| R
+    R -->|"recent reports"| U
+
+    O -->|"command envelope dispatch"| Z
+    Z -->|"event envelope ingest"| O
+
+    S -->|"spawn local ghost request"| G
+    G -->|"spawn_ghost control RPC"| X
+    X -->|"spawn result (ghost_id,admin_addr)"| G
+    G --> S
+
+    S -->|"persist buildlog"| B
+    B -->|"execute seed.fs or seed.kv on local ghost"| G
+
+    O -->|"seed lock key: ghost_id::seed_selector"| O

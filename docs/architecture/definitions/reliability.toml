@@ -1,0 +1,50 @@
+[reliability_contract]
+
+[reliability_contract.metadata]
+name = "EdgeCTL Timeout Retry Idempotency Contract"
+version = "v1"
+scope = "mirage-ghost command/event reliability behavior"
+
+[timeouts]
+
+[timeouts.fields]
+connect_timeout_ms = "default:5000"
+handshake_timeout_ms = "default:5000"
+read_timeout_ms = "default:15000"
+write_timeout_ms = "default:15000"
+heartbeat_interval_ms = "default:5000"
+session_dead_after_ms = "default:15000"
+
+[retry_policy]
+
+[retry_policy.rules]
+issue = "caller-managed"
+command = "retryable when no terminal event observed"
+event = "ghost retries from outbox until event.ack accepted or ack_timeout_ms exceeded"
+event_ack = "mirage returns idempotent ack by event_id"
+report = "best-effort"
+
+[acknowledgement]
+
+[acknowledgement.fields]
+ack_timeout_ms = "default:20000"
+ack_retry_stop = "stop retry on event.ack ack_status=accepted"
+ack_reject_behavior = "mark delivery failed; no implicit mutation replay"
+
+[backoff]
+
+[backoff.fields]
+initial_delay_ms = "250"
+multiplier = "2.0"
+max_delay_ms = "5000"
+jitter = "required"
+
+[idempotency]
+
+[idempotency.rules]
+command_key = "command_id"
+seed_execute_key = "execution_id"
+replay_same_key = "must not cause duplicate mutation"
+duplicate_window = "minimum 15m"
+event_key = "event_id"
+event_ack_key = "event_id"

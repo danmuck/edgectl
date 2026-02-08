@@ -1,0 +1,47 @@
+[observability_contract]
+
+[observability_contract.metadata]
+name = "EdgeCTL Observability Contract"
+version = "v1"
+scope = "logs, correlation, and custody reconstruction"
+
+[implementation_status]
+
+[implementation_status.fields]
+phase4_baseline = "component+status+message metadata are present in runtime logs"
+phase8_target = "structured log contract with deterministic required fields is pending"
+
+[required_log_fields]
+
+[required_log_fields.fields]
+component = "required_phase8_target"
+peer = "required_phase8_target"
+direction = "required_phase8_target"
+trace_id = "required_phase8_target"
+request_id = "required_phase8_target"
+message_id = "required_phase8_target"
+message_type = "required_phase8_target"
+intent_id = "optional"
+command_id = "optional"
+execution_id = "optional"
+event_id = "optional"
+ack_status = "optional"
+status = "required_current"
+timestamp_ms = "required_current"
+
+[correlation_rules]
+
+[correlation_rules.rules]
+issue_to_command = "intent_id"
+command_to_seed_execute = "command_id"
+seed_execute_to_seed_result = "execution_id"
+command_to_event = "command_id"
+event_to_event_ack = "event_id"
+intent_to_report = "intent_id"
+
+[ordering]
+
+[ordering.rules]
+event_order_scope = "per ghost session"
+global_order = "not guaranteed"
+deduplication_key = "event_id"

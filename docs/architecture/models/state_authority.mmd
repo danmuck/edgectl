@@ -1,0 +1,13 @@
+flowchart LR
+    U["User"]
+    MD["Mirage<br/>authority: desired state"]
+    GE["Ghost<br/>authority: execution routing"]
+    SR["Seed<br/>authority: runtime mutation"]
+    MO["Mirage<br/>authority: observed state"]
+
+    U -->|"declare intent"| MD
+    MD -->|"send command"| GE
+    GE -->|"invoke operation"| SR
+    SR -->|"execution result"| GE
+    GE -->|"emit event"| MO
+    MO -->|"report progress/outcome"| U

@@ -1,33 +1,50 @@
 package main
 
 import (
-	"github.com/danmuck/edgectl/internal/config"
+	"flag"
+	"fmt"
+	"os"
+
+	"github.com/danmuck/edgectl/internal/ghost"
+	"github.com/danmuck/edgectl/internal/logging"
 	"github.com/danmuck/edgectl/internal/mirage"
-	"github.com/danmuck/edgectl/internal/observability"
-	"github.com/danmuck/edgectl/internal/seeds"
-	"github.com/rs/zerolog/log"
+	logs "github.com/danmuck/smplog"
 )
 
-// var startedAt = time.Now()
-
+// miragectl entrypoint that loads config and runs Mirage runtime.
 func main() {
-	observability.InitLogger("mirage")
-	configPath := "cmd/miragectl/config.toml"
-	cfg, err := config.LoadMirageConfig(configPath)
+	var configPath string
+	flag.StringVar(&configPath, "config", "cmd/miragectl/config.toml", "path to miragectl config.toml")
+	flag.Parse()
+
+	logging.ConfigureRuntime()
+	mirageCfg, ghostCfg, err := loadRuntimeConfigs(configPath)
 	if err != nil {
-		log.Fatal().Err(err).Msg("failed to load mirage config")
+		logs.Errf("miragectl: %v", err)
+		os.Exit(1)
 	}
 
-	log.Info().Str("path", configPath).Msg("loaded mirage config")
-	controlPlane := mirage.Appear(cfg.Name, cfg.Addr, cfg.CorsOrigins)
-	controlPlane.LoadGhosts(config.MirageGhosts(cfg.Ghosts))
-	log.Info().Int("count", len(cfg.Ghosts)).Msg("loaded ghosts from config")
-	localGhost := controlPlane.CreateLocalGhost(cfg.Name, "/local/"+cfg.Name)
-	localGhost.Registry.Register(&seeds.AdminCommands{})
-	localGhost.Registry.Register(&seeds.FlowSeed{})
+	errCh := make(chan error, 2)
+	ghostSvc := ghost.NewServiceWithConfig(ghostCfg)
+	go func() {
+		if err := ghostSvc.Run(); err != nil {
+			errCh <- fmt.Errorf("managed local ghost failed: %w", err)
+			return
+		}
+		errCh <- nil
+	}()
 
-	log.Info().Str("name", controlPlane.Name).Str("addr", cfg.Addr).Msg("mirage started")
-	if err := controlPlane.Serve(); err != nil {
-		log.Fatal().Err(err).Msg("mirage stopped")
+	mirageSvc := mirage.NewServiceWithConfig(mirageCfg)
+	go func() {
+		if err := mirageSvc.Run(); err != nil {
+			errCh <- fmt.Errorf("mirage runtime failed: %w", err)
+			return
+		}
+		errCh <- nil
+	}()
+
+	if err := <-errCh; err != nil {
+		logs.Errf("miragectl: %v", err)
+		os.Exit(1)
 	}
 }

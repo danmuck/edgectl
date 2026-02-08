@@ -1,80 +1,123 @@
 package ghost
 
 import (
-	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/danmuck/edgectl/internal/seeds"
-	logs "github.com/danmuck/smplog"
+	seedflow "github.com/danmuck/edgectl/internal/seeds/flow"
+	"github.com/danmuck/edgectl/internal/testutil/testlog"
 )
 
-type stubService struct {
-	name    string
-	actions map[string]seeds.Action
+func TestServerLifecycleHappyPath(t *testing.T) {
+	testlog.Start(t)
+	s := NewServer()
+
+	initial := s.Status()
+	if initial.Phase != PhaseBoot {
+		t.Fatalf("unexpected initial phase: %s", initial.Phase)
+	}
+
+	if err := s.Appear(GhostConfig{GhostID: "ghost.alpha"}); err != nil {
+		t.Fatalf("appear failed: %v", err)
+	}
+
+	reg := seeds.NewRegistry()
+	if err := reg.Register(seedflow.NewSeed()); err != nil {
+		t.Fatalf("register flow seed: %v", err)
+	}
+	if err := s.Seed(reg); err != nil {
+		t.Fatalf("seed failed: %v", err)
+	}
+	if err := s.Radiate(); err != nil {
+		t.Fatalf("radiate failed: %v", err)
+	}
+
+	got := s.Status()
+	if got.GhostID != "ghost.alpha" {
+		t.Fatalf("unexpected ghost id: %q", got.GhostID)
+	}
+	if got.Phase != PhaseRadiating {
+		t.Fatalf("unexpected phase: %s", got.Phase)
+	}
+	if got.SeedCount != 1 {
+		t.Fatalf("unexpected seed count: %d", got.SeedCount)
+	}
 }
 
-func (s stubService) Name() string                     { return s.name }
-func (s stubService) Status() (any, error)             { return "ok", nil }
-func (s stubService) Actions() map[string]seeds.Action { return s.actions }
-
-func TestExecuteActionOutputsAndErrors(t *testing.T) {
-	s := Attach("ghost-a", nil, "", nil)
-	s.Registry.Register(stubService{
-		name: "svc",
-		actions: map[string]seeds.Action{
-			"ok":  func() (string, error) { return "done", nil },
-			"err": func() (string, error) { return "", errors.New("boom") },
-		},
-	})
-
-	out, err := s.ExecuteAction("svc", "ok")
-	if err != nil || out != "done" {
-		t.Fatalf("expected successful action output, out=%q err=%v", out, err)
+func TestServerAppearValidation(t *testing.T) {
+	testlog.Start(t)
+	s := NewServer()
+	if err := s.Appear(GhostConfig{}); !errors.Is(err, ErrInvalidGhostID) {
+		t.Fatalf("expected ErrInvalidGhostID, got %v", err)
 	}
-	logs.Logf("ghost/execute: seed=svc action=ok output=%q", out)
-
-	if _, err := s.ExecuteAction("svc", "missing"); !errors.Is(err, ErrActionNotFound) {
-		t.Fatalf("expected ErrActionNotFound, got %v", err)
-	}
-	logs.Logf("ghost/execute: missing action rejected")
-
-	if _, err := s.ExecuteAction("missing", "ok"); !errors.Is(err, ErrSeedNotFound) {
-		t.Fatalf("expected ErrSeedNotFound, got %v", err)
-	}
-	logs.Logf("ghost/execute: missing seed rejected")
-
-	if _, err := s.ExecuteAction("svc", "err"); err == nil {
-		t.Fatalf("expected seed action error")
-	}
-	logs.Logf("ghost/execute: action error path surfaced")
 }
 
-func TestRegisterRoutesActionIncludesOutput(t *testing.T) {
-	s := Appear("ghost-a", ":9001", nil)
-	s.Registry.Register(stubService{
-		name: "svc",
-		actions: map[string]seeds.Action{
-			"ok": func() (string, error) { return "ran", nil },
-		},
-	})
-	s.RegisterRoutes()
+func TestServerLifecycleOrder(t *testing.T) {
+	testlog.Start(t)
+	s := NewServer()
 
-	req := httptest.NewRequest(http.MethodPost, "/seeds/svc/actions/ok", nil)
-	rr := httptest.NewRecorder()
-	s.HTTPRouter().ServeHTTP(rr, req)
+	if err := s.Radiate(); !errors.Is(err, ErrLifecycleOrder) {
+		t.Fatalf("expected ErrLifecycleOrder from radiate-before-appear, got %v", err)
+	}
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d body=%s", rr.Code, rr.Body.String())
+	if err := s.Seed(seeds.NewRegistry()); !errors.Is(err, ErrLifecycleOrder) {
+		t.Fatalf("expected ErrLifecycleOrder from seed-before-appear, got %v", err)
 	}
-	var body map[string]any
-	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode body: %v", err)
+	if err := s.Appear(GhostConfig{GhostID: "ghost.alpha"}); err != nil {
+		t.Fatalf("appear failed: %v", err)
 	}
-	if body["status"] != "ok" || body["output"] != "ran" {
-		t.Fatalf("unexpected response body: %#v", body)
+	if err := s.Radiate(); !errors.Is(err, ErrLifecycleOrder) {
+		t.Fatalf("expected ErrLifecycleOrder from radiate-before-seed, got %v", err)
 	}
-	logs.Logf("ghost/http: POST /seeds/svc/actions/ok status=%d output=%v", rr.Code, body["output"])
+}
+
+func TestServerSeedAfterRadiateRejected(t *testing.T) {
+	testlog.Start(t)
+	s := NewServer()
+	if err := s.Appear(GhostConfig{GhostID: "ghost.alpha"}); err != nil {
+		t.Fatalf("appear failed: %v", err)
+	}
+	if err := s.Seed(seeds.NewRegistry()); err != nil {
+		t.Fatalf("seed failed: %v", err)
+	}
+	if err := s.Radiate(); err != nil {
+		t.Fatalf("radiate failed: %v", err)
+	}
+	if err := s.Seed(seeds.NewRegistry()); !errors.Is(err, ErrLifecycleOrder) {
+		t.Fatalf("expected ErrLifecycleOrder from seed-after-radiate, got %v", err)
+	}
+}
+
+func TestServerSeedNilRegistry(t *testing.T) {
+	testlog.Start(t)
+	s := NewServer()
+	if err := s.Appear(GhostConfig{GhostID: "ghost.alpha"}); err != nil {
+		t.Fatalf("appear failed: %v", err)
+	}
+	if err := s.Seed(nil); !errors.Is(err, ErrSeedRegistry) {
+		t.Fatalf("expected ErrSeedRegistry, got %v", err)
+	}
+}
+
+func TestServerRadiateWithEmptyRegistryAllowed(t *testing.T) {
+	testlog.Start(t)
+	s := NewServer()
+	if err := s.Appear(GhostConfig{GhostID: "ghost.alpha"}); err != nil {
+		t.Fatalf("appear failed: %v", err)
+	}
+	empty := seeds.NewRegistry()
+	if err := s.Seed(empty); err != nil {
+		t.Fatalf("seed failed: %v", err)
+	}
+	if err := s.Radiate(); err != nil {
+		t.Fatalf("radiate failed: %v", err)
+	}
+	got := s.Status()
+	if got.Phase != PhaseRadiating {
+		t.Fatalf("unexpected phase: %s", got.Phase)
+	}
+	if got.SeedCount != 0 {
+		t.Fatalf("expected seed count 0, got %d", got.SeedCount)
+	}
 }

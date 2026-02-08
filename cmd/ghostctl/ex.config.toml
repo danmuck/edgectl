@@ -1,0 +1,44 @@
+# Example ghostctl config for bootstrap on fresh hosts.
+# Copy this to config.toml and adjust identity/network values per node.
+
+id = "ghost.local"
+project_fetch_on_boot = true
+seeds = ["seed.flow", "seed.mongod", "seed.kv", "seed.fs"]
+heartbeat_interval = "5s"
+admin_listen = "127.0.0.1:7011"
+
+mirage_policy = "headless"
+mirage_address = "127.0.0.1:9000"
+mirage_peer_identity = "ghost.local"
+mirage_security_mode = "development"
+mirage_tls_enabled = false
+mirage_tls_mutual = false
+mirage_tls_cert_file = ""
+mirage_tls_key_file = ""
+mirage_tls_ca_file = ""
+mirage_tls_server_name = ""
+mirage_tls_insecure_skip_verify = false
+
+# Seed dependency installation policy.
+seed_install_enabled = true
+seed_install_root = "local/seeds"
+seed_install_whitelist = ["seed.mongod", "seed.mongod.pkg"]
+
+# Source-based seed dependency install from GitHub.
+[[seed_install]]
+seed_id = "seed.mongod"
+method = "github"
+repo = "https://github.com/example/mongod-seed.git"
+branch = "main"
+destination = "seed.mongod"
+
+# Package-based seed dependency install via Homebrew.
+# On fresh Ubuntu hosts, this validates `brew --version` first.
+# If brew is missing and bootstrap_if_missing is true, bootstrap_cmd is executed.
+[[seed_install]]
+seed_id = "seed.mongod.pkg"
+method = "brew"
+package = "mongodb-community@7.0"
+tap = "mongodb/brew"
+bootstrap_if_missing = true
+bootstrap_cmd = ["/bin/bash", "-c", "NONINTERACTIVE=1 /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""]

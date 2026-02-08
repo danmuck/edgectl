@@ -1,0 +1,38 @@
+# MVP Progress — Phase 5 (Mirage Orchestration Layer)
+
+Status: `In Progress`
+
+## Phase Goal
+
+- [ ] Establish Mirage as an orchestration boundary that ingests user-facing `issue` state, reconciles desired vs observed state, drives Ghost command envelopes, and emits user-facing reports.
+
+## Tasks (Buildplan-Aligned)
+
+- [x] Define the Mirage server controller, similar to ghosts
+- [x] Define `issue` ingestion contract and desired-state persistence model
+- [x] Implement `issue` ingestion path and desired-state store (in-memory first)
+- [x] Implement reconcile loop (single-ghost first)
+- [x] Dispatch protocol command envelopes and ingest protocol event envelopes into observed state
+- [x] Emit `report` to user boundary with explicit desired vs observed transitions
+- [x] Mirage must be able to spin up local Ghost servers
+- [x] Introduce Mirage server boundary (`internal/mirage/server.go`) for lifecycle + orchestration command boundary ownership
+- [x] Add Mirage admin control boundary (`internal/mirage/admin_control.go`) for issue/reconcile/report/runtime actions
+- [x] Wire Mirage runtime reconcile path through admin controls (`reconcile_intent`, `reconcile_all`, snapshots, report history)
+- [x] Define Mirage-owned local Ghost runtime config in `mirage.toml` (`local_ghost_id`, `local_ghost_admin_addr`, local runtime settings)
+- [x] Run managed local Ghost from `miragectl` in-process with default admin `127.0.0.1:7010` and keep standalone `ghostctl` default on `127.0.0.1:7011`
+- [x] Add temporary persistence seeds: `seed.kv` (in-memory state) and `seed.fs` (file-backed under `local/dir/<ghost_id>`)
+- [x] Persist Mirage buildlog entries through ghost seed execution path (`seed.fs` default, `seed.kv` optional)
+- [x] Emit connection lifecycle logs as `WARN` for both Mirage and Ghost runtime boundaries
+- [x] Expose admin discovery views for connected ghosts, routing table, and available services
+- [x] Support admin attach flow for existing remote ghost admin endpoints (`attach_ghost_admin`)
+- [x] Update architecture/message-flow diagrams in `docs/architecture/models` for Phase 5 behavior
+
+### Acceptance Checks
+
+- [x] One intent drives command execution and produces report updates
+- [x] Desired vs observed state transitions are explicit and testable
+- [x] Phase 5 contracts are reflected in docs and corresponding test coverage
+
+## Coexisting Phase-Break Flow
+
+- [ ] `pbreak_client_terminal.md` remains a coexisting workstream and does not block Mirage Phase 5 orchestration execution.

@@ -1,28 +1,30 @@
 package main
 
 import (
-	"github.com/danmuck/edgectl/internal/config"
+	"flag"
+	"os"
+
 	"github.com/danmuck/edgectl/internal/ghost"
-	"github.com/danmuck/edgectl/internal/observability"
-	"github.com/rs/zerolog/log"
+	"github.com/danmuck/edgectl/internal/logging"
+	logs "github.com/danmuck/smplog"
 )
 
+// ghostctl entrypoint that loads config and runs Ghost runtime.
 func main() {
-	observability.InitLogger("ghost")
-	configPath := "cmd/ghostctl/config.toml"
-	cfg, err := config.LoadGhostConfig(configPath)
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to load ghost config")
-	}
-	log.Info().Str("path", configPath).Msg("loaded ghost config")
-	server := ghost.Appear(cfg.ID, cfg.Addr, cfg.CorsOrigins)
-	server.Host = cfg.Host
-	server.Group = cfg.Group
-	server.Exec = cfg.Exec
-	server.Seeds = cfg.Seeds
+	var configPath string
+	flag.StringVar(&configPath, "config", "cmd/ghostctl/config.toml", "path to ghostctl config.toml")
+	flag.Parse()
 
-	log.Info().Str("id", server.ID).Str("addr", server.Addr).Msg("ghost started")
-	if err := server.Serve(); err != nil {
-		log.Fatal().Err(err).Msg("ghost stopped")
+	logging.ConfigureRuntime()
+	cfg, err := loadServiceConfig(configPath)
+	if err != nil {
+		logs.Errf("ghostctl: %v", err)
+		os.Exit(1)
+	}
+
+	svc := ghost.NewServiceWithConfig(cfg)
+	if err := svc.Run(); err != nil {
+		logs.Errf("ghostctl: %v", err)
+		os.Exit(1)
 	}
 }

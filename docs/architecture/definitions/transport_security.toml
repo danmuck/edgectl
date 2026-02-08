@@ -1,0 +1,32 @@
+[transport_security_contract]
+
+[transport_security_contract.metadata]
+name = "EdgeCTL Transport Security Contract"
+version = "v1"
+scope = "mirage-ghost session transport security"
+
+[modes]
+
+[modes.development]
+tls = "optional"
+mtls = "optional"
+note = "local bring-up only"
+
+[modes.production]
+tls = "required"
+mtls = "required"
+note = "plaintext forbidden"
+
+[identity_binding]
+
+[identity_binding.rules]
+peer_identity_source = "tls peer certificate"
+ghost_id_binding = "required before command/event flow"
+binding_mismatch = "reject session"
+
+[policy]
+
+[policy.rules]
+unauthenticated_session = "reject"
+authentication_failure = "close session"
+authorization_failure = "reject message"

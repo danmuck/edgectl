@@ -1,0 +1,17 @@
+flowchart LR
+    MI["Mirage reconcile"] --> C1["command -> Ghost A"]
+    MI --> C2["command -> Ghost B"]
+    MI --> C3["command -> Ghost C"]
+
+    C1 --> SA["Ghost A -> Seeds"]
+    C2 --> SB["Ghost B -> Seeds"]
+    C3 --> SC["Ghost C -> Seeds"]
+
+    SA --> E1["event A"]
+    SB --> E2["event B"]
+    SC --> E3["event C"]
+
+    E1 --> AGG["Mirage aggregate observed state"]
+    E2 --> AGG
+    E3 --> AGG
+    AGG --> R["report to user"]

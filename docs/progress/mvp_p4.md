@@ -1,0 +1,40 @@
+# MVP Progress — Phase 4 (Ghost Execution Layer)
+
+Status: `Done`
+
+### Tasks
+
+- [x] Lock Ghost execution flow in docs (`command -> seed.execute -> seed.result -> event`) and add/update a message-flow diagram in `docs/architecture/models/`
+- [x] Define minimal Ghost contracts in `internal/ghost` for executor, event emitter, and execution state with required correlation fields (`message_id`, `command_id`, `execution_id`, `trace_id`)
+- [x] Implement Ghost command input boundary handler for `command` envelopes with Ghost-level semantic guards
+- [x] Implement deterministic execution pipeline: resolve seed, execute action, normalize `seed.result`, emit terminal `event` (`success` or `error`)
+- [x] Implement in-memory execution store keyed by `execution_id` and indexed by `command_id`
+- [x] Add query methods for execution correlation (`GetExecution`, `GetByCommandID`)
+- [x] Add tests for success path, unknown seed, unknown action, seed error path, and correlation/state query checks
+- [x] Verify acceptance: every valid command yields one valid terminal event
+- [x] Verify acceptance: execution state is queryable and correlated by command/execution IDs
+- [x] Update progress docs under `docs/progress/` as each Phase 4 task/check passes
+
+### Acceptance Checks
+
+- [x] Every valid command yields a valid event (success or error)
+- [x] Execution state is queryable and correlated
+
+## Post-Phase-4 MVP Steps
+
+- [x] Complete the protocol/runtime conformance checklist from `docs/progress/p4_conformance_report.md` before Mirage session implementation work
+- [x] Add required local `config.toml` boot config for `ghostctl` and `miragectl` as the next task after conformance closure; each process requires colocated network-routing + identity bootstrap config, defaults support auto-connect or headless Ghost startup with later manual Mirage attach, and empty Ghost bootstrap must allow remote seed config/install transfer to bring fresh nodes online
+- [x] Implement whitelist-gated seed dependency install baseline for Ghost bootstrap (`seed_install` config + `internal/seeds/install.go`), with install roots constrained under `local/`, GitHub clone/fetch branch/ref support, workspace-copy restricted to `local/` plus buildlog paths, and Homebrew package install support (`brew --version` validation with optional bootstrap command for fresh hosts)
+- [x] Add Ghost restart-time project sync hook: fetch root `edgectl` git remotes on boot (`git fetch --all --prune`) before seed install, with safe skip when repo/remote is absent and config control via `project_fetch_on_boot`
+- [x] Implement P2 step1/step2 baseline: shared session/reliability primitives and minimal Mirage endpoint (`register`, `register.ack`, `event`, `event.ack`) to prepare integration step3
+- [x] Execute remaining P2 step3 resilience tests: explicit ack-timeout and replay-across-reconnect idempotency verification
+- [x] Add Mirage↔Ghost session wiring (connect/register/ready) while preserving protocol/runtime boundaries
+- [x] Add TLS/mTLS transport security enforcement and certificate-backed identity binding for production mode contracts
+- [x] Implement single-command loop end-to-end (`command -> seed.execute -> seed.result -> event -> report`)
+- [x] Add failure-path tests (disconnect, timeout, duplicate IDs, validation failures) before MVP tag
+
+## Phase 4 Closure Gate
+
+- [x] Close single-command end-to-end path with deterministic integration coverage
+- [x] Close failure-path matrix coverage for session and envelope handling
+- [x] Mark Phase 4 fully complete, then begin terminal client implementation for node operations and dev/debug root shell access
