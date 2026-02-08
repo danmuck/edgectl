@@ -200,10 +200,7 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 		if err != nil {
 			return adminControlResponse{OK: false, Error: err.Error()}
 		}
-		s.persistBuildlog("attach_ghost_admin", map[string]any{
-			"ghost_id":   out.GhostID,
-			"admin_addr": out.AdminAddr,
-		})
+		logs.Warnf("mirage.admin attached ghost route ghost_id=%q addr=%q", out.GhostID, out.AdminAddr)
 		return adminControlResponse{OK: true, Data: out}
 	case "spawn_local_ghost":
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -216,7 +213,7 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 			return adminControlResponse{OK: false, Error: err.Error()}
 		}
 		s.bindGhostAdmin(out.GhostID, out.AdminAddr)
-		s.persistBuildlog("spawn_local_ghost", out)
+		logs.Warnf("mirage.admin spawned local ghost ghost_id=%q addr=%q", out.GhostID, out.AdminAddr)
 		return adminControlResponse{OK: true, Data: out}
 	default:
 		return adminControlResponse{OK: false, Error: fmt.Sprintf("unknown action: %s", req.Action)}
