@@ -21,6 +21,8 @@ import (
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/seeds"
 	seedflow "github.com/danmuck/edgectl/internal/seeds/flow"
+	seedfs "github.com/danmuck/edgectl/internal/seeds/fs"
+	seedkv "github.com/danmuck/edgectl/internal/seeds/kv"
 	seedmongod "github.com/danmuck/edgectl/internal/seeds/mongod"
 	logs "github.com/danmuck/smplog"
 )
@@ -163,6 +165,33 @@ type MirageIssueRequest struct {
 	CommandPlan []MirageIssueCommand `json:"command_plan"`
 }
 
+// CommandArgSpec defines one guided argument prompt for a catalog command template.
+type CommandArgSpec struct {
+	Key          string
+	Prompt       string
+	Required     bool
+	DefaultValue string
+}
+
+// CommandTemplate defines one predeclared command shape used by Ghost/Mirage wizards.
+type CommandTemplate struct {
+	ID              string
+	Label           string
+	Description     string
+	SeedSelector    string
+	Operation       string
+	Args            []CommandArgSpec
+	DefaultBlocking bool
+}
+
+// MirageIntentTemplate binds one intent wizard entry to a predeclared command template.
+type MirageIntentTemplate struct {
+	ID          string
+	Label       string
+	Description string
+	Command     CommandTemplate
+}
+
 type MirageAttachGhostResponse struct {
 	GhostID   string `json:"ghost_id"`
 	AdminAddr string `json:"admin_addr"`
@@ -276,7 +305,7 @@ func (a *App) Run() error {
 
 	for {
 		a.printMainMenu()
-		choice, err := a.promptInt("Choose", 1, 10, false, true)
+		choice, err := a.promptInt("Choose", 1, 8, false, true)
 		if err != nil {
 			if errors.Is(err, ErrNavigateExit) {
 				return a.exitClient()
@@ -321,20 +350,16 @@ func (a *App) Run() error {
 				logs.Errf("remove target failed: %v", err)
 			}
 		case 7:
-			a.clearScreen = !a.clearScreen
-			a.ghostCfg.ClearScreenAfterCommand = a.clearScreen
-			logs.Infof("clear_screen_after_command=%v", a.clearScreen)
+			if err := a.runConfigMenu(); err != nil {
+				if errors.Is(err, ErrNavigateBack) {
+					continue
+				}
+				if errors.Is(err, ErrNavigateExit) {
+					return a.exitClient()
+				}
+				logs.Errf("config menu failed: %v", err)
+			}
 		case 8:
-			if err := a.resetToDefaultConfig(); err != nil {
-				logs.Errf("reset config failed: %v", err)
-			}
-		case 9:
-			if err := a.saveConfigs(); err != nil {
-				logs.Errf("save failed: %v", err)
-			} else {
-				logs.Infof("config saved")
-			}
-		case 10:
 			return a.exitClient()
 		}
 	}
@@ -487,17 +512,15 @@ func (a *App) printMainMenu() {
 	fmt.Println("  4) Show active target summary")
 	fmt.Println("  5) Ghost admin console")
 	fmt.Println("  6) Remove ghost target")
-	fmt.Println("  7) Toggle clear-screen")
-	fmt.Println("  8) Reset configs to defaults")
-	fmt.Println("  9) Save configs")
-	fmt.Println(" 10) Exit")
+	fmt.Println("  7) Config menu")
+	fmt.Println("  8) Exit")
 }
 
 // runMirageClientLoop executes Mirage-first operator navigation.
 func (a *App) runMirageClientLoop() error {
 	for {
 		a.printMirageMenu()
-		choice, err := a.promptInt("Choose", 1, 8, false, true)
+		choice, err := a.promptInt("Choose", 1, 7, false, true)
 		if err != nil {
 			if errors.Is(err, ErrNavigateExit) {
 				return a.exitClient()
@@ -528,16 +551,16 @@ func (a *App) runMirageClientLoop() error {
 				logs.Errf("open local ghost console failed: %v", err)
 			}
 		case 6:
-			a.clearScreen = !a.clearScreen
-			a.ghostCfg.ClearScreenAfterCommand = a.clearScreen
-			logs.Infof("clear_screen_after_command=%v", a.clearScreen)
-		case 7:
-			if err := a.saveConfigs(); err != nil {
-				logs.Errf("save failed: %v", err)
-			} else {
-				logs.Infof("config saved")
+			if err := a.runConfigMenu(); err != nil {
+				if errors.Is(err, ErrNavigateBack) {
+					continue
+				}
+				if errors.Is(err, ErrNavigateExit) {
+					return a.exitClient()
+				}
+				logs.Errf("config menu failed: %v", err)
 			}
-		case 8:
+		case 7:
 			return a.exitClient()
 		}
 	}
@@ -555,9 +578,46 @@ func (a *App) printMirageMenu() {
 	fmt.Println("  3) Mirage admin console (*)")
 	fmt.Println("  4) Show connected ghosts")
 	fmt.Println("  5) Open local ghost admin console")
-	fmt.Println("  6) Toggle clear-screen")
-	fmt.Println("  7) Save configs")
-	fmt.Println("  8) Exit")
+	fmt.Println("  6) Config menu")
+	fmt.Println("  7) Exit")
+}
+
+// runConfigMenu centralizes client runtime toggles and persistence actions.
+func (a *App) runConfigMenu() error {
+	for {
+		fmt.Println()
+		fmt.Println("Config Menu")
+		fmt.Printf("  clear_screen_after_command: %v\n", a.clearScreen)
+		fmt.Printf("  ghost config:  %s\n", a.ghostCfgPath)
+		fmt.Printf("  mirage config: %s\n", a.mirageCfgPath)
+		fmt.Println("  1) Toggle clear-screen")
+		fmt.Println("  2) Save configs")
+		fmt.Println("  3) Reset configs to defaults")
+		fmt.Println("  4) Back")
+		choice, err := a.promptInt("Choose", 1, 4, true, true)
+		if err != nil {
+			return err
+		}
+		a.clearIfEnabled()
+		switch choice {
+		case 1:
+			a.clearScreen = !a.clearScreen
+			a.ghostCfg.ClearScreenAfterCommand = a.clearScreen
+			logs.Infof("clear_screen_after_command=%v", a.clearScreen)
+		case 2:
+			if err := a.saveConfigs(); err != nil {
+				logs.Errf("save failed: %v", err)
+			} else {
+				logs.Infof("config saved")
+			}
+		case 3:
+			if err := a.resetToDefaultConfig(); err != nil {
+				logs.Errf("reset config failed: %v", err)
+			}
+		case 4:
+			return nil
+		}
+	}
 }
 
 func (a *App) activeMirageTarget() (MirageTarget, bool) {
@@ -723,8 +783,9 @@ func (a *App) runMirageAdminConsole() error {
 		fmt.Println("  9) Connect ghost service (*)")
 		fmt.Println(" 10) Show routing table")
 		fmt.Println(" 11) Show available services")
-		fmt.Println(" 12) Back")
-		choice, err := a.promptInt("Choose", 1, 12, true, true)
+		fmt.Println(" 12) Store file via seed.fs intent")
+		fmt.Println(" 13) Back")
+		choice, err := a.promptInt("Choose", 1, 13, true, true)
 		if err != nil {
 			if errors.Is(err, ErrNavigateBack) {
 				return nil
@@ -778,6 +839,10 @@ func (a *App) runMirageAdminConsole() error {
 				logs.Errf("show available services failed: %v", err)
 			}
 		case 12:
+			if err := a.storeFileViaMirageSeedFS(target); err != nil {
+				logs.Errf("store file via seed.fs failed: %v", err)
+			}
+		case 13:
 			return nil
 		}
 	}
@@ -1056,33 +1121,30 @@ func (a *App) listSeedOperations(target GhostTarget) error {
 }
 
 func (a *App) executeSeedCommand(target GhostTarget) error {
-	if err := a.listSeedOperations(target); err != nil {
+	seedList, err := target.Admin.ListSeeds()
+	if err != nil {
 		return err
+	}
+	templates := ghostCommandTemplatesForSeedList(seedList)
+	if len(templates) == 0 {
+		return errors.New("no supported command templates for connected seeds")
 	}
 	fmt.Println()
-	fmt.Println("Execute Command Input")
-	intentIDRaw, err := a.promptLine("intent_id (blank = auto)")
+	fmt.Println("Ghost Command Wizard")
+	template, err := a.promptCommandTemplateSelection("Select command template", templates)
 	if err != nil {
 		return err
 	}
-	seedRaw, err := a.promptLine("seed_selector (seed.flow or seed.mongod)")
+	args, err := a.promptCommandArgs(template.Args)
 	if err != nil {
 		return err
 	}
-	operationRaw, err := a.promptLine("operation")
-	if err != nil {
-		return err
-	}
-	argsRaw, err := a.promptLine("args key=value,key=value (blank = none)")
-	if err != nil {
-		return err
-	}
-
+	intentID := fmt.Sprintf("intent.clienttm.%s.%d", normalizeSuffix(template.ID), time.Now().UnixMilli())
 	cmd := GhostAdminCommand{
-		IntentID:     strings.TrimSpace(intentIDRaw),
-		SeedSelector: strings.TrimSpace(seedRaw),
-		Operation:    strings.TrimSpace(operationRaw),
-		Args:         parseArgsCSV(argsRaw),
+		IntentID:     intentID,
+		SeedSelector: template.SeedSelector,
+		Operation:    template.Operation,
+		Args:         args,
 	}
 
 	execState, event, err := target.Admin.Execute(cmd)
@@ -1092,6 +1154,7 @@ func (a *App) executeSeedCommand(target GhostTarget) error {
 
 	fmt.Println()
 	fmt.Println("Execution Result")
+	fmt.Printf("  template:      %s\n", template.ID)
 	fmt.Printf("  command_id:    %s\n", execState.CommandID)
 	fmt.Printf("  execution_id:  %s\n", execState.ExecutionID)
 	fmt.Printf("  outcome:       %s\n", event.Outcome)
@@ -1210,64 +1273,144 @@ func (a *App) showVerification(target GhostTarget) error {
 }
 
 func (a *App) submitMirageIssue(target MirageTarget) error {
+	routes, err := target.Admin.RoutingTable()
+	if err != nil {
+		return err
+	}
+	services, err := target.Admin.AvailableServices()
+	if err != nil {
+		return err
+	}
+	templates := mirageIntentTemplatesForServices(services)
+	if len(templates) == 0 {
+		return errors.New("no supported intent templates for available services")
+	}
+
 	fmt.Println()
-	fmt.Println("Submit Issue Input")
-	intentID, err := a.promptLine("intent_id")
+	fmt.Println("Mirage Intent Wizard")
+	template, err := a.promptMirageIntentTemplateSelection("Select intent template", templates)
 	if err != nil {
 		return err
 	}
-	actor, err := a.promptLine("actor")
+	targetGhostIDs := connectedGhostCandidatesForSeed(routes, services, template.Command.SeedSelector)
+	if len(targetGhostIDs) == 0 {
+		return fmt.Errorf("no connected ghost found for seed %q", template.Command.SeedSelector)
+	}
+	ghostID, err := a.promptGhostIDSelection("Select target ghost", targetGhostIDs)
 	if err != nil {
 		return err
 	}
-	targetScope, err := a.promptLine("target_scope (example: ghost:ghost.local)")
+	args, err := a.promptCommandArgs(template.Command.Args)
 	if err != nil {
 		return err
 	}
-	objective, err := a.promptLine("objective")
+	actorRaw, err := a.promptLine("actor (blank = user:client-tm)")
 	if err != nil {
 		return err
 	}
-	ghostID, err := a.promptLine("command ghost_id")
-	if err != nil {
-		return err
+	actor := strings.TrimSpace(actorRaw)
+	if actor == "" {
+		actor = "user:client-tm"
 	}
-	seedSelector, err := a.promptLine("command seed_selector")
-	if err != nil {
-		return err
-	}
-	operation, err := a.promptLine("command operation")
-	if err != nil {
-		return err
-	}
-	argsRaw, err := a.promptLine("command args key=value,key=value (blank = none)")
-	if err != nil {
-		return err
-	}
-	blockingRaw, err := a.promptLine("command blocking (true/false, default false)")
-	if err != nil {
-		return err
-	}
-	blocking := strings.EqualFold(strings.TrimSpace(blockingRaw), "true")
+	intentID := fmt.Sprintf("intent.clienttm.%s.%d", normalizeSuffix(template.ID), time.Now().UnixMilli())
 	req := MirageIssueRequest{
-		IntentID:    strings.TrimSpace(intentID),
-		Actor:       strings.TrimSpace(actor),
-		TargetScope: strings.TrimSpace(targetScope),
-		Objective:   strings.TrimSpace(objective),
+		IntentID:    intentID,
+		Actor:       actor,
+		TargetScope: "ghost:" + ghostID,
+		Objective:   template.Description,
 		CommandPlan: []MirageIssueCommand{
 			{
-				GhostID:      strings.TrimSpace(ghostID),
-				SeedSelector: strings.TrimSpace(seedSelector),
-				Operation:    strings.TrimSpace(operation),
-				Args:         parseArgsCSV(argsRaw),
-				Blocking:     blocking,
+				GhostID:      ghostID,
+				SeedSelector: template.Command.SeedSelector,
+				Operation:    template.Command.Operation,
+				Args:         args,
+				Blocking:     template.Command.DefaultBlocking,
 			},
 		},
 	}
 	if err := target.Admin.SubmitIssue(req); err != nil {
 		return err
 	}
-	fmt.Printf("Issue submitted intent_id=%s\n", req.IntentID)
+	fmt.Printf("Issue submitted intent_id=%s template=%s ghost=%s\n", req.IntentID, template.ID, ghostID)
+	return nil
+}
+
+// storeFileViaMirageSeedFS runs one submit+reconcile flow to persist content through seed.fs on a selected ghost.
+func (a *App) storeFileViaMirageSeedFS(target MirageTarget) error {
+	routes, err := target.Admin.RoutingTable()
+	if err != nil {
+		return err
+	}
+	services, err := target.Admin.AvailableServices()
+	if err != nil {
+		return err
+	}
+	ghostIDs := connectedGhostCandidatesForSeed(routes, services, "seed.fs")
+	if len(ghostIDs) == 0 {
+		return errors.New("no connected ghost advertises seed.fs")
+	}
+	fmt.Println()
+	fmt.Println("Store File via seed.fs")
+	ghostID, err := a.promptGhostIDSelection("Select target ghost", ghostIDs)
+	if err != nil {
+		return err
+	}
+	filenameRaw, err := a.promptLine("filename (relative path)")
+	if err != nil {
+		return err
+	}
+	filename := strings.TrimSpace(filenameRaw)
+	if filename == "" {
+		return errors.New("filename required")
+	}
+	if filepath.IsAbs(filename) {
+		return errors.New("filename must be relative")
+	}
+	content, err := a.promptMultiline(
+		"Enter file content. Finish with a line containing only \".done\".",
+		".done",
+	)
+	if err != nil {
+		return err
+	}
+	actorRaw, err := a.promptLine("actor (blank = user:client-tm)")
+	if err != nil {
+		return err
+	}
+	actor := strings.TrimSpace(actorRaw)
+	if actor == "" {
+		actor = "user:client-tm"
+	}
+
+	intentID := fmt.Sprintf("intent.clienttm.seed.fs.store.%d", time.Now().UnixMilli())
+	req := MirageIssueRequest{
+		IntentID:    intentID,
+		Actor:       actor,
+		TargetScope: "ghost:" + ghostID,
+		Objective:   "store file via seed.fs",
+		CommandPlan: []MirageIssueCommand{
+			{
+				GhostID:      ghostID,
+				SeedSelector: "seed.fs",
+				Operation:    "write",
+				Args: map[string]string{
+					"path":    filename,
+					"content": content,
+				},
+				Blocking: true,
+			},
+		},
+	}
+	if err := target.Admin.SubmitIssue(req); err != nil {
+		return err
+	}
+	report, err := target.Admin.ReconcileIntent(intentID)
+	if err != nil {
+		return err
+	}
+	fmt.Println()
+	fmt.Printf("Stored file via seed.fs intent_id=%s ghost=%s path=%s\n", intentID, ghostID, filename)
+	printMirageReport("Seed.fs Store File Report", report)
 	return nil
 }
 
@@ -1451,6 +1594,99 @@ func (a *App) promptOptionalLimit() (int, error) {
 	return limit, nil
 }
 
+// promptCommandTemplateSelection renders one guided command template list and returns one selection.
+func (a *App) promptCommandTemplateSelection(label string, templates []CommandTemplate) (CommandTemplate, error) {
+	fmt.Println("Available Commands")
+	for i := range templates {
+		tpl := templates[i]
+		fmt.Printf("  %d) %s [%s %s]\n", i+1, tpl.Label, tpl.SeedSelector, tpl.Operation)
+		if strings.TrimSpace(tpl.Description) != "" {
+			fmt.Printf("     - %s\n", tpl.Description)
+		}
+	}
+	choice, err := a.promptInt(label, 1, len(templates), true, true)
+	if err != nil {
+		return CommandTemplate{}, err
+	}
+	return templates[choice-1], nil
+}
+
+// promptMirageIntentTemplateSelection renders one guided intent template list and returns one selection.
+func (a *App) promptMirageIntentTemplateSelection(
+	label string,
+	templates []MirageIntentTemplate,
+) (MirageIntentTemplate, error) {
+	fmt.Println("Available Intent Templates")
+	for i := range templates {
+		tpl := templates[i]
+		fmt.Printf("  %d) %s [%s %s]\n", i+1, tpl.Label, tpl.Command.SeedSelector, tpl.Command.Operation)
+		if strings.TrimSpace(tpl.Description) != "" {
+			fmt.Printf("     - %s\n", tpl.Description)
+		}
+	}
+	choice, err := a.promptInt(label, 1, len(templates), true, true)
+	if err != nil {
+		return MirageIntentTemplate{}, err
+	}
+	return templates[choice-1], nil
+}
+
+// promptGhostIDSelection renders selectable ghost ids for one intent target.
+func (a *App) promptGhostIDSelection(label string, ghostIDs []string) (string, error) {
+	fmt.Println("Eligible Ghost Targets")
+	for i := range ghostIDs {
+		fmt.Printf("  %d) %s\n", i+1, ghostIDs[i])
+	}
+	choice, err := a.promptInt(label, 1, len(ghostIDs), true, true)
+	if err != nil {
+		return "", err
+	}
+	return ghostIDs[choice-1], nil
+}
+
+// promptCommandArgs collects required/optional argument values for one command template.
+func (a *App) promptCommandArgs(specs []CommandArgSpec) (map[string]string, error) {
+	if len(specs) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(specs))
+	for i := range specs {
+		spec := specs[i]
+		if strings.TrimSpace(spec.Key) == "" {
+			continue
+		}
+		for {
+			prompt := strings.TrimSpace(spec.Prompt)
+			if prompt == "" {
+				prompt = spec.Key
+			}
+			if strings.TrimSpace(spec.DefaultValue) != "" {
+				prompt += fmt.Sprintf(" (default=%s)", spec.DefaultValue)
+			}
+			raw, err := a.promptLine(prompt)
+			if err != nil {
+				return nil, err
+			}
+			value := strings.TrimSpace(raw)
+			if value == "" && strings.TrimSpace(spec.DefaultValue) != "" {
+				value = strings.TrimSpace(spec.DefaultValue)
+			}
+			if spec.Required && value == "" {
+				fmt.Printf("Argument %q is required.\n", spec.Key)
+				continue
+			}
+			if value != "" {
+				out[spec.Key] = value
+			}
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
 func (a *App) active() (GhostTarget, bool) {
 	if a.activeTarget < 0 || a.activeTarget >= len(a.targets) {
 		return GhostTarget{}, false
@@ -1459,12 +1695,35 @@ func (a *App) active() (GhostTarget, bool) {
 }
 
 func (a *App) promptLine(label string) (string, error) {
-	fmt.Printf("%s: ", label)
+	if strings.TrimSpace(label) != "" {
+		fmt.Printf("%s: ", label)
+	}
 	line, err := a.reader.ReadString('\n')
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimRight(line, "\r\n"), nil
+}
+
+// promptMultiline captures multi-line text until a sentinel line is entered.
+func (a *App) promptMultiline(header string, terminator string) (string, error) {
+	term := strings.TrimSpace(terminator)
+	if term == "" {
+		term = ".done"
+	}
+	fmt.Println(header)
+	var lines []string
+	for {
+		line, err := a.promptLine("")
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(line) == term {
+			break
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n"), nil
 }
 
 func (a *App) promptInt(label string, min int, max int, allowBack bool, allowExit bool) (int, error) {
@@ -1889,10 +2148,304 @@ func indentLines(in string, prefix string) string {
 	return b.String()
 }
 
+// ghostCommandTemplateCatalog is the stable list of CLI-exposed Ghost commands.
+func ghostCommandTemplateCatalog() []CommandTemplate {
+	return []CommandTemplate{
+		{
+			ID:           "seed.flow.status",
+			Label:        "Flow Status",
+			Description:  "Read deterministic flow status.",
+			SeedSelector: "seed.flow",
+			Operation:    "status",
+		},
+		{
+			ID:           "seed.flow.step",
+			Label:        "Flow Step",
+			Description:  "Run deterministic flow step transition.",
+			SeedSelector: "seed.flow",
+			Operation:    "step",
+			Args: []CommandArgSpec{
+				{Key: "name", Prompt: "step name (init|plan|apply)", Required: true},
+			},
+		},
+		{
+			ID:           "seed.flow.echo",
+			Label:        "Flow Echo",
+			Description:  "Echo one key/value pair through seed.flow.",
+			SeedSelector: "seed.flow",
+			Operation:    "echo",
+			Args: []CommandArgSpec{
+				{Key: "message", Prompt: "message", Required: true},
+			},
+		},
+		{
+			ID:           "seed.mongod.status",
+			Label:        "MongoDB Status",
+			Description:  "Read mongod service status.",
+			SeedSelector: "seed.mongod",
+			Operation:    "status",
+			Args: []CommandArgSpec{
+				{Key: "unit", Prompt: "systemd unit", Required: false, DefaultValue: "mongod"},
+			},
+		},
+		{
+			ID:           "seed.mongod.start",
+			Label:        "MongoDB Start",
+			Description:  "Start mongod service.",
+			SeedSelector: "seed.mongod",
+			Operation:    "start",
+			Args: []CommandArgSpec{
+				{Key: "unit", Prompt: "systemd unit", Required: false, DefaultValue: "mongod"},
+			},
+		},
+		{
+			ID:           "seed.mongod.stop",
+			Label:        "MongoDB Stop",
+			Description:  "Stop mongod service.",
+			SeedSelector: "seed.mongod",
+			Operation:    "stop",
+			Args: []CommandArgSpec{
+				{Key: "unit", Prompt: "systemd unit", Required: false, DefaultValue: "mongod"},
+			},
+		},
+		{
+			ID:           "seed.mongod.restart",
+			Label:        "MongoDB Restart",
+			Description:  "Restart mongod service.",
+			SeedSelector: "seed.mongod",
+			Operation:    "restart",
+			Args: []CommandArgSpec{
+				{Key: "unit", Prompt: "systemd unit", Required: false, DefaultValue: "mongod"},
+			},
+		},
+		{
+			ID:           "seed.mongod.version",
+			Label:        "MongoDB Version",
+			Description:  "Read mongod binary version.",
+			SeedSelector: "seed.mongod",
+			Operation:    "version",
+		},
+		{
+			ID:           "seed.fs.write",
+			Label:        "Filesystem Write",
+			Description:  "Write file content under ghost-scoped seed.fs root.",
+			SeedSelector: "seed.fs",
+			Operation:    "write",
+			Args: []CommandArgSpec{
+				{Key: "path", Prompt: "relative file path", Required: true},
+				{Key: "content", Prompt: "file content", Required: true},
+			},
+			DefaultBlocking: true,
+		},
+		{
+			ID:           "seed.fs.read",
+			Label:        "Filesystem Read",
+			Description:  "Read file content from ghost-scoped seed.fs root.",
+			SeedSelector: "seed.fs",
+			Operation:    "read",
+			Args: []CommandArgSpec{
+				{Key: "path", Prompt: "relative file path", Required: true},
+			},
+			DefaultBlocking: true,
+		},
+		{
+			ID:           "seed.fs.list",
+			Label:        "Filesystem List",
+			Description:  "List file paths from ghost-scoped seed.fs root.",
+			SeedSelector: "seed.fs",
+			Operation:    "list",
+			Args: []CommandArgSpec{
+				{Key: "prefix", Prompt: "path prefix (optional)", Required: false},
+			},
+			DefaultBlocking: true,
+		},
+		{
+			ID:           "seed.fs.delete",
+			Label:        "Filesystem Delete",
+			Description:  "Delete file path from ghost-scoped seed.fs root.",
+			SeedSelector: "seed.fs",
+			Operation:    "delete",
+			Args: []CommandArgSpec{
+				{Key: "path", Prompt: "relative file path", Required: true},
+			},
+			DefaultBlocking: true,
+		},
+		{
+			ID:           "seed.kv.put",
+			Label:        "KV Put",
+			Description:  "Upsert key/value in seed.kv.",
+			SeedSelector: "seed.kv",
+			Operation:    "put",
+			Args: []CommandArgSpec{
+				{Key: "key", Prompt: "key", Required: true},
+				{Key: "value", Prompt: "value", Required: true},
+			},
+			DefaultBlocking: true,
+		},
+		{
+			ID:           "seed.kv.get",
+			Label:        "KV Get",
+			Description:  "Read value by key from seed.kv.",
+			SeedSelector: "seed.kv",
+			Operation:    "get",
+			Args: []CommandArgSpec{
+				{Key: "key", Prompt: "key", Required: true},
+			},
+			DefaultBlocking: true,
+		},
+		{
+			ID:           "seed.kv.list",
+			Label:        "KV List",
+			Description:  "List keys from seed.kv.",
+			SeedSelector: "seed.kv",
+			Operation:    "list",
+			Args: []CommandArgSpec{
+				{Key: "prefix", Prompt: "key prefix (optional)", Required: false},
+			},
+			DefaultBlocking: true,
+		},
+		{
+			ID:           "seed.kv.delete",
+			Label:        "KV Delete",
+			Description:  "Delete key from seed.kv.",
+			SeedSelector: "seed.kv",
+			Operation:    "delete",
+			Args: []CommandArgSpec{
+				{Key: "key", Prompt: "key", Required: true},
+			},
+			DefaultBlocking: true,
+		},
+	}
+}
+
+// mirageIntentTemplateCatalog defines the stable intent wizard entries for Mirage issue submission.
+func mirageIntentTemplateCatalog() []MirageIntentTemplate {
+	commands := ghostCommandTemplateCatalog()
+	out := make([]MirageIntentTemplate, 0, len(commands))
+	for i := range commands {
+		cmd := commands[i]
+		out = append(out, MirageIntentTemplate{
+			ID:          cmd.ID,
+			Label:       cmd.Label,
+			Description: cmd.Description,
+			Command:     cmd,
+		})
+	}
+	return out
+}
+
+// ghostCommandTemplatesForSeedList filters command templates to those supported by connected Ghost seeds.
+func ghostCommandTemplatesForSeedList(seedList []seeds.SeedMetadata) []CommandTemplate {
+	seedSet := make(map[string]struct{}, len(seedList))
+	opSetBySeed := make(map[string]map[string]struct{}, len(seedList))
+	for i := range seedList {
+		seedID := strings.TrimSpace(seedList[i].ID)
+		if seedID == "" {
+			continue
+		}
+		seedSet[seedID] = struct{}{}
+		specs := operationsForSeed(seedID)
+		opSet := make(map[string]struct{}, len(specs))
+		for j := range specs {
+			opSet[strings.TrimSpace(specs[j].Name)] = struct{}{}
+		}
+		opSetBySeed[seedID] = opSet
+	}
+	out := make([]CommandTemplate, 0)
+	for _, tpl := range ghostCommandTemplateCatalog() {
+		if _, ok := seedSet[tpl.SeedSelector]; !ok {
+			continue
+		}
+		if opSet, ok := opSetBySeed[tpl.SeedSelector]; ok {
+			if _, exists := opSet[tpl.Operation]; !exists {
+				continue
+			}
+		}
+		out = append(out, tpl)
+	}
+	sort.Slice(out, func(i int, j int) bool {
+		if out[i].SeedSelector == out[j].SeedSelector {
+			return out[i].Operation < out[j].Operation
+		}
+		return out[i].SeedSelector < out[j].SeedSelector
+	})
+	return out
+}
+
+// mirageIntentTemplatesForServices filters intent templates to those available in Mirage service discovery.
+func mirageIntentTemplatesForServices(services []MirageAvailableService) []MirageIntentTemplate {
+	availableSeeds := make(map[string]struct{}, len(services))
+	for i := range services {
+		seedID := strings.TrimSpace(services[i].SeedID)
+		if seedID == "" || len(services[i].GhostIDs) == 0 {
+			continue
+		}
+		availableSeeds[seedID] = struct{}{}
+	}
+	out := make([]MirageIntentTemplate, 0)
+	for _, tpl := range mirageIntentTemplateCatalog() {
+		if _, ok := availableSeeds[tpl.Command.SeedSelector]; !ok {
+			continue
+		}
+		out = append(out, tpl)
+	}
+	sort.Slice(out, func(i int, j int) bool {
+		if out[i].Command.SeedSelector == out[j].Command.SeedSelector {
+			return out[i].Command.Operation < out[j].Command.Operation
+		}
+		return out[i].Command.SeedSelector < out[j].Command.SeedSelector
+	})
+	return out
+}
+
+// connectedGhostCandidatesForSeed returns connected ghost ids that advertise one required seed.
+func connectedGhostCandidatesForSeed(
+	routes []MirageRoute,
+	services []MirageAvailableService,
+	seedID string,
+) []string {
+	connected := make(map[string]struct{}, len(routes))
+	for i := range routes {
+		route := routes[i]
+		if route.Connected {
+			connected[strings.TrimSpace(route.GhostID)] = struct{}{}
+		}
+	}
+	outSet := make(map[string]struct{})
+	for i := range services {
+		svc := services[i]
+		if strings.TrimSpace(svc.SeedID) != strings.TrimSpace(seedID) {
+			continue
+		}
+		for j := range svc.GhostIDs {
+			ghostID := strings.TrimSpace(svc.GhostIDs[j])
+			if ghostID == "" {
+				continue
+			}
+			if _, ok := connected[ghostID]; !ok {
+				continue
+			}
+			outSet[ghostID] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(outSet))
+	for ghostID := range outSet {
+		out = append(out, ghostID)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func operationsForSeed(seedID string) []seeds.OperationSpec {
 	switch strings.TrimSpace(seedID) {
 	case "seed.flow":
 		s := seedflow.NewSeed()
+		return sortedOps(s.Operations())
+	case "seed.fs":
+		s := seedfs.NewSeed()
+		return sortedOps(s.Operations())
+	case "seed.kv":
+		s := seedkv.NewSeed()
 		return sortedOps(s.Operations())
 	case "seed.mongod":
 		s := seedmongod.NewSeed()
