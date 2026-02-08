@@ -25,6 +25,13 @@ semantic_validation_failure = "1300"
 runtime_execution_failure = "1400"
 internal_error = "1500"
 
+[registration_ack_mapping]
+
+[registration_ack_mapping.rules]
+invalid_registration_payload = "1300"
+identity_binding_failure = "1000"
+declared_peer_mismatch = "1000"
+
 [behavior]
 
 [behavior.rules]

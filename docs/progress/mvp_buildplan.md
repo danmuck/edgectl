@@ -115,4 +115,5 @@ Use phase files for detailed task execution and acceptance check tracking.
 
 Current state:
 - P4 conformance transport/handshake/reliability baseline is closed (`docs/progress/p4_conformance_report.md`).
-- Remaining MVP gaps are Mirage Phase 5 orchestration concerns (`issue`/desired-state/reconcile/report).
+- Phase 5 baseline orchestration is in implementation with core loop/report/admin boundaries landed.
+- Remaining major gaps are Milestone 3 e2e coverage and Milestones 4/6+ hardening and boundary integration.

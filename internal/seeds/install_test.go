@@ -49,7 +49,7 @@ func TestNewInstallerRejectsInstallRootOutsideLocal(t *testing.T) {
 
 func TestInstallWorkspaceCopyFromBuildlog(t *testing.T) {
 	workspace := t.TempDir()
-	srcPath := filepath.Join(workspace, "docs", "progress", "buildlog", "2026-02-07_13:00.toml")
+	srcPath := filepath.Join(workspace, "local", "buildlogs", "2026-02-07_13:00.toml")
 	if err := os.MkdirAll(filepath.Dir(srcPath), 0o755); err != nil {
 		t.Fatalf("mkdir src: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestInstallWorkspaceCopyFromBuildlog(t *testing.T) {
 	err = installer.Install(InstallSpec{
 		SeedID:      "seed.archive",
 		Method:      InstallMethodWorkspaceCopy,
-		SourcePath:  "docs/progress/buildlog/2026-02-07_13:00.toml",
+		SourcePath:  "local/buildlogs/2026-02-07_13:00.toml",
 		Destination: "seed.archive/data/buildlog.toml",
 	})
 	if err != nil {

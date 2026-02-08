@@ -341,8 +341,7 @@ func (i *Installer) checkBrewVersion() error {
 func (i *Installer) allowedWorkspaceSource(srcAbs string) bool {
 	roots := []string{
 		filepath.Join(i.workspaceRoot, "local"),
-		filepath.Join(i.workspaceRoot, "docs", "progress", "buildlog"),
-		filepath.Join(i.workspaceRoot, "docs", "buildlog"),
+		filepath.Join(i.workspaceRoot, "local", "buildlogs"),
 	}
 	for _, root := range roots {
 		if isWithin(srcAbs, root) {

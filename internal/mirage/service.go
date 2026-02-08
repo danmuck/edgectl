@@ -51,7 +51,7 @@ func DefaultServiceConfig() ServiceConfig {
 		LocalGhostAdminAddr:    "127.0.0.1:7010",
 		BuildlogPersistEnabled: false,
 		BuildlogSeedSelector:   "seed.fs",
-		BuildlogKeyPrefix:      "buildlog/",
+		BuildlogKeyPrefix:      "local/buildlogs/",
 		RootGhostAdminAddr:     "",
 		Session:                session.DefaultConfig(),
 	}
@@ -516,7 +516,7 @@ func (s *Service) persistBuildlog(kind string, payload any) {
 	}
 	keyPrefix := strings.TrimSpace(s.cfg.BuildlogKeyPrefix)
 	if keyPrefix == "" {
-		keyPrefix = "buildlog/"
+		keyPrefix = "local/buildlogs/"
 	}
 	key := fmt.Sprintf("%s%s/%d", keyPrefix, strings.TrimSpace(kind), time.Now().UnixNano())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -534,13 +534,17 @@ func (s *Service) handleRegistration(
 ) (session.Registration, session.RegistrationAck) {
 	_ = conn.SetDeadline(time.Now().Add(s.cfg.Session.HandshakeTimeout))
 	now := uint64(time.Now().UnixMilli())
+	const (
+		errorCodeTransportFailure   = 1000
+		errorCodeSemanticValidation = 1300
+	)
 
 	reg, err := session.ReadRegistration(reader)
 	if err != nil {
 		logs.Warnf("mirage.handleRegistration read err=%v", err)
 		return session.Registration{}, session.RegistrationAck{
 			Status:      session.AckStatusRejected,
-			Code:        1001,
+			Code:        errorCodeSemanticValidation,
 			Message:     "invalid registration payload",
 			GhostID:     "unknown",
 			TimestampMS: now,
@@ -557,7 +561,7 @@ func (s *Service) handleRegistration(
 				)
 				return reg, session.RegistrationAck{
 					Status:      session.AckStatusRejected,
-					Code:        1002,
+					Code:        errorCodeTransportFailure,
 					Message:     "identity binding failure",
 					GhostID:     reg.GhostID,
 					TimestampMS: now,
@@ -572,7 +576,7 @@ func (s *Service) handleRegistration(
 				)
 				return reg, session.RegistrationAck{
 					Status:      session.AckStatusRejected,
-					Code:        1003,
+					Code:        errorCodeTransportFailure,
 					Message:     "declared peer mismatch",
 					GhostID:     reg.GhostID,
 					TimestampMS: now,
@@ -586,7 +590,7 @@ func (s *Service) handleRegistration(
 			)
 			return reg, session.RegistrationAck{
 				Status:      session.AckStatusRejected,
-				Code:        1002,
+				Code:        errorCodeTransportFailure,
 				Message:     "identity binding failure",
 				GhostID:     reg.GhostID,
 				TimestampMS: now,

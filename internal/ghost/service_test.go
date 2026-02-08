@@ -182,7 +182,7 @@ func TestServiceBootstrapRejectsSeedInstallNotWhitelisted(t *testing.T) {
 func TestServiceBootstrapInstallsWorkspaceCopySpec(t *testing.T) {
 	testlog.Start(t)
 	workspace := t.TempDir()
-	srcRel := filepath.Join("docs", "progress", "buildlog", "example.toml")
+	srcRel := filepath.Join("local", "buildlogs", "example.toml")
 	srcAbs := filepath.Join(workspace, srcRel)
 	if err := os.MkdirAll(filepath.Dir(srcAbs), 0o755); err != nil {
 		t.Fatalf("mkdir source: %v", err)

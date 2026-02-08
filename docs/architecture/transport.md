@@ -58,10 +58,26 @@ It builds on the architecture and protocol contracts.
   - Mirage marks Ghost as unavailable for new command dispatch.
   - Reconciliation continues for unaffected Ghost peers.
 
-## TODO Stub: Timeout / Retry / Idempotency
+## Timeout / Retry / Idempotency Baseline
 
-- [ ] Define connect timeout and handshake timeout defaults.
-- [ ] Define reconnect backoff policy and jitter.
-- [ ] Define heartbeat cadence and dead-session threshold.
-- [ ] Define delivery guarantees and retry ownership for command/event envelopes.
-- [ ] Define idempotent command replay semantics across reconnects.
+Current defaults are implemented in `internal/protocol/session` and mirror
+`definitions/reliability.toml`:
+
+- `connect_timeout_ms=5000`
+- `handshake_timeout_ms=5000`
+- `read_timeout_ms=15000`
+- `write_timeout_ms=15000`
+- `heartbeat_interval_ms=5000`
+- `session_dead_after_ms=15000`
+- retry backoff: `initial=250ms`, `multiplier=2.0`, `max=5000ms`, `jitter=required`
+
+Current behavior:
+
+- Ghost reconnects with bounded backoff after dial/session loss.
+- Ghost retries `event` delivery until accepted `event.ack` or `ack_timeout_ms`.
+- Mirage returns idempotent `event.ack` by `event_id`.
+
+Open integration work (Phase 6+):
+
+- complete end-to-end delivery guarantee tables by message type
+- finalize command replay/idempotency windows across reconnect boundaries

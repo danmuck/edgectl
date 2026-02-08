@@ -5,23 +5,29 @@ name = "EdgeCTL Observability Contract"
 version = "v1"
 scope = "logs, correlation, and custody reconstruction"
 
+[implementation_status]
+
+[implementation_status.fields]
+phase4_baseline = "component+status+message metadata are present in runtime logs"
+phase8_target = "structured log contract with deterministic required fields is pending"
+
 [required_log_fields]
 
 [required_log_fields.fields]
-component = "required"
-peer = "required"
-direction = "required"
-trace_id = "required"
-request_id = "required"
-message_id = "required"
-message_type = "required"
+component = "required_phase8_target"
+peer = "required_phase8_target"
+direction = "required_phase8_target"
+trace_id = "required_phase8_target"
+request_id = "required_phase8_target"
+message_id = "required_phase8_target"
+message_type = "required_phase8_target"
 intent_id = "optional"
 command_id = "optional"
 execution_id = "optional"
 event_id = "optional"
 ack_status = "optional"
-status = "required"
-timestamp_ms = "required"
+status = "required_current"
+timestamp_ms = "required_current"
 
 [correlation_rules]
 

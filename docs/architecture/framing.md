@@ -67,10 +67,19 @@ On framing error, receiver MUST:
 - include `component`, `peer`, `direction`, `message_id` (if available), `message_type` (if available), and reason code in logs
 - terminate session when stream safety cannot be guaranteed
 
-## TODO Stub: Timeout / Retry / Idempotency
+## Timeout / Retry / Idempotency Baseline
 
-- [ ] Define per-frame read deadline and write deadline defaults.
-- [ ] Define behavior for partial frame reads on timeout.
-- [ ] Define retry eligibility by message type and failure class.
-- [ ] Define replay safety rules for duplicate `message_id`.
-- [ ] Define idempotency key requirements for command-like envelopes.
+Current framing/runtime baseline:
+
+- per-read and per-write deadlines are enforced via session config defaults:
+  - `read_timeout_ms=15000`
+  - `write_timeout_ms=15000`
+- malformed/partial frames are treated as stream-unsafety and terminate session
+- unsupported flag bits are rejected at header decode
+- unknown field IDs are ignored semantically and preserved as inert TLV data
+
+Open integration work (Phase 6+):
+
+- publish retry eligibility matrix by message type and failure class
+- finalize replay handling guidance for duplicate session `message_id` values
+- finalize command/event idempotency key requirements for end-to-end contracts

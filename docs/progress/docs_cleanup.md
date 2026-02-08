@@ -10,7 +10,7 @@ Status: `Done`
 - [x] [P2 | Authority Boundary Clarity] Reconcile control-loop example with seed ownership model
 - [x] [P3 | Naming Consistency] Align diagram envelope names with canonical vocabulary (`seed.execute`, etc.)
 - [x] [P3 | Progress Doc Hygiene] Remove/merge duplicate Phase 3 checklist blocks for unambiguous status tracking
-- [x] [P4 | Buildlog Discipline] Require TOML build logs in `docs/progress/buildlog` with EST naming and follow-up prompts appended to the initial prompt log
+- [x] [P4 | Buildlog Discipline] Require TOML build logs in `local/buildlogs` with EST naming and follow-up prompts appended to the initial prompt log
 - [x] [P4 | Final Pass] Verify all docs can be assumed canonical, update [`../../AGENTS.md`](../../AGENTS.md) to require explicit approval for canonical doc changes, and require canonical references in package `doc.go` stubs.
 - [x] [P4 | Final Verify] Verify all current code aligns with the documentation.  
   Current status: see [`p4_conformance_report.md`](p4_conformance_report.md).
@@ -36,7 +36,7 @@ Status: `Done`
 
 - [x] Repository-level governance file added at `AGENTS.md` with canonical-source and change-control requirements.
 - [x] Package `doc.go` stubs updated to reference canonical contracts before implementation changes.
-- [x] Buildlog policy, naming scheme, and TOML template added under `docs/progress/buildlog/` with scope-based log rollover and follow-up append rules.
+- [x] Buildlog policy/template kept under `docs/progress/buildlog/`; active build logs saved under `local/buildlogs/` with scope-based log rollover and follow-up append rules.
 - [x] Test tooling UX pass added `cmd/testctl` and consolidated test entrypoints to `make test` (interactive package/module selection) and `make test-override` (full suite non-interactive), with grouped test listing, indented logs, per-package/per-test result matrix, and end-of-run totals.
 - [x] `2026-02-07` verification + implementation passes completed; `go test ./...` passes, P1 is closed, and P2 runtime now includes session primitives, minimal Mirage endpoint, Ghost client, config/policy wiring, reconnect baseline tests, step-3 resilience scenarios (ack-timeout + replay-across-reconnect coverage), and TLS/mTLS transport security enforcement with certificate-backed identity binding.  
   Source: `p4_conformance_report.md`.

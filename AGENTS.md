@@ -15,12 +15,12 @@ These instructions govern how agents should make changes in this repository.
 - Do not modify canonical contract files or architecture models without explicit user approval in the active thread.
 - If code and canonical docs disagree, treat docs as authoritative and open/fix implementation gaps rather than silently changing docs.
 - Agents SHOULD update `docs/progress/` on every pass to reflect current status and findings.
-- Agents SHOULD update `docs/progress/buildlog/` on every pass.
+- Agents SHOULD update `local/buildlogs/` on every pass.
 - Docs outside `docs/progress/` are read-only by default and MUST NOT be modified without explicit user approval in the active thread. New files are allowed if necessary, but no modifications to existing files in these directories without express user approval.
 
 ## Build Log Policy
 
-- Build logs live under `docs/progress/buildlog/`.
+- Build logs live under `local/buildlogs/`.
 - Agents MUST create one build log file for the initial prompt using `docs/progress/buildlog/template.toml`.
 - Agents MUST append follow-up prompts to the same build log when prompts are short, concise, single-target clarifications within the same workstream.
 - Agents MUST create a new build log when prompt scope changes or when a prompt initiates a larger problem space.
