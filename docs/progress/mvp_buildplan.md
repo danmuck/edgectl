@@ -52,7 +52,7 @@ Use phase files for detailed task execution and acceptance check tracking.
 - [x] Implement Mirage minimal reconcile loop (single command target)
 - [x] Implement Ghost command routing to seed registry and execution adapter
 - [x] Implement event emission and Mirage report generation
-- [ ] Add Mirage e2e test: `issue -> command -> seed.execute -> seed.result -> event -> report`
+- [x] Add Mirage e2e test: `issue -> command -> seed.execute -> seed.result -> event -> report`
 
 - [ ] Milestone 4: MVP hardening gate
 - [x] Add retry/backoff + idempotency behavior per `reliability.toml`
@@ -73,13 +73,13 @@ Use phase files for detailed task execution and acceptance check tracking.
 - [x] Add temporary persistence seeds (`seed.kv` and `seed.fs`) and route buildlog persistence through seed execution
 
 - [ ] Milestone 6: Boundary transport integration (`mvp_p6.md`)
-- [ ] Bind control-plane links to protocol envelopes (not ad-hoc calls)
+- [x] Bind Mirage command dispatch link to Ghost admin execute boundary to protocol envelopes (`execute_envelope`)
 - [ ] Replace direct action-style HTTP shortcuts between Mirage and Ghost
 - [ ] Wire optional auth block handling and validation hooks
 - [ ] Add contract tests for all boundaries
 
 - [ ] Milestone 7: End-to-end control loop validation (`mvp_p7.md`)
-- [ ] Add E2E scenario: intent -> command -> seed execution -> event -> report
+- [x] Add E2E scenario: intent -> command -> seed execution -> event -> report
 - [ ] Add deterministic logs for ownership transitions
 - [ ] Add E2E failure scenario with corrective behavior
 
@@ -116,4 +116,4 @@ Use phase files for detailed task execution and acceptance check tracking.
 Current state:
 - P4 conformance transport/handshake/reliability baseline is closed (`docs/progress/p4_conformance_report.md`).
 - Phase 5 baseline orchestration is in implementation with core loop/report/admin boundaries landed.
-- Remaining major gaps are Milestone 3 e2e coverage and Milestones 4/6+ hardening and boundary integration.
+- Deterministic orchestration e2e coverage is now present for `seed.fs` store/fanout flow; remaining major gaps are Milestones 4/6+ hardening, full boundary envelope migration, and contract test expansion.

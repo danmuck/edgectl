@@ -3,10 +3,14 @@ package mirage
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
 	"github.com/danmuck/edgectl/internal/protocol/session"
+	seedfs "github.com/danmuck/edgectl/internal/seeds/fs"
 	"github.com/danmuck/edgectl/internal/testutil/testlog"
 )
 
@@ -157,5 +161,135 @@ func TestOrchestratorIngestObservedEventByCommandID(t *testing.T) {
 	}
 	if report.Phase != ReportPhaseComplete {
 		t.Fatalf("unexpected report phase: %q", report.Phase)
+	}
+}
+
+type fsGhostExecutor struct {
+	ghostID string
+	seed    seedfs.Seed
+}
+
+// ExecuteCommand applies one command against a filesystem seed and returns one event.
+func (e *fsGhostExecutor) ExecuteCommand(_ context.Context, cmd session.Command) (session.Event, error) {
+	result, err := e.seed.Execute(cmd.Operation, cmd.Args)
+	outcome := OutcomeSuccess
+	if err != nil || result.Status != "ok" || result.ExitCode != 0 {
+		outcome = OutcomeError
+	}
+	return session.Event{
+		EventID:     fmt.Sprintf("evt.%s", cmd.CommandID),
+		CommandID:   cmd.CommandID,
+		IntentID:    cmd.IntentID,
+		GhostID:     e.ghostID,
+		SeedID:      cmd.SeedSelector,
+		Outcome:     outcome,
+		TimestampMS: uint64(time.Now().UnixMilli()),
+	}, nil
+}
+
+func TestOrchestratorControlLoopE2EStoreAndCopyToAllSeedFSGhosts(t *testing.T) {
+	testlog.Start(t)
+
+	loop := NewOrchestrator()
+	roots := map[string]string{
+		"ghost.alpha": t.TempDir(),
+		"ghost.beta":  t.TempDir(),
+	}
+	for ghostID, root := range roots {
+		if err := loop.RegisterExecutor(ghostID, &fsGhostExecutor{
+			ghostID: ghostID,
+			seed:    seedfs.NewSeedWithRoot(root),
+		}); err != nil {
+			t.Fatalf("register executor %s: %v", ghostID, err)
+		}
+	}
+
+	// Intent 1: store one file to a single ghost seed.fs instance.
+	if err := loop.SubmitIssue(IssueEnv{
+		IntentID:    "intent.store.1",
+		Actor:       "user:dan",
+		TargetScope: "ghost:ghost.alpha",
+		Objective:   "store seed file",
+		CommandPlan: []IssueCommand{
+			{
+				GhostID:      "ghost.alpha",
+				SeedSelector: "seed.fs",
+				Operation:    "write",
+				Args: map[string]string{
+					"path":    "payloads/source.txt",
+					"content": "hello from mirage intent",
+				},
+				Blocking: true,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("submit store intent: %v", err)
+	}
+	storeReport, err := loop.ReconcileOnce(context.Background(), "intent.store.1")
+	if err != nil {
+		t.Fatalf("reconcile store intent: %v", err)
+	}
+	if storeReport.Phase != ReportPhaseComplete || storeReport.CompletionState != CompletionSatisfied {
+		t.Fatalf("unexpected store report: %+v", storeReport)
+	}
+	sourcePath := filepath.Join(roots["ghost.alpha"], "payloads", "source.txt")
+	sourceContent, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("read source file: %v", err)
+	}
+
+	// Intent 2: copy file content to all ghosts that have seed.fs executors.
+	ghostIDs := make([]string, 0, len(roots))
+	for ghostID := range roots {
+		ghostIDs = append(ghostIDs, ghostID)
+	}
+	sort.Strings(ghostIDs)
+	commands := make([]IssueCommand, 0, len(ghostIDs))
+	for _, ghostID := range ghostIDs {
+		commands = append(commands, IssueCommand{
+			GhostID:      ghostID,
+			SeedSelector: "seed.fs",
+			Operation:    "write",
+			Args: map[string]string{
+				"path":    "payloads/copied.txt",
+				"content": string(sourceContent),
+			},
+			Blocking: true,
+		})
+	}
+	if err := loop.SubmitIssue(IssueEnv{
+		IntentID:    "intent.copy.all.1",
+		Actor:       "user:dan",
+		TargetScope: "ghost:all",
+		Objective:   "copy to all seed.fs ghosts",
+		CommandPlan: commands,
+	}); err != nil {
+		t.Fatalf("submit copy intent: %v", err)
+	}
+
+	copyReportA, err := loop.ReconcileOnce(context.Background(), "intent.copy.all.1")
+	if err != nil {
+		t.Fatalf("reconcile copy pass A: %v", err)
+	}
+	if copyReportA.Phase != ReportPhaseInProgress {
+		t.Fatalf("expected in_progress after first copy command, got %+v", copyReportA)
+	}
+	copyReportB, err := loop.ReconcileOnce(context.Background(), "intent.copy.all.1")
+	if err != nil {
+		t.Fatalf("reconcile copy pass B: %v", err)
+	}
+	if copyReportB.Phase != ReportPhaseComplete || copyReportB.CompletionState != CompletionSatisfied {
+		t.Fatalf("unexpected terminal copy report: %+v", copyReportB)
+	}
+
+	for _, ghostID := range ghostIDs {
+		outPath := filepath.Join(roots[ghostID], "payloads", "copied.txt")
+		out, err := os.ReadFile(outPath)
+		if err != nil {
+			t.Fatalf("read copied file for %s: %v", ghostID, err)
+		}
+		if string(out) != string(sourceContent) {
+			t.Fatalf("unexpected copied content for %s: %q", ghostID, string(out))
+		}
 	}
 }

@@ -120,7 +120,7 @@ func TestServerRegistrationEnrichesMongodDescriptionWithEndpointURI(t *testing.T
 	if !strings.Contains(kvDesc, "persistence=in_memory") || !strings.Contains(kvDesc, "seed_scope=ghost_local_cache") || !strings.Contains(kvDesc, "ghost_id=ghost.alpha") {
 		t.Fatalf("unexpected kv description enrichment: %q", kvDesc)
 	}
-	if !strings.Contains(fsDesc, "path_root=local/dir") || !strings.Contains(fsDesc, "seed_scope=ghost_local_filesystem") || !strings.Contains(fsDesc, "ghost_id=ghost.alpha") {
+	if !strings.Contains(fsDesc, "path_root=local/dir/ghost.alpha") || !strings.Contains(fsDesc, "seed_scope=ghost_local_filesystem") || !strings.Contains(fsDesc, "ghost_id=ghost.alpha") {
 		t.Fatalf("unexpected fs description enrichment: %q", fsDesc)
 	}
 }

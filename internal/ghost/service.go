@@ -160,7 +160,7 @@ func (s *Service) bootstrap() error {
 		return err
 	}
 
-	reg, err := buildBuiltinRegistry(s.cfg.BuiltinSeedIDs)
+	reg, err := buildBuiltinRegistry(s.cfg.BuiltinSeedIDs, s.cfg.GhostID)
 	if err != nil {
 		return err
 	}
@@ -462,8 +462,12 @@ func validateMiragePolicy(policy MirageSessionPolicy) error {
 }
 
 // Ghost builtin-seed resolver that builds a runtime registry.
-func buildBuiltinRegistry(seedIDs []string) (*seeds.Registry, error) {
+func buildBuiltinRegistry(seedIDs []string, ghostID string) (*seeds.Registry, error) {
 	reg := seeds.NewRegistry()
+	localGhostID := strings.TrimSpace(ghostID)
+	if localGhostID == "" {
+		localGhostID = "ghost.local"
+	}
 
 	seen := make(map[string]struct{})
 	for _, raw := range seedIDs {
@@ -490,7 +494,9 @@ func buildBuiltinRegistry(seedIDs []string) (*seeds.Registry, error) {
 				return nil, err
 			}
 		case "seed.fs", "fs":
-			if err := reg.Register(seedfs.NewSeed()); err != nil {
+			// Seed.fs uses a ghost-scoped root to avoid collisions on shared hosts.
+			root := filepath.Join("local", "dir", localGhostID)
+			if err := reg.Register(seedfs.NewSeedWithRoot(root)); err != nil {
 				return nil, err
 			}
 		default:

@@ -1,10 +1,10 @@
 # MVP Progress — Phase 7 (End-to-End Control Loop)
 
-Status: `Not Started`
+Status: `In Progress`
 
 ### Tasks
 
-- [ ] Add E2E scenario: intent -> command -> seed execution -> event -> report
+- [x] Add deterministic E2E scenario: store file intent on one `seed.fs` ghost, then copy intent to all `seed.fs` ghosts (`internal/mirage/orchestration_test.go`)
 - [ ] Add deterministic logs for ownership transitions
 - [ ] Add E2E failure scenario with corrective behavior
 

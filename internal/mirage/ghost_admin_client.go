@@ -2,6 +2,7 @@ package mirage
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,25 +10,28 @@ import (
 	"strings"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/protocol/frame"
 	"github.com/danmuck/edgectl/internal/protocol/session"
 )
 
 const (
-	spawnGhostAction = "spawn_ghost"
-	executeAction    = "execute"
-	statusAction     = "status"
-	listSeedsAction  = "list_seeds"
-	bindMirageAction = "bind_mirage"
+	spawnGhostAction      = "spawn_ghost"
+	executeEnvelopeAction = "execute_envelope"
+	statusAction          = "status"
+	listSeedsAction       = "list_seeds"
+	bindMirageAction      = "bind_mirage"
 )
 
 type ghostControlRequest struct {
-	Action   string            `json:"action"`
-	Spawn    SpawnGhostRequest `json:"spawn,omitempty"`
-	Command  ghostAdminCommand `json:"command,omitempty"`
-	MirageID string            `json:"mirage_id,omitempty"`
+	Action       string            `json:"action"`
+	Spawn        SpawnGhostRequest `json:"spawn,omitempty"`
+	Command      ghostAdminCommand `json:"command,omitempty"`
+	CommandFrame []byte            `json:"command_frame,omitempty"`
+	MirageID     string            `json:"mirage_id,omitempty"`
 }
 
 type ghostAdminCommand struct {
+	GhostID      string            `json:"ghost_id,omitempty"`
 	CommandID    string            `json:"command_id,omitempty"`
 	IntentID     string            `json:"intent_id"`
 	SeedSelector string            `json:"seed_selector"`
@@ -53,6 +57,10 @@ type ghostEvent struct {
 
 type ghostExecuteResponse struct {
 	Event ghostEvent `json:"event"`
+}
+
+type ghostExecuteEnvelopeResponse struct {
+	EventFrame []byte `json:"event_frame"`
 }
 
 type ghostLifecycleStatus struct {
@@ -94,24 +102,35 @@ func (c *GhostControlClient) SpawnLocalGhost(ctx context.Context, req SpawnGhost
 	return out, nil
 }
 
-// ExecuteAdminCommand calls ghost "execute" and returns one terminal event payload.
+// ExecuteAdminCommand calls ghost "execute_envelope" and returns one terminal event payload.
 func (c *GhostControlClient) ExecuteAdminCommand(ctx context.Context, command ghostAdminCommand) (session.Event, error) {
-	var out ghostExecuteResponse
+	ghostID := strings.TrimSpace(command.GhostID)
+	if ghostID == "" {
+		ghostID = "ghost.local"
+	}
+	cmdFrame, err := session.EncodeCommandFrame(1, session.Command{
+		CommandID:    strings.TrimSpace(command.CommandID),
+		IntentID:     strings.TrimSpace(command.IntentID),
+		GhostID:      ghostID,
+		SeedSelector: strings.TrimSpace(command.SeedSelector),
+		Operation:    strings.TrimSpace(command.Operation),
+		Args:         copyArgs(command.Args),
+	})
+	if err != nil {
+		return session.Event{}, err
+	}
+	var out ghostExecuteEnvelopeResponse
 	if err := c.call(ctx, ghostControlRequest{
-		Action:  executeAction,
-		Command: command,
+		Action:       executeEnvelopeAction,
+		CommandFrame: cmdFrame,
 	}, &out); err != nil {
 		return session.Event{}, err
 	}
-	return session.Event{
-		EventID:     strings.TrimSpace(out.Event.EventID),
-		CommandID:   strings.TrimSpace(out.Event.CommandID),
-		IntentID:    strings.TrimSpace(out.Event.IntentID),
-		GhostID:     strings.TrimSpace(out.Event.GhostID),
-		SeedID:      strings.TrimSpace(out.Event.SeedID),
-		Outcome:     strings.TrimSpace(out.Event.Outcome),
-		TimestampMS: out.Event.TimestampMS,
-	}, nil
+	fr, err := frame.ReadFrame(bytes.NewReader(out.EventFrame), frame.DefaultLimits())
+	if err != nil {
+		return session.Event{}, err
+	}
+	return session.DecodeEventFrame(fr)
 }
 
 // Status reads ghost identity/state from the ghost admin endpoint.
@@ -225,6 +244,7 @@ func (e *GhostAdminCommandExecutor) ExecuteCommand(ctx context.Context, cmd sess
 		return session.Event{}, fmt.Errorf("mirage: nil ghost executor client")
 	}
 	event, err := e.client.ExecuteAdminCommand(ctx, ghostAdminCommand{
+		GhostID:      strings.TrimSpace(cmd.GhostID),
 		CommandID:    strings.TrimSpace(cmd.CommandID),
 		IntentID:     strings.TrimSpace(cmd.IntentID),
 		SeedSelector: strings.TrimSpace(cmd.SeedSelector),

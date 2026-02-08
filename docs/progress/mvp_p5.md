@@ -20,7 +20,7 @@ Status: `In Progress`
 - [x] Wire Mirage runtime reconcile path through admin controls (`reconcile_intent`, `reconcile_all`, snapshots, report history)
 - [x] Define Mirage-owned local Ghost runtime config in `mirage.toml` (`local_ghost_id`, `local_ghost_admin_addr`, local runtime settings)
 - [x] Run managed local Ghost from `miragectl` in-process with default admin `127.0.0.1:7010` and keep standalone `ghostctl` default on `127.0.0.1:7011`
-- [x] Add temporary persistence seeds: `seed.kv` (in-memory state) and `seed.fs` (file-backed under `local/dir`)
+- [x] Add temporary persistence seeds: `seed.kv` (in-memory state) and `seed.fs` (file-backed under `local/dir/<ghost_id>`)
 - [x] Persist Mirage buildlog entries through ghost seed execution path (`seed.fs` default, `seed.kv` optional)
 - [x] Emit connection lifecycle logs as `WARN` for both Mirage and Ghost runtime boundaries
 - [x] Expose admin discovery views for connected ghosts, routing table, and available services

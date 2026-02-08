@@ -329,7 +329,7 @@ func enrichSeedListForGhost(ghostID string, remoteAddr string, in []session.Seed
 			desc = appendDiscoveryField(desc, "host=", host)
 			desc = appendDiscoveryField(desc, "seed_scope=", "network_service")
 		case "seed.fs":
-			desc = appendDiscoveryField(desc, "path_root=", "local/dir")
+			desc = appendDiscoveryField(desc, "path_root=", fsSeedRootForGhost(ghostID))
 			desc = appendDiscoveryField(desc, "seed_scope=", "ghost_local_filesystem")
 		case "seed.kv":
 			desc = appendDiscoveryField(desc, "persistence=", "in_memory")
@@ -344,6 +344,14 @@ func enrichSeedListForGhost(ghostID string, remoteAddr string, in []session.Seed
 		out[i].Description = desc
 	}
 	return out
+}
+
+func fsSeedRootForGhost(ghostID string) string {
+	id := strings.TrimSpace(ghostID)
+	if id == "" {
+		id = "ghost.local"
+	}
+	return "local/dir/" + id
 }
 
 func appendDiscoveryField(desc string, key string, value string) string {

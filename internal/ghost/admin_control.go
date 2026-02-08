@@ -2,6 +2,7 @@ package ghost
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,7 +10,9 @@ import (
 	"net"
 	"strings"
 
+	"github.com/danmuck/edgectl/internal/protocol/frame"
 	"github.com/danmuck/edgectl/internal/protocol/schema"
+	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/seeds"
 	logs "github.com/danmuck/smplog"
 )
@@ -45,12 +48,13 @@ type VerificationRecord struct {
 
 // controlRequest is one admin action envelope consumed by ghostctl.
 type controlRequest struct {
-	Action    string            `json:"action"`
-	Limit     int               `json:"limit,omitempty"`
-	CommandID string            `json:"command_id,omitempty"`
-	Command   AdminCommand      `json:"command,omitempty"`
-	Spawn     SpawnGhostRequest `json:"spawn,omitempty"`
-	MirageID  string            `json:"mirage_id,omitempty"`
+	Action       string            `json:"action"`
+	Limit        int               `json:"limit,omitempty"`
+	CommandID    string            `json:"command_id,omitempty"`
+	Command      AdminCommand      `json:"command,omitempty"`
+	CommandFrame []byte            `json:"command_frame,omitempty"`
+	Spawn        SpawnGhostRequest `json:"spawn,omitempty"`
+	MirageID     string            `json:"mirage_id,omitempty"`
 }
 
 // controlResponse is one admin action result envelope emitted by ghostctl.
@@ -238,6 +242,12 @@ func (s *Service) handleControlRequest(req controlRequest) controlResponse {
 				"event":     event,
 			},
 		}
+	case "execute_envelope":
+		out, err := s.executeAdminCommandEnvelope(req.CommandFrame)
+		if err != nil {
+			return controlResponse{OK: false, Error: err.Error()}
+		}
+		return controlResponse{OK: true, Data: out}
 	case "execution_by_command_id":
 		state, ok := s.ExecutionByCommandID(req.CommandID)
 		return controlResponse{
@@ -263,6 +273,48 @@ func (s *Service) handleControlRequest(req controlRequest) controlResponse {
 	default:
 		return controlResponse{OK: false, Error: fmt.Sprintf("unknown action: %s", req.Action)}
 	}
+}
+
+type executeEnvelopeResponse struct {
+	EventFrame []byte `json:"event_frame"`
+}
+
+// executeAdminCommandEnvelope decodes one command frame and returns one terminal event frame.
+func (s *Service) executeAdminCommandEnvelope(commandFrame []byte) (executeEnvelopeResponse, error) {
+	if len(commandFrame) == 0 {
+		return executeEnvelopeResponse{}, fmt.Errorf("ghost.admin: missing command_frame")
+	}
+	fr, err := frame.ReadFrame(bytes.NewReader(commandFrame), frame.DefaultLimits())
+	if err != nil {
+		return executeEnvelopeResponse{}, err
+	}
+	cmd, err := session.DecodeCommandFrame(fr)
+	if err != nil {
+		return executeEnvelopeResponse{}, err
+	}
+	_, event, err := s.ExecuteAdminCommand(AdminCommand{
+		CommandID:    strings.TrimSpace(cmd.CommandID),
+		IntentID:     strings.TrimSpace(cmd.IntentID),
+		SeedSelector: strings.TrimSpace(cmd.SeedSelector),
+		Operation:    strings.TrimSpace(cmd.Operation),
+		Args:         cloneArgs(cmd.Args),
+	})
+	if err != nil {
+		return executeEnvelopeResponse{}, err
+	}
+	eventFrame, err := session.EncodeEventFrame(fr.Header.MessageID, session.Event{
+		EventID:     event.EventID,
+		CommandID:   event.CommandID,
+		IntentID:    event.IntentID,
+		GhostID:     event.GhostID,
+		SeedID:      event.SeedID,
+		Outcome:     event.Outcome,
+		TimestampMS: event.TimestampMS,
+	})
+	if err != nil {
+		return executeEnvelopeResponse{}, err
+	}
+	return executeEnvelopeResponse{EventFrame: eventFrame}, nil
 }
 
 func writeControlResponse(w io.Writer, resp controlResponse) error {

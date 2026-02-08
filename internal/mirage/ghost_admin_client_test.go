@@ -2,12 +2,14 @@ package mirage
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"net"
 	"testing"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/protocol/frame"
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/testutil/testlog"
 )
@@ -51,19 +53,34 @@ func TestGhostControlClientSpawnAndExecute(t *testing.T) {
 						AdminAddr:  "127.0.0.1:7119",
 					}),
 				}
-			case executeAction:
+			case executeEnvelopeAction:
+				fr, err := frame.ReadFrame(bytes.NewReader(req.CommandFrame), frame.DefaultLimits())
+				if err != nil {
+					_ = conn.Close()
+					return
+				}
+				cmd, err := session.DecodeCommandFrame(fr)
+				if err != nil {
+					_ = conn.Close()
+					return
+				}
+				eventFrame, err := session.EncodeEventFrame(fr.Header.MessageID, session.Event{
+					EventID:     "evt.cmd.intent.1.1",
+					CommandID:   cmd.CommandID,
+					IntentID:    cmd.IntentID,
+					GhostID:     cmd.GhostID,
+					SeedID:      cmd.SeedSelector,
+					Outcome:     "success",
+					TimestampMS: uint64(time.Now().UnixMilli()),
+				})
+				if err != nil {
+					_ = conn.Close()
+					return
+				}
 				resp = ghostControlResponse{
 					OK: true,
-					Data: mustJSON(t, ghostExecuteResponse{
-						Event: ghostEvent{
-							EventID:     "evt.cmd.intent.1.1",
-							CommandID:   req.Command.CommandID,
-							IntentID:    req.Command.IntentID,
-							GhostID:     "ghost.local",
-							SeedID:      req.Command.SeedSelector,
-							Outcome:     "success",
-							TimestampMS: uint64(time.Now().UnixMilli()),
-						},
+					Data: mustJSON(t, ghostExecuteEnvelopeResponse{
+						EventFrame: eventFrame,
 					}),
 				}
 			}
@@ -128,19 +145,33 @@ func TestGhostAdminCommandExecutor(t *testing.T) {
 			return
 		}
 		resp := ghostControlResponse{
-			OK: true,
-			Data: mustJSON(t, ghostExecuteResponse{
-				Event: ghostEvent{
-					EventID:     "evt." + req.Command.CommandID,
-					CommandID:   req.Command.CommandID,
-					IntentID:    req.Command.IntentID,
-					GhostID:     "ghost.local",
-					SeedID:      req.Command.SeedSelector,
-					Outcome:     "success",
-					TimestampMS: uint64(time.Now().UnixMilli()),
-				},
-			}),
+			OK:   true,
+			Data: mustJSON(t, ghostExecuteEnvelopeResponse{}),
 		}
+		if req.Action != executeEnvelopeAction {
+			return
+		}
+		fr, err := frame.ReadFrame(bytes.NewReader(req.CommandFrame), frame.DefaultLimits())
+		if err != nil {
+			return
+		}
+		cmd, err := session.DecodeCommandFrame(fr)
+		if err != nil {
+			return
+		}
+		eventFrame, err := session.EncodeEventFrame(fr.Header.MessageID, session.Event{
+			EventID:     "evt." + cmd.CommandID,
+			CommandID:   cmd.CommandID,
+			IntentID:    cmd.IntentID,
+			GhostID:     cmd.GhostID,
+			SeedID:      cmd.SeedSelector,
+			Outcome:     "success",
+			TimestampMS: uint64(time.Now().UnixMilli()),
+		})
+		if err != nil {
+			return
+		}
+		resp.Data = mustJSON(t, ghostExecuteEnvelopeResponse{EventFrame: eventFrame})
 		payload, _ := json.Marshal(resp)
 		payload = append(payload, '\n')
 		_, _ = conn.Write(payload)

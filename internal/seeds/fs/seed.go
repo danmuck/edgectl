@@ -16,7 +16,7 @@ const (
 	SeedID = "seed.fs"
 )
 
-// Seed is a filesystem persistence adapter scoped to local/dir.
+// Seed is a filesystem persistence adapter scoped to one configured root.
 type Seed struct {
 	root string
 }
@@ -37,24 +37,28 @@ func NewSeedWithRoot(root string) Seed {
 
 // Metadata returns stable seed identity and capability details.
 func (s Seed) Metadata() seeds.SeedMetadata {
+	root := strings.TrimSpace(filepath.ToSlash(s.root))
+	if root == "" {
+		root = "local/dir"
+	}
 	return seeds.SeedMetadata{
 		ID:          SeedID,
-		Name:        "Filesystem (local/dir)",
-		Description: "Temporary file persistence seed scoped to local/dir",
+		Name:        "Filesystem",
+		Description: "Temporary file persistence seed scoped to " + root,
 	}
 }
 
 // Operations returns supported filesystem persistence operations.
 func (s Seed) Operations() []seeds.OperationSpec {
 	return []seeds.OperationSpec{
-		{Name: "write", Description: "write content to relative path under local/dir", Idempotent: true},
-		{Name: "read", Description: "read content from relative path under local/dir", Idempotent: true},
-		{Name: "delete", Description: "delete file path under local/dir", Idempotent: true},
-		{Name: "list", Description: "list file paths under local/dir (optional prefix)", Idempotent: true},
+		{Name: "write", Description: "write content to relative path under seed root", Idempotent: true},
+		{Name: "read", Description: "read content from relative path under seed root", Idempotent: true},
+		{Name: "delete", Description: "delete file path under seed root", Idempotent: true},
+		{Name: "list", Description: "list file paths under seed root (optional prefix)", Idempotent: true},
 	}
 }
 
-// Execute applies one filesystem operation scoped to local/dir.
+// Execute applies one filesystem operation scoped to the configured seed root.
 func (s Seed) Execute(action string, args map[string]string) (seeds.SeedResult, error) {
 	switch strings.TrimSpace(action) {
 	case "write":
@@ -165,4 +169,3 @@ func errorResult(err error) seeds.SeedResult {
 		ExitCode: 1,
 	}
 }
-

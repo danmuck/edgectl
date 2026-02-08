@@ -18,7 +18,7 @@ import (
 
 func TestBuildBuiltinRegistryFlow(t *testing.T) {
 	testlog.Start(t)
-	reg, err := buildBuiltinRegistry([]string{"seed.flow"})
+	reg, err := buildBuiltinRegistry([]string{"seed.flow"}, "ghost.alpha")
 	if err != nil {
 		t.Fatalf("build registry failed: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestBuildBuiltinRegistryFlow(t *testing.T) {
 
 func TestBuildBuiltinRegistryMongod(t *testing.T) {
 	testlog.Start(t)
-	reg, err := buildBuiltinRegistry([]string{"seed.mongod"})
+	reg, err := buildBuiltinRegistry([]string{"seed.mongod"}, "ghost.alpha")
 	if err != nil {
 		t.Fatalf("build registry failed: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestBuildBuiltinRegistryMongod(t *testing.T) {
 
 func TestBuildBuiltinRegistryKV(t *testing.T) {
 	testlog.Start(t)
-	reg, err := buildBuiltinRegistry([]string{"seed.kv"})
+	reg, err := buildBuiltinRegistry([]string{"seed.kv"}, "ghost.alpha")
 	if err != nil {
 		t.Fatalf("build registry failed: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestBuildBuiltinRegistryKV(t *testing.T) {
 
 func TestBuildBuiltinRegistryFS(t *testing.T) {
 	testlog.Start(t)
-	reg, err := buildBuiltinRegistry([]string{"seed.fs"})
+	reg, err := buildBuiltinRegistry([]string{"seed.fs"}, "ghost.alpha")
 	if err != nil {
 		t.Fatalf("build registry failed: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestBuildBuiltinRegistryFS(t *testing.T) {
 
 func TestBuildBuiltinRegistryNone(t *testing.T) {
 	testlog.Start(t)
-	reg, err := buildBuiltinRegistry([]string{"none"})
+	reg, err := buildBuiltinRegistry([]string{"none"}, "ghost.alpha")
 	if err != nil {
 		t.Fatalf("build registry failed: %v", err)
 	}
@@ -78,9 +78,48 @@ func TestBuildBuiltinRegistryNone(t *testing.T) {
 
 func TestBuildBuiltinRegistryUnknown(t *testing.T) {
 	testlog.Start(t)
-	_, err := buildBuiltinRegistry([]string{"seed.unknown"})
+	_, err := buildBuiltinRegistry([]string{"seed.unknown"}, "ghost.alpha")
 	if !errors.Is(err, ErrUnknownBuiltinSeed) {
 		t.Fatalf("expected ErrUnknownBuiltinSeed, got %v", err)
+	}
+}
+
+func TestBuildBuiltinRegistryFSUsesGhostScopedRoot(t *testing.T) {
+	testlog.Start(t)
+
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmp := t.TempDir()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("chdir tmp: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(prevWD)
+	})
+
+	reg, err := buildBuiltinRegistry([]string{"seed.fs"}, "ghost.alpha")
+	if err != nil {
+		t.Fatalf("build registry failed: %v", err)
+	}
+	seed, ok := reg.Resolve("seed.fs")
+	if !ok {
+		t.Fatalf("seed.fs missing")
+	}
+	if _, err := seed.Execute("write", map[string]string{
+		"path":    "artifact/output.txt",
+		"content": "ghost scoped fs root",
+	}); err != nil {
+		t.Fatalf("seed write failed: %v", err)
+	}
+	outPath := filepath.Join(tmp, "local", "dir", "ghost.alpha", "artifact", "output.txt")
+	out, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read scoped fs output: %v", err)
+	}
+	if string(out) != "ghost scoped fs root" {
+		t.Fatalf("unexpected file content: %q", string(out))
 	}
 }
 
