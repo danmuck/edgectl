@@ -41,3 +41,5 @@ tmp/
 local/
 cmd/ghostctl/pi.*
 cmd/miragectl/mac.*
+
+certs/
