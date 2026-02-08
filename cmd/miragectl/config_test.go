@@ -8,21 +8,12 @@ import (
 
 func TestLoadServiceConfigDefaultsAndOverrides(t *testing.T) {
 	dir := t.TempDir()
-	ghostPath := filepath.Join(dir, "ghost.toml")
-	if err := os.WriteFile(ghostPath, []byte(`
-id = "ghost.local"
-admin_listen = "127.0.0.1:7010"
-seeds = ["seed.flow","seed.kv"]
-`), 0o644); err != nil {
-		t.Fatalf("write ghost config: %v", err)
-	}
 
 	path := filepath.Join(dir, "config.toml")
 	content := `
 id = "mirage.alpha"
 addr = "127.0.0.1:9443"
 admin_listen_addr = "127.0.0.1:7020"
-ghost_config_path = "ghost.toml"
 require_identity_binding = true
 buildlog_persist_enabled = true
 buildlog_seed_selector = "seed.kv"
@@ -73,50 +64,20 @@ admin_listen_addr = "127.0.0.1:7020"
 `), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	if _, err := loadServiceConfig(path); err == nil {
-		t.Fatalf("expected error when admin_listen_addr set without ghost_config_path")
+	cfg, err := loadServiceConfig(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
 	}
-}
-
-func TestLoadServiceConfigBuildlogRequiresSeedKV(t *testing.T) {
-	dir := t.TempDir()
-	ghostPath := filepath.Join(dir, "ghost.toml")
-	if err := os.WriteFile(ghostPath, []byte(`
-id = "ghost.local"
-admin_listen = "127.0.0.1:7010"
-seeds = ["seed.flow"]
-`), 0o644); err != nil {
-		t.Fatalf("write ghost config: %v", err)
-	}
-
-	path := filepath.Join(dir, "config.toml")
-	if err := os.WriteFile(path, []byte(`
-admin_listen_addr = "127.0.0.1:7020"
-ghost_config_path = "ghost.toml"
-buildlog_persist_enabled = true
-`), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	if _, err := loadServiceConfig(path); err == nil {
-		t.Fatalf("expected error when buildlog persistence enabled but seed.kv missing")
+	if cfg.LocalGhostAdminAddr != "127.0.0.1:7010" {
+		t.Fatalf("unexpected default local ghost admin addr: %q", cfg.LocalGhostAdminAddr)
 	}
 }
 
 func TestLoadServiceConfigBuildlogAllowsSeedFS(t *testing.T) {
 	dir := t.TempDir()
-	ghostPath := filepath.Join(dir, "ghost.toml")
-	if err := os.WriteFile(ghostPath, []byte(`
-id = "ghost.local"
-admin_listen = "127.0.0.1:7010"
-seeds = ["seed.flow","seed.fs"]
-`), 0o644); err != nil {
-		t.Fatalf("write ghost config: %v", err)
-	}
-
 	path := filepath.Join(dir, "config.toml")
 	if err := os.WriteFile(path, []byte(`
 admin_listen_addr = "127.0.0.1:7020"
-ghost_config_path = "ghost.toml"
 buildlog_persist_enabled = true
 buildlog_seed_selector = "seed.fs"
 `), 0o644); err != nil {
@@ -129,5 +90,47 @@ buildlog_seed_selector = "seed.fs"
 	}
 	if cfg.BuildlogSeedSelector != "seed.fs" {
 		t.Fatalf("unexpected buildlog seed selector: %q", cfg.BuildlogSeedSelector)
+	}
+}
+
+func TestLoadRuntimeConfigsIncludesManagedLocalGhost(t *testing.T) {
+	dir := t.TempDir()
+	miragePath := filepath.Join(dir, "mirage.toml")
+	if err := os.WriteFile(miragePath, []byte(`
+id = "mirage.alpha"
+admin_listen_addr = "127.0.0.1:7020"
+local_ghost_id = "ghost.local.managed"
+local_ghost_admin_addr = "127.0.0.1:7010"
+local_ghost_seeds = ["seed.flow","seed.fs"]
+local_ghost_heartbeat_interval_ms = 1250
+local_ghost_project_fetch_on_boot = false
+`), 0o644); err != nil {
+		t.Fatalf("write mirage config: %v", err)
+	}
+
+	mCfg, gCfg, err := loadRuntimeConfigs(miragePath)
+	if err != nil {
+		t.Fatalf("load runtime configs: %v", err)
+	}
+	if mCfg.LocalGhostID != "ghost.local.managed" {
+		t.Fatalf("unexpected mirage local ghost id: %q", mCfg.LocalGhostID)
+	}
+	if gCfg.GhostID != "ghost.local.managed" {
+		t.Fatalf("unexpected managed ghost id: %q", gCfg.GhostID)
+	}
+	if gCfg.AdminListenAddr != "127.0.0.1:7010" {
+		t.Fatalf("unexpected managed ghost admin addr: %q", gCfg.AdminListenAddr)
+	}
+	if gCfg.Mirage.Policy != "headless" {
+		t.Fatalf("expected managed ghost mirage policy=headless, got %q", gCfg.Mirage.Policy)
+	}
+	if len(gCfg.BuiltinSeedIDs) != 2 || gCfg.BuiltinSeedIDs[0] != "seed.flow" || gCfg.BuiltinSeedIDs[1] != "seed.fs" {
+		t.Fatalf("unexpected managed ghost seeds: %+v", gCfg.BuiltinSeedIDs)
+	}
+	if gCfg.HeartbeatInterval.Milliseconds() != 1250 {
+		t.Fatalf("unexpected managed ghost heartbeat interval: %v", gCfg.HeartbeatInterval)
+	}
+	if gCfg.ProjectFetchOnBoot {
+		t.Fatalf("expected managed ghost project fetch disabled")
 	}
 }

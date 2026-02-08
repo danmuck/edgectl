@@ -165,7 +165,7 @@ func (s *Service) Run() error {
 	if err != nil {
 		return err
 	}
-	logs.Infof("mirage.Service.Run listening addr=%q", ln.Addr().String())
+	logs.Warnf("mirage.Service.Run listening addr=%q", ln.Addr().String())
 	controlErr := make(chan error, 1)
 	if strings.TrimSpace(s.cfg.AdminListenAddr) != "" {
 		go func() {
@@ -235,10 +235,10 @@ func (s *Service) handleConn(conn net.Conn) {
 	defer s.untrackConn(conn)
 	remote := conn.RemoteAddr().String()
 	active := s.sessionClientCount.Add(1)
-	logs.Infof("mirage.session client connected remote=%q active_clients=%d", remote, active)
+	logs.Warnf("mirage.session client connected remote=%q active_clients=%d", remote, active)
 	defer func() {
 		remaining := s.sessionClientCount.Add(-1)
-		logs.Infof("mirage.session client disconnected remote=%q active_clients=%d", remote, remaining)
+		logs.Warnf("mirage.session client disconnected remote=%q active_clients=%d", remote, remaining)
 	}()
 	reader := bufio.NewReader(conn)
 
@@ -257,7 +257,7 @@ func (s *Service) handleConn(conn net.Conn) {
 		logs.Errf("mirage.handleConn write registration ack err=%v", err)
 		return
 	}
-	logs.Infof("mirage.handleConn registered ghost_id=%q peer=%q", reg.GhostID, conn.RemoteAddr().String())
+	logs.Warnf("mirage.handleConn registered ghost_id=%q peer=%q", reg.GhostID, conn.RemoteAddr().String())
 	defer s.server.MarkGhostDisconnected(reg.GhostID)
 
 	if err := conn.SetDeadline(time.Time{}); err != nil {
@@ -287,7 +287,7 @@ func (s *Service) handleConn(conn net.Conn) {
 		if report, matched, err := s.server.ObserveEvent(event); err != nil {
 			logs.Warnf("mirage.handleConn observe event err=%v", err)
 		} else if matched {
-			logs.Infof(
+			logs.Warnf(
 				"mirage.handleConn report intent_id=%q phase=%q completion_state=%q command_id=%q event_id=%q",
 				report.IntentID,
 				report.Phase,

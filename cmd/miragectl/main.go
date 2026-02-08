@@ -2,8 +2,10 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 
+	"github.com/danmuck/edgectl/internal/ghost"
 	"github.com/danmuck/edgectl/internal/logging"
 	"github.com/danmuck/edgectl/internal/mirage"
 	logs "github.com/danmuck/smplog"
@@ -16,14 +18,32 @@ func main() {
 	flag.Parse()
 
 	logging.ConfigureRuntime()
-	cfg, err := loadServiceConfig(configPath)
+	mirageCfg, ghostCfg, err := loadRuntimeConfigs(configPath)
 	if err != nil {
 		logs.Errf("miragectl: %v", err)
 		os.Exit(1)
 	}
 
-	svc := mirage.NewServiceWithConfig(cfg)
-	if err := svc.Run(); err != nil {
+	errCh := make(chan error, 2)
+	ghostSvc := ghost.NewServiceWithConfig(ghostCfg)
+	go func() {
+		if err := ghostSvc.Run(); err != nil {
+			errCh <- fmt.Errorf("managed local ghost failed: %w", err)
+			return
+		}
+		errCh <- nil
+	}()
+
+	mirageSvc := mirage.NewServiceWithConfig(mirageCfg)
+	go func() {
+		if err := mirageSvc.Run(); err != nil {
+			errCh <- fmt.Errorf("mirage runtime failed: %w", err)
+			return
+		}
+		errCh <- nil
+	}()
+
+	if err := <-errCh; err != nil {
 		logs.Errf("miragectl: %v", err)
 		os.Exit(1)
 	}

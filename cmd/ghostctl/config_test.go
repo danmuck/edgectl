@@ -24,7 +24,7 @@ func TestLoadServiceConfigDefaultsAndOverrides(t *testing.T) {
 	if cfg.HeartbeatInterval != 5*time.Second {
 		t.Fatalf("unexpected heartbeat: %v", cfg.HeartbeatInterval)
 	}
-	if cfg.AdminListenAddr != "127.0.0.1:7010" {
+	if cfg.AdminListenAddr != "127.0.0.1:7011" {
 		t.Fatalf("unexpected admin listen: %q", cfg.AdminListenAddr)
 	}
 	if len(cfg.BuiltinSeedIDs) != 4 {

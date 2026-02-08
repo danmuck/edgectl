@@ -65,7 +65,7 @@ func (s *Service) serveAdminControl(ctx context.Context, addr string) error {
 		return err
 	}
 	defer ln.Close()
-	logs.Infof("mirage.admin listening addr=%q", ln.Addr().String())
+	logs.Warnf("mirage.admin listening addr=%q", ln.Addr().String())
 
 	go func() {
 		<-ctx.Done()
@@ -89,10 +89,10 @@ func (s *Service) handleAdminConn(conn net.Conn) {
 	defer conn.Close()
 	remote := conn.RemoteAddr().String()
 	active := s.adminClientCount.Add(1)
-	logs.Infof("mirage.admin client connected remote=%q active_clients=%d", remote, active)
+	logs.Warnf("mirage.admin client connected remote=%q active_clients=%d", remote, active)
 	defer func() {
 		remaining := s.adminClientCount.Add(-1)
-		logs.Infof("mirage.admin client disconnected remote=%q active_clients=%d", remote, remaining)
+		logs.Warnf("mirage.admin client disconnected remote=%q active_clients=%d", remote, remaining)
 	}()
 	reader := bufio.NewReader(conn)
 	for {
