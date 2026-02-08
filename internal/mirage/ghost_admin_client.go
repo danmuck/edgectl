@@ -16,12 +16,15 @@ const (
 	spawnGhostAction = "spawn_ghost"
 	executeAction    = "execute"
 	statusAction     = "status"
+	listSeedsAction  = "list_seeds"
+	bindMirageAction = "bind_mirage"
 )
 
 type ghostControlRequest struct {
-	Action  string            `json:"action"`
-	Spawn   SpawnGhostRequest `json:"spawn,omitempty"`
-	Command ghostAdminCommand `json:"command,omitempty"`
+	Action   string            `json:"action"`
+	Spawn    SpawnGhostRequest `json:"spawn,omitempty"`
+	Command  ghostAdminCommand `json:"command,omitempty"`
+	MirageID string            `json:"mirage_id,omitempty"`
 }
 
 type ghostAdminCommand struct {
@@ -57,6 +60,12 @@ type ghostLifecycleStatus struct {
 	GhostID string `json:"ghost_id"`
 	// GhostIDLegacy accepts the current Ghost admin status shape from untagged Go structs.
 	GhostIDLegacy string `json:"GhostID"`
+}
+
+type ghostSeedMetadata struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
 }
 
 // GhostControlClient is a TCP JSON control client for one root/local ghost admin endpoint.
@@ -115,6 +124,32 @@ func (c *GhostControlClient) Status(ctx context.Context) (ghostLifecycleStatus, 
 		out.GhostID = strings.TrimSpace(out.GhostIDLegacy)
 	}
 	return out, nil
+}
+
+// ListSeeds reads available seed metadata from the ghost admin endpoint.
+func (c *GhostControlClient) ListSeeds(ctx context.Context) ([]session.SeedInfo, error) {
+	var out []ghostSeedMetadata
+	if err := c.call(ctx, ghostControlRequest{Action: listSeedsAction}, &out); err != nil {
+		return nil, err
+	}
+	seeds := make([]session.SeedInfo, 0, len(out))
+	for i := range out {
+		meta := out[i]
+		seeds = append(seeds, session.SeedInfo{
+			ID:          strings.TrimSpace(meta.ID),
+			Name:        strings.TrimSpace(meta.Name),
+			Description: strings.TrimSpace(meta.Description),
+		})
+	}
+	return seeds, nil
+}
+
+// BindMirage marks a ghost admin endpoint as attached to one Mirage control plane.
+func (c *GhostControlClient) BindMirage(ctx context.Context, mirageID string) error {
+	return c.call(ctx, ghostControlRequest{
+		Action:   bindMirageAction,
+		MirageID: strings.TrimSpace(mirageID),
+	}, nil)
 }
 
 func (c *GhostControlClient) call(ctx context.Context, req ghostControlRequest, out any) error {

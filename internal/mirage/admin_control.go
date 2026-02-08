@@ -127,7 +127,9 @@ func (s *Service) handleAdminConn(conn net.Conn) {
 func (s *Service) handleAdminControlRequest(req adminControlRequest) adminControlResponse {
 	switch strings.TrimSpace(req.Action) {
 	case "status":
-		return adminControlResponse{OK: true, Data: s.server.Status()}
+		status := s.server.Status()
+		status.RegisteredGhosts = len(s.SnapshotConnectedGhosts())
+		return adminControlResponse{OK: true, Data: status}
 	case "submit_issue":
 		issue := mapAdminIssue(req.Issue)
 		if err := s.server.SubmitIssue(issue); err != nil {
@@ -183,6 +185,10 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 		return adminControlResponse{OK: true, Data: s.server.RecentReports(req.Limit)}
 	case "registered_ghosts":
 		return adminControlResponse{OK: true, Data: s.SnapshotConnectedGhosts()}
+	case "routing_table":
+		return adminControlResponse{OK: true, Data: s.SnapshotRoutingTable()}
+	case "available_services":
+		return adminControlResponse{OK: true, Data: s.SnapshotAvailableServices()}
 	case "attach_ghost_admin":
 		addr := strings.TrimSpace(req.GhostAdminAddr)
 		if addr == "" {
@@ -205,6 +211,7 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 		if err := s.server.RegisterExecutor(ghostID, NewGhostAdminCommandExecutor(client)); err != nil {
 			return adminControlResponse{OK: false, Error: err.Error()}
 		}
+		_ = client.BindMirage(ctx, s.cfg.MirageID)
 		s.bindGhostAdmin(ghostID, addr)
 		s.persistBuildlog("attach_ghost_admin", map[string]any{
 			"ghost_id":   ghostID,

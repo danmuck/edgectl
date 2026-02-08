@@ -111,6 +111,8 @@ type MirageAdmin interface {
 	SpawnLocalGhost(req mirage.SpawnGhostRequest) (mirage.SpawnGhostResult, error)
 	AttachGhostAdmin(addr string) (MirageAttachGhostResponse, error)
 	RegisteredGhosts() ([]mirage.RegisteredGhost, error)
+	RoutingTable() ([]MirageRoute, error)
+	AvailableServices() ([]MirageAvailableService, error)
 	Close() error
 }
 
@@ -164,6 +166,17 @@ type MirageIssueRequest struct {
 type MirageAttachGhostResponse struct {
 	GhostID   string `json:"ghost_id"`
 	AdminAddr string `json:"admin_addr"`
+}
+
+type MirageRoute struct {
+	GhostID   string `json:"ghost_id"`
+	AdminAddr string `json:"admin_addr"`
+	Connected bool   `json:"connected"`
+}
+
+type MirageAvailableService struct {
+	SeedID   string   `json:"seed_id"`
+	GhostIDs []string `json:"ghost_ids"`
 }
 
 type mirageControlRequest struct {
@@ -536,9 +549,10 @@ func (a *App) printMirageMenu() {
 	fmt.Printf("  ghost config:  %s (targets=%d)\n", a.ghostCfgPath, len(a.ghostCfg.Targets))
 	fmt.Printf("  mirage config: %s (single control plane)\n", a.mirageCfgPath)
 	fmt.Printf("  clear screen after command: %v\n", a.clearScreen)
+	fmt.Println("  (*) not yet fully implemented")
 	fmt.Println("  1) Show mirage control-plane config")
 	fmt.Println("  2) Show mirage status")
-	fmt.Println("  3) Mirage admin console")
+	fmt.Println("  3) Mirage admin console (*)")
 	fmt.Println("  4) Show connected ghosts")
 	fmt.Println("  5) Open local ghost admin console")
 	fmt.Println("  6) Toggle clear-screen")
@@ -619,6 +633,48 @@ func (a *App) showMirageConnectedGhosts() error {
 	return nil
 }
 
+func (a *App) showMirageRoutingTable(target MirageTarget) error {
+	routes, err := target.Admin.RoutingTable()
+	if err != nil {
+		return err
+	}
+	fmt.Println()
+	fmt.Println("Mirage Routing Table")
+	if len(routes) == 0 {
+		fmt.Println("  (none)")
+		return nil
+	}
+	for i := range routes {
+		route := routes[i]
+		fmt.Printf(
+			"  [%d] ghost_id=%s admin_addr=%s connected=%v\n",
+			i+1,
+			route.GhostID,
+			route.AdminAddr,
+			route.Connected,
+		)
+	}
+	return nil
+}
+
+func (a *App) showMirageAvailableServices(target MirageTarget) error {
+	services, err := target.Admin.AvailableServices()
+	if err != nil {
+		return err
+	}
+	fmt.Println()
+	fmt.Println("Mirage Available Services")
+	if len(services) == 0 {
+		fmt.Println("  (none)")
+		return nil
+	}
+	for i := range services {
+		svc := services[i]
+		fmt.Printf("  [%d] seed=%s ghosts=%s\n", i+1, svc.SeedID, strings.Join(svc.GhostIDs, ","))
+	}
+	return nil
+}
+
 // openLocalGhostConsole opens the local ghost admin console configured for this Mirage control plane.
 func (a *App) openLocalGhostConsole() error {
 	target, ok := a.activeMirageTarget()
@@ -655,17 +711,20 @@ func (a *App) runMirageAdminConsole() error {
 	for {
 		fmt.Println()
 		fmt.Printf("Mirage Admin Console (%s @ %s)\n", target.Name, target.Admin.Address())
+		fmt.Println("  (*) not yet fully implemented")
 		fmt.Println("  1) Show status")
-		fmt.Println("  2) Submit issue")
+		fmt.Println("  2) Submit issue (*)")
 		fmt.Println("  3) List intents")
-		fmt.Println("  4) Reconcile one intent")
-		fmt.Println("  5) Reconcile all intents")
-		fmt.Println("  6) Snapshot intent")
+		fmt.Println("  4) Reconcile one intent (*)")
+		fmt.Println("  5) Reconcile all intents (*)")
+		fmt.Println("  6) Snapshot intent (*)")
 		fmt.Println("  7) Show recent reports")
-		fmt.Println("  8) Spawn local ghost")
-		fmt.Println("  9) Attach remote ghost admin")
-		fmt.Println(" 10) Back")
-		choice, err := a.promptInt("Choose", 1, 10, true, true)
+		fmt.Println("  8) Spawn local ghost (*)")
+		fmt.Println("  9) Connect ghost service (*)")
+		fmt.Println(" 10) Show routing table")
+		fmt.Println(" 11) Show available services")
+		fmt.Println(" 12) Back")
+		choice, err := a.promptInt("Choose", 1, 12, true, true)
 		if err != nil {
 			if errors.Is(err, ErrNavigateBack) {
 				return nil
@@ -707,10 +766,18 @@ func (a *App) runMirageAdminConsole() error {
 				logs.Errf("spawn local ghost failed: %v", err)
 			}
 		case 9:
-			if err := a.attachGhostToMirage(target); err != nil {
-				logs.Errf("attach ghost admin failed: %v", err)
+			if err := a.connectGhostServiceToMirage(target); err != nil {
+				logs.Errf("connect ghost service failed: %v", err)
 			}
 		case 10:
+			if err := a.showMirageRoutingTable(target); err != nil {
+				logs.Errf("show routing table failed: %v", err)
+			}
+		case 11:
+			if err := a.showMirageAvailableServices(target); err != nil {
+				logs.Errf("show available services failed: %v", err)
+			}
+		case 12:
 			return nil
 		}
 	}
@@ -1325,26 +1392,26 @@ func (a *App) spawnMirageLocalGhost(target MirageTarget) error {
 	return nil
 }
 
-func (a *App) attachGhostToMirage(target MirageTarget) error {
-	adminAddr, err := a.promptLine("remote ghost admin addr (host:port)")
+func (a *App) connectGhostServiceToMirage(target MirageTarget) error {
+	adminAddr, err := a.promptLine("ghost endpoint addr (host:port)")
 	if err != nil {
 		return err
 	}
 	addr := strings.TrimSpace(adminAddr)
 	if addr == "" {
-		return errors.New("remote ghost admin addr required")
+		return errors.New("ghost endpoint addr required")
 	}
 	if _, _, err := net.SplitHostPort(addr); err != nil {
-		return fmt.Errorf("invalid ghost admin addr %q", addr)
+		return fmt.Errorf("invalid ghost endpoint addr %q", addr)
 	}
 	out, err := target.Admin.AttachGhostAdmin(addr)
 	if err != nil {
 		return err
 	}
 	fmt.Println()
-	fmt.Println("Attach Ghost Admin Result")
+	fmt.Println("Connect Ghost Service Result")
 	fmt.Printf("  ghost_id:   %s\n", out.GhostID)
-	fmt.Printf("  admin_addr: %s\n", out.AdminAddr)
+	fmt.Printf("  endpoint:   %s\n", out.AdminAddr)
 	return nil
 }
 
@@ -1679,6 +1746,22 @@ func (c *RemoteMirageAdmin) AttachGhostAdmin(addr string) (MirageAttachGhostResp
 func (c *RemoteMirageAdmin) RegisteredGhosts() ([]mirage.RegisteredGhost, error) {
 	var out []mirage.RegisteredGhost
 	if err := c.call(mirageControlRequest{Action: "registered_ghosts"}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *RemoteMirageAdmin) RoutingTable() ([]MirageRoute, error) {
+	var out []MirageRoute
+	if err := c.call(mirageControlRequest{Action: "routing_table"}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *RemoteMirageAdmin) AvailableServices() ([]MirageAvailableService, error) {
+	var out []MirageAvailableService
+	if err := c.call(mirageControlRequest{Action: "available_services"}, &out); err != nil {
 		return nil, err
 	}
 	return out, nil

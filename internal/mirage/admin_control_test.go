@@ -90,32 +90,43 @@ func TestHandleAdminControlRegisteredGhostsIncludesLocalGhost(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		conn, err := ln.Accept()
-		if err != nil {
-			return
+		for i := 0; i < 3; i++ {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			reader := bufio.NewReader(conn)
+			line, err := reader.ReadBytes('\n')
+			if err != nil {
+				_ = conn.Close()
+				return
+			}
+			var req ghostControlRequest
+			if err := json.Unmarshal(line, &req); err != nil {
+				_ = conn.Close()
+				return
+			}
+			resp := ghostControlResponse{OK: true}
+			switch req.Action {
+			case bindMirageAction:
+				// no payload required for this test.
+			case statusAction:
+				resp.Data = mustJSON(t, map[string]any{
+					"GhostID": "ghost.local",
+				})
+			case listSeedsAction:
+				resp.Data = mustJSON(t, []map[string]any{
+					{"id": "seed.flow", "name": "Flow"},
+				})
+			default:
+				_ = conn.Close()
+				return
+			}
+			payload, _ := json.Marshal(resp)
+			payload = append(payload, '\n')
+			_, _ = conn.Write(payload)
+			_ = conn.Close()
 		}
-		defer conn.Close()
-		reader := bufio.NewReader(conn)
-		line, err := reader.ReadBytes('\n')
-		if err != nil {
-			return
-		}
-		var req ghostControlRequest
-		if err := json.Unmarshal(line, &req); err != nil {
-			return
-		}
-		if req.Action != statusAction {
-			return
-		}
-		resp := ghostControlResponse{
-			OK: true,
-			Data: mustJSON(t, map[string]any{
-				"GhostID": "ghost.local",
-			}),
-		}
-		payload, _ := json.Marshal(resp)
-		payload = append(payload, '\n')
-		_, _ = conn.Write(payload)
 	}()
 
 	cfg := DefaultServiceConfig()
@@ -158,32 +169,43 @@ func TestHandleAdminControlAttachGhostAdmin(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		conn, err := ln.Accept()
-		if err != nil {
-			return
+		for i := 0; i < 8; i++ {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			reader := bufio.NewReader(conn)
+			line, err := reader.ReadBytes('\n')
+			if err != nil {
+				_ = conn.Close()
+				return
+			}
+			var req ghostControlRequest
+			if err := json.Unmarshal(line, &req); err != nil {
+				_ = conn.Close()
+				return
+			}
+			resp := ghostControlResponse{OK: true}
+			switch req.Action {
+			case bindMirageAction:
+				// no payload required for this test.
+			case statusAction:
+				resp.Data = mustJSON(t, map[string]any{
+					"GhostID": "ghost.remote.a",
+				})
+			case listSeedsAction:
+				resp.Data = mustJSON(t, []map[string]any{
+					{"id": "seed.flow", "name": "Flow"},
+				})
+			default:
+				_ = conn.Close()
+				return
+			}
+			payload, _ := json.Marshal(resp)
+			payload = append(payload, '\n')
+			_, _ = conn.Write(payload)
+			_ = conn.Close()
 		}
-		defer conn.Close()
-		reader := bufio.NewReader(conn)
-		line, err := reader.ReadBytes('\n')
-		if err != nil {
-			return
-		}
-		var req ghostControlRequest
-		if err := json.Unmarshal(line, &req); err != nil {
-			return
-		}
-		if req.Action != statusAction {
-			return
-		}
-		resp := ghostControlResponse{
-			OK: true,
-			Data: mustJSON(t, map[string]any{
-				"GhostID": "ghost.remote.a",
-			}),
-		}
-		payload, _ := json.Marshal(resp)
-		payload = append(payload, '\n')
-		_, _ = conn.Write(payload)
 	}()
 
 	svc := NewServiceWithConfig(DefaultServiceConfig())
@@ -218,6 +240,28 @@ func TestHandleAdminControlAttachGhostAdmin(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("attached ghost missing from list: %+v", list)
+	}
+	routes := svc.handleAdminControlRequest(adminControlRequest{Action: "routing_table"})
+	if !routes.OK {
+		t.Fatalf("routing_table failed: %+v", routes)
+	}
+	routeList, ok := routes.Data.([]GhostRoute)
+	if !ok {
+		t.Fatalf("unexpected routing_table type: %T", routes.Data)
+	}
+	if len(routeList) == 0 || routeList[0].GhostID == "" {
+		t.Fatalf("unexpected routing_table payload: %+v", routeList)
+	}
+	services := svc.handleAdminControlRequest(adminControlRequest{Action: "available_services"})
+	if !services.OK {
+		t.Fatalf("available_services failed: %+v", services)
+	}
+	serviceList, ok := services.Data.([]AvailableService)
+	if !ok {
+		t.Fatalf("unexpected available_services type: %T", services.Data)
+	}
+	if len(serviceList) == 0 || serviceList[0].SeedID == "" {
+		t.Fatalf("unexpected available_services payload: %+v", serviceList)
 	}
 	<-done
 }

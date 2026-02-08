@@ -95,6 +95,8 @@ type Service struct {
 	mirage *MirageSession
 	seq    atomic.Uint64
 
+	mirageAdminBound atomic.Bool
+
 	adminMu            sync.Mutex
 	adminSeq           atomic.Uint64
 	adminEvents        []EventEnv
@@ -216,13 +218,15 @@ func (s *Service) serve(ctx context.Context) error {
 			status := s.server.Status()
 			adminClients := s.AdminClientCount()
 			mirageConnected := s.IsMirageConnected()
+			mirageLink := s.MirageLinkMode()
 			managedChildren := s.ManagedGhostCount()
 			logs.Infof(
-				"ghost.Service.heartbeat ghost_id=%q phase=%s seeds=%d mirage_connected=%v admin_clients=%d managed_children=%d",
+				"ghost.Service.heartbeat ghost_id=%q phase=%s seeds=%d mirage_connected=%v mirage_link=%q admin_clients=%d managed_children=%d",
 				status.GhostID,
 				status.Phase,
 				status.SeedCount,
 				mirageConnected,
+				mirageLink,
 				adminClients,
 				managedChildren,
 			)
@@ -370,8 +374,30 @@ func (s *Service) MirageSession() *MirageSession {
 // IsMirageConnected reports whether Ghost currently has an active Mirage session.
 func (s *Service) IsMirageConnected() bool {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.mirage != nil
+	hasTransport := s.mirage != nil
+	s.mu.RUnlock()
+	return hasTransport || s.mirageAdminBound.Load()
+}
+
+// MirageLinkMode reports how Ghost is currently attached to Mirage.
+func (s *Service) MirageLinkMode() string {
+	s.mu.RLock()
+	hasTransport := s.mirage != nil
+	s.mu.RUnlock()
+	if hasTransport {
+		return "session"
+	}
+	if s.mirageAdminBound.Load() {
+		return "admin_route"
+	}
+	return "none"
+}
+
+// BindMirageAdminRoute marks this Ghost as connected to Mirage via admin routing.
+func (s *Service) BindMirageAdminRoute(mirageID string) {
+	id := strings.TrimSpace(mirageID)
+	s.mirageAdminBound.Store(true)
+	logs.Warnf("ghost.admin mirage route bound mirage_id=%q", id)
 }
 
 // AdminClientCount returns the current number of attached admin control clients.

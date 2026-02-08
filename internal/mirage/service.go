@@ -67,6 +67,19 @@ type RegisteredGhost struct {
 	Connected    bool
 }
 
+// GhostRoute maps one ghost identity to its admin endpoint routing entry.
+type GhostRoute struct {
+	GhostID   string `json:"ghost_id"`
+	AdminAddr string `json:"admin_addr"`
+	Connected bool   `json:"connected"`
+}
+
+// AvailableService summarizes one seed/service id and its hosting ghosts.
+type AvailableService struct {
+	SeedID   string   `json:"seed_id"`
+	GhostIDs []string `json:"ghost_ids"`
+}
+
 // Mirage internal state with mutable registration metadata and ack idempotency map.
 type registeredGhostState struct {
 	meta       RegisteredGhost
@@ -126,6 +139,9 @@ func NewServiceWithConfig(cfg ServiceConfig) *Service {
 		if localGhostID != "" {
 			svc.server.RegisterExecutor(localGhostID, NewGhostAdminCommandExecutor(svc.controlClient))
 			svc.bindGhostAdmin(localGhostID, localAdminAddr)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = svc.controlClient.BindMirage(ctx, strings.TrimSpace(cfg.MirageID))
+			cancel()
 		}
 	}
 	if cfg.BuildlogPersistEnabled && svc.controlClient != nil {
@@ -268,6 +284,14 @@ func (s *Service) SnapshotConnectedGhosts() []RegisteredGhost {
 		}
 		entry.RemoteAddr = adminAddr
 		entry.Connected = err == nil
+		if err == nil {
+			seedsCtx, seedsCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			seeds, seedsErr := client.ListSeeds(seedsCtx)
+			seedsCancel()
+			if seedsErr == nil {
+				entry.SeedList = copySeedList(seeds)
+			}
+		}
 		if entry.RegisteredAt.IsZero() {
 			entry.RegisteredAt = now
 		}
@@ -279,6 +303,59 @@ func (s *Service) SnapshotConnectedGhosts() []RegisteredGhost {
 	}
 	sort.Slice(out, func(i int, j int) bool {
 		return out[i].GhostID < out[j].GhostID
+	})
+	return out
+}
+
+// SnapshotRoutingTable returns stable ghost->admin route entries for connected/admin-bound ghosts.
+func (s *Service) SnapshotRoutingTable() []GhostRoute {
+	ghosts := s.SnapshotConnectedGhosts()
+	routes := make([]GhostRoute, 0, len(ghosts))
+	for i := range ghosts {
+		g := ghosts[i]
+		routes = append(routes, GhostRoute{
+			GhostID:   g.GhostID,
+			AdminAddr: g.RemoteAddr,
+			Connected: g.Connected,
+		})
+	}
+	sort.Slice(routes, func(i int, j int) bool {
+		return routes[i].GhostID < routes[j].GhostID
+	})
+	return routes
+}
+
+// SnapshotAvailableServices returns seed/service availability indexed by seed id.
+func (s *Service) SnapshotAvailableServices() []AvailableService {
+	ghosts := s.SnapshotConnectedGhosts()
+	bySeed := make(map[string]map[string]struct{})
+	for i := range ghosts {
+		g := ghosts[i]
+		for j := range g.SeedList {
+			seedID := strings.TrimSpace(g.SeedList[j].ID)
+			if seedID == "" {
+				continue
+			}
+			if bySeed[seedID] == nil {
+				bySeed[seedID] = make(map[string]struct{})
+			}
+			bySeed[seedID][g.GhostID] = struct{}{}
+		}
+	}
+	out := make([]AvailableService, 0, len(bySeed))
+	for seedID, ghostsMap := range bySeed {
+		ghostIDs := make([]string, 0, len(ghostsMap))
+		for ghostID := range ghostsMap {
+			ghostIDs = append(ghostIDs, ghostID)
+		}
+		sort.Strings(ghostIDs)
+		out = append(out, AvailableService{
+			SeedID:   seedID,
+			GhostIDs: ghostIDs,
+		})
+	}
+	sort.Slice(out, func(i int, j int) bool {
+		return out[i].SeedID < out[j].SeedID
 	})
 	return out
 }

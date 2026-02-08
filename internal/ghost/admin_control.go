@@ -50,6 +50,7 @@ type controlRequest struct {
 	CommandID string            `json:"command_id,omitempty"`
 	Command   AdminCommand      `json:"command,omitempty"`
 	Spawn     SpawnGhostRequest `json:"spawn,omitempty"`
+	MirageID  string            `json:"mirage_id,omitempty"`
 }
 
 // controlResponse is one admin action result envelope emitted by ghostctl.
@@ -256,6 +257,9 @@ func (s *Service) handleControlRequest(req controlRequest) controlResponse {
 			return controlResponse{OK: false, Error: err.Error()}
 		}
 		return controlResponse{OK: true, Data: out}
+	case "bind_mirage":
+		s.BindMirageAdminRoute(req.MirageID)
+		return controlResponse{OK: true}
 	default:
 		return controlResponse{OK: false, Error: fmt.Sprintf("unknown action: %s", req.Action)}
 	}
