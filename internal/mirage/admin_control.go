@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sort"
 	"strings"
 	"time"
 
@@ -26,11 +27,12 @@ type AdminIssueCommand struct {
 
 // AdminIssueRequest defines one issue ingest request for mirage admin controls.
 type AdminIssueRequest struct {
-	IntentID    string              `json:"intent_id"`
-	Actor       string              `json:"actor"`
-	TargetScope string              `json:"target_scope"`
-	Objective   string              `json:"objective"`
-	CommandPlan []AdminIssueCommand `json:"command_plan"`
+	IntentID         string              `json:"intent_id"`
+	Actor            string              `json:"actor"`
+	TargetScope      string              `json:"target_scope"`
+	Objective        string              `json:"objective"`
+	SeedDependencies []string            `json:"seed_dependencies,omitempty"`
+	CommandPlan      []AdminIssueCommand `json:"command_plan"`
 }
 
 // AdminSnapshotIntentResponse captures one intent snapshot response payload.
@@ -257,11 +259,12 @@ func (s *Service) attachGhostAdmin(expectedGhostID string, adminAddr string) (Ad
 
 func mapAdminIssue(in AdminIssueRequest) IssueEnv {
 	out := IssueEnv{
-		IntentID:    strings.TrimSpace(in.IntentID),
-		Actor:       strings.TrimSpace(in.Actor),
-		TargetScope: strings.TrimSpace(in.TargetScope),
-		Objective:   strings.TrimSpace(in.Objective),
-		CommandPlan: make([]IssueCommand, 0, len(in.CommandPlan)),
+		IntentID:         strings.TrimSpace(in.IntentID),
+		Actor:            strings.TrimSpace(in.Actor),
+		TargetScope:      strings.TrimSpace(in.TargetScope),
+		Objective:        strings.TrimSpace(in.Objective),
+		SeedDependencies: normalizeStringList(in.SeedDependencies),
+		CommandPlan:      make([]IssueCommand, 0, len(in.CommandPlan)),
 	}
 	for i := range in.CommandPlan {
 		step := in.CommandPlan[i]
@@ -272,6 +275,30 @@ func mapAdminIssue(in AdminIssueRequest) IssueEnv {
 			Args:         copyArgs(step.Args),
 			Blocking:     step.Blocking,
 		})
+	}
+	return out
+}
+
+func normalizeStringList(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for i := range in {
+		v := strings.TrimSpace(in[i])
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

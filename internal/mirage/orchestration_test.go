@@ -164,6 +164,37 @@ func TestOrchestratorIngestObservedEventByCommandID(t *testing.T) {
 	}
 }
 
+func TestOrchestratorSubmitIssueDerivesSeedDependencies(t *testing.T) {
+	testlog.Start(t)
+
+	loop := NewOrchestrator()
+	if err := loop.SubmitIssue(IssueEnv{
+		IntentID:    "intent.deps.1",
+		Actor:       "user:dan",
+		TargetScope: "ghost:ghost.alpha",
+		Objective:   "derive deps",
+		CommandPlan: []IssueCommand{
+			{GhostID: "ghost.alpha", SeedSelector: "seed.fs", Operation: "write"},
+			{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status"},
+			{GhostID: "ghost.alpha", SeedSelector: "seed.fs", Operation: "read"},
+		},
+	}); err != nil {
+		t.Fatalf("submit issue: %v", err)
+	}
+
+	snap, ok := loop.SnapshotIntent("intent.deps.1")
+	if !ok {
+		t.Fatalf("expected intent snapshot")
+	}
+	deps := snap.Desired.Issue.SeedDependencies
+	if len(deps) != 2 {
+		t.Fatalf("unexpected derived deps: %+v", deps)
+	}
+	if deps[0] != "seed.flow" || deps[1] != "seed.fs" {
+		t.Fatalf("unexpected derived deps order/content: %+v", deps)
+	}
+}
+
 type fsGhostExecutor struct {
 	ghostID string
 	seed    seedfs.Seed

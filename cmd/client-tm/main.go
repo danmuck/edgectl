@@ -158,11 +158,12 @@ type MirageIssueCommand struct {
 
 // MirageIssueRequest defines one issue ingress payload for mirage admin control.
 type MirageIssueRequest struct {
-	IntentID    string               `json:"intent_id"`
-	Actor       string               `json:"actor"`
-	TargetScope string               `json:"target_scope"`
-	Objective   string               `json:"objective"`
-	CommandPlan []MirageIssueCommand `json:"command_plan"`
+	IntentID         string               `json:"intent_id"`
+	Actor            string               `json:"actor"`
+	TargetScope      string               `json:"target_scope"`
+	Objective        string               `json:"objective"`
+	SeedDependencies []string             `json:"seed_dependencies,omitempty"`
+	CommandPlan      []MirageIssueCommand `json:"command_plan"`
 }
 
 // CommandArgSpec defines one guided argument prompt for a catalog command template.
@@ -171,6 +172,8 @@ type CommandArgSpec struct {
 	Prompt       string
 	Required     bool
 	DefaultValue string
+	Multiline    bool
+	Terminator   string
 }
 
 // CommandTemplate defines one predeclared command shape used by Ghost/Mirage wizards.
@@ -596,6 +599,9 @@ func (a *App) runConfigMenu() error {
 		fmt.Println("  4) Back")
 		choice, err := a.promptInt("Choose", 1, 4, true, true)
 		if err != nil {
+			if errors.Is(err, ErrNavigateBack) {
+				return nil
+			}
 			return err
 		}
 		a.clearIfEnabled()
@@ -773,19 +779,13 @@ func (a *App) runMirageAdminConsole() error {
 		fmt.Printf("Mirage Admin Console (%s @ %s)\n", target.Name, target.Admin.Address())
 		fmt.Println("  (*) not yet fully implemented")
 		fmt.Println("  1) Show status")
-		fmt.Println("  2) Submit issue (*)")
-		fmt.Println("  3) List intents")
-		fmt.Println("  4) Reconcile one intent (*)")
-		fmt.Println("  5) Reconcile all intents (*)")
-		fmt.Println("  6) Snapshot intent (*)")
-		fmt.Println("  7) Show recent reports")
-		fmt.Println("  8) Spawn local ghost (*)")
-		fmt.Println("  9) Connect ghost service (*)")
-		fmt.Println(" 10) Show routing table")
-		fmt.Println(" 11) Show available services")
-		fmt.Println(" 12) Store file via seed.fs intent")
-		fmt.Println(" 13) Back")
-		choice, err := a.promptInt("Choose", 1, 13, true, true)
+		fmt.Println("  2) Show available services")
+		fmt.Println("  3) Issue intent")
+		fmt.Println("  4) Reconcile intent")
+		fmt.Println("  5) Reports")
+		fmt.Println("  6) Ghost routing")
+		fmt.Println("  7) Back")
+		choice, err := a.promptInt("Choose", 1, 7, true, true)
 		if err != nil {
 			if errors.Is(err, ErrNavigateBack) {
 				return nil
@@ -799,50 +799,26 @@ func (a *App) runMirageAdminConsole() error {
 				logs.Errf("show mirage summary failed: %v", err)
 			}
 		case 2:
-			if err := a.submitMirageIssue(target); err != nil {
-				logs.Errf("submit issue failed: %v", err)
-			}
-		case 3:
-			if err := a.listMirageIntents(target); err != nil {
-				logs.Errf("list intents failed: %v", err)
-			}
-		case 4:
-			if err := a.reconcileMirageIntent(target); err != nil {
-				logs.Errf("reconcile intent failed: %v", err)
-			}
-		case 5:
-			if err := a.reconcileAllMirageIntents(target); err != nil {
-				logs.Errf("reconcile all failed: %v", err)
-			}
-		case 6:
-			if err := a.snapshotMirageIntent(target); err != nil {
-				logs.Errf("snapshot intent failed: %v", err)
-			}
-		case 7:
-			if err := a.showMirageReports(target); err != nil {
-				logs.Errf("show reports failed: %v", err)
-			}
-		case 8:
-			if err := a.spawnMirageLocalGhost(target); err != nil {
-				logs.Errf("spawn local ghost failed: %v", err)
-			}
-		case 9:
-			if err := a.connectGhostServiceToMirage(target); err != nil {
-				logs.Errf("connect ghost service failed: %v", err)
-			}
-		case 10:
-			if err := a.showMirageRoutingTable(target); err != nil {
-				logs.Errf("show routing table failed: %v", err)
-			}
-		case 11:
 			if err := a.showMirageAvailableServices(target); err != nil {
 				logs.Errf("show available services failed: %v", err)
 			}
-		case 12:
-			if err := a.storeFileViaMirageSeedFS(target); err != nil {
-				logs.Errf("store file via seed.fs failed: %v", err)
+		case 3:
+			if err := a.submitMirageIssue(target); err != nil {
+				logs.Errf("issue intent failed: %v", err)
 			}
-		case 13:
+		case 4:
+			if err := a.runMirageReconcileConsole(target); err != nil {
+				logs.Errf("reconcile console failed: %v", err)
+			}
+		case 5:
+			if err := a.runMirageReportsConsole(target); err != nil {
+				logs.Errf("reports console failed: %v", err)
+			}
+		case 6:
+			if err := a.runMirageGhostRoutingConsole(target); err != nil {
+				logs.Errf("ghost routing console failed: %v", err)
+			}
+		case 7:
 			return nil
 		}
 	}
@@ -1287,8 +1263,8 @@ func (a *App) submitMirageIssue(target MirageTarget) error {
 	}
 
 	fmt.Println()
-	fmt.Println("Mirage Intent Wizard")
-	template, err := a.promptMirageIntentTemplateSelection("Select intent template", templates)
+	fmt.Println("Issue Intent")
+	template, err := a.promptMirageIntentTemplateSelection("Select intent", templates)
 	if err != nil {
 		return err
 	}
@@ -1313,105 +1289,137 @@ func (a *App) submitMirageIssue(target MirageTarget) error {
 		actor = "user:client-tm"
 	}
 	intentID := fmt.Sprintf("intent.clienttm.%s.%d", normalizeSuffix(template.ID), time.Now().UnixMilli())
-	req := MirageIssueRequest{
-		IntentID:    intentID,
-		Actor:       actor,
-		TargetScope: "ghost:" + ghostID,
-		Objective:   template.Description,
-		CommandPlan: []MirageIssueCommand{
-			{
-				GhostID:      ghostID,
-				SeedSelector: template.Command.SeedSelector,
-				Operation:    template.Command.Operation,
-				Args:         args,
-				Blocking:     template.Command.DefaultBlocking,
-			},
+	commandPlan := []MirageIssueCommand{
+		{
+			GhostID:      ghostID,
+			SeedSelector: template.Command.SeedSelector,
+			Operation:    template.Command.Operation,
+			Args:         args,
+			Blocking:     template.Command.DefaultBlocking,
 		},
+	}
+	req := MirageIssueRequest{
+		IntentID:         intentID,
+		Actor:            actor,
+		TargetScope:      "ghost:" + ghostID,
+		Objective:        template.Description,
+		SeedDependencies: deriveSeedDependencies(commandPlan),
+		CommandPlan:      commandPlan,
 	}
 	if err := target.Admin.SubmitIssue(req); err != nil {
 		return err
 	}
-	fmt.Printf("Issue submitted intent_id=%s template=%s ghost=%s\n", req.IntentID, template.ID, ghostID)
+	fmt.Printf(
+		"Issue submitted intent_id=%s template=%s ghost=%s deps=%s\n",
+		req.IntentID,
+		template.ID,
+		ghostID,
+		strings.Join(req.SeedDependencies, ","),
+	)
+	// For the current PoC template set (single blocking command), reconcile immediately.
+	report, err := target.Admin.ReconcileIntent(req.IntentID)
+	if err != nil {
+		return err
+	}
+	printMirageReport("Issue Reconcile Result", report)
 	return nil
 }
 
-// storeFileViaMirageSeedFS runs one submit+reconcile flow to persist content through seed.fs on a selected ghost.
-func (a *App) storeFileViaMirageSeedFS(target MirageTarget) error {
-	routes, err := target.Admin.RoutingTable()
-	if err != nil {
-		return err
+func (a *App) runMirageReconcileConsole(target MirageTarget) error {
+	for {
+		fmt.Println()
+		fmt.Printf("Reconcile Intent Console (%s)\n", target.Name)
+		fmt.Println("  1) List intents")
+		fmt.Println("  2) Reconcile one intent (*)")
+		fmt.Println("  3) Reconcile all intents (*)")
+		fmt.Println("  4) Back")
+		choice, err := a.promptInt("Choose", 1, 4, true, true)
+		if err != nil {
+			return err
+		}
+		a.clearIfEnabled()
+		switch choice {
+		case 1:
+			if err := a.listMirageIntents(target); err != nil {
+				logs.Errf("list intents failed: %v", err)
+			}
+		case 2:
+			if err := a.reconcileMirageIntent(target); err != nil {
+				logs.Errf("reconcile intent failed: %v", err)
+			}
+		case 3:
+			if err := a.reconcileAllMirageIntents(target); err != nil {
+				logs.Errf("reconcile all failed: %v", err)
+			}
+		case 4:
+			return nil
+		}
 	}
-	services, err := target.Admin.AvailableServices()
-	if err != nil {
-		return err
-	}
-	ghostIDs := connectedGhostCandidatesForSeed(routes, services, "seed.fs")
-	if len(ghostIDs) == 0 {
-		return errors.New("no connected ghost advertises seed.fs")
-	}
-	fmt.Println()
-	fmt.Println("Store File via seed.fs")
-	ghostID, err := a.promptGhostIDSelection("Select target ghost", ghostIDs)
-	if err != nil {
-		return err
-	}
-	filenameRaw, err := a.promptLine("filename (relative path)")
-	if err != nil {
-		return err
-	}
-	filename := strings.TrimSpace(filenameRaw)
-	if filename == "" {
-		return errors.New("filename required")
-	}
-	if filepath.IsAbs(filename) {
-		return errors.New("filename must be relative")
-	}
-	content, err := a.promptMultiline(
-		"Enter file content. Finish with a line containing only \".done\".",
-		".done",
-	)
-	if err != nil {
-		return err
-	}
-	actorRaw, err := a.promptLine("actor (blank = user:client-tm)")
-	if err != nil {
-		return err
-	}
-	actor := strings.TrimSpace(actorRaw)
-	if actor == "" {
-		actor = "user:client-tm"
-	}
+}
 
-	intentID := fmt.Sprintf("intent.clienttm.seed.fs.store.%d", time.Now().UnixMilli())
-	req := MirageIssueRequest{
-		IntentID:    intentID,
-		Actor:       actor,
-		TargetScope: "ghost:" + ghostID,
-		Objective:   "store file via seed.fs",
-		CommandPlan: []MirageIssueCommand{
-			{
-				GhostID:      ghostID,
-				SeedSelector: "seed.fs",
-				Operation:    "write",
-				Args: map[string]string{
-					"path":    filename,
-					"content": content,
-				},
-				Blocking: true,
-			},
-		},
+func (a *App) runMirageReportsConsole(target MirageTarget) error {
+	for {
+		fmt.Println()
+		fmt.Printf("Reports Console (%s)\n", target.Name)
+		fmt.Println("  1) Snapshot intent (*)")
+		fmt.Println("  2) Show recent reports")
+		fmt.Println("  3) Back")
+		choice, err := a.promptInt("Choose", 1, 3, true, true)
+		if err != nil {
+			if errors.Is(err, ErrNavigateBack) {
+				return nil
+			}
+			return err
+		}
+		a.clearIfEnabled()
+		switch choice {
+		case 1:
+			if err := a.snapshotMirageIntent(target); err != nil {
+				logs.Errf("snapshot intent failed: %v", err)
+			}
+		case 2:
+			if err := a.showMirageReports(target); err != nil {
+				logs.Errf("show reports failed: %v", err)
+			}
+		case 3:
+			return nil
+		}
 	}
-	if err := target.Admin.SubmitIssue(req); err != nil {
-		return err
+}
+
+func (a *App) runMirageGhostRoutingConsole(target MirageTarget) error {
+	for {
+		fmt.Println()
+		fmt.Printf("Ghost Routing Console (%s)\n", target.Name)
+		fmt.Println("  1) Spawn local ghost (*)")
+		fmt.Println("  2) Connect ghost service (*)")
+		fmt.Println("  3) Show routing table")
+		fmt.Println("  4) Back")
+		choice, err := a.promptInt("Choose", 1, 4, true, true)
+		if err != nil {
+			if errors.Is(err, ErrNavigateBack) {
+				return nil
+			}
+			return err
+		}
+		a.clearIfEnabled()
+		switch choice {
+		case 1:
+			if err := a.spawnMirageLocalGhost(target); err != nil {
+				logs.Errf("spawn local ghost failed: %v", err)
+			}
+		case 2:
+			if err := a.connectGhostServiceToMirage(target); err != nil {
+				logs.Errf("connect ghost service failed: %v", err)
+			}
+		case 3:
+			if err := a.showMirageRoutingTable(target); err != nil {
+				logs.Errf("show routing table failed: %v", err)
+			}
+		case 4:
+			return nil
+		}
 	}
-	report, err := target.Admin.ReconcileIntent(intentID)
-	if err != nil {
-		return err
-	}
-	fmt.Println()
-	fmt.Printf("Stored file via seed.fs intent_id=%s ghost=%s path=%s\n", intentID, ghostID, filename)
-	printMirageReport("Seed.fs Store File Report", report)
-	return nil
 }
 
 func (a *App) listMirageIntents(target MirageTarget) error {
@@ -1611,12 +1619,12 @@ func (a *App) promptCommandTemplateSelection(label string, templates []CommandTe
 	return templates[choice-1], nil
 }
 
-// promptMirageIntentTemplateSelection renders one guided intent template list and returns one selection.
+// promptMirageIntentTemplateSelection renders one guided intent list and returns one selection.
 func (a *App) promptMirageIntentTemplateSelection(
 	label string,
 	templates []MirageIntentTemplate,
 ) (MirageIntentTemplate, error) {
-	fmt.Println("Available Intent Templates")
+	fmt.Println("Available Intents")
 	for i := range templates {
 		tpl := templates[i]
 		fmt.Printf("  %d) %s [%s %s]\n", i+1, tpl.Label, tpl.Command.SeedSelector, tpl.Command.Operation)
@@ -1660,19 +1668,39 @@ func (a *App) promptCommandArgs(specs []CommandArgSpec) (map[string]string, erro
 			if prompt == "" {
 				prompt = spec.Key
 			}
-			if strings.TrimSpace(spec.DefaultValue) != "" {
+			if strings.TrimSpace(spec.DefaultValue) != "" && !spec.Multiline {
 				prompt += fmt.Sprintf(" (default=%s)", spec.DefaultValue)
 			}
-			raw, err := a.promptLine(prompt)
-			if err != nil {
-				return nil, err
+			value := ""
+			if spec.Multiline {
+				terminator := strings.TrimSpace(spec.Terminator)
+				if terminator == "" {
+					terminator = ".done"
+				}
+				raw, err := a.promptMultiline(
+					fmt.Sprintf("%s. Finish with a line containing only %q.", prompt, terminator),
+					terminator,
+				)
+				if err != nil {
+					return nil, err
+				}
+				value = raw
+			} else {
+				raw, err := a.promptLine(prompt)
+				if err != nil {
+					return nil, err
+				}
+				value = strings.TrimSpace(raw)
 			}
-			value := strings.TrimSpace(raw)
 			if value == "" && strings.TrimSpace(spec.DefaultValue) != "" {
 				value = strings.TrimSpace(spec.DefaultValue)
 			}
 			if spec.Required && value == "" {
 				fmt.Printf("Argument %q is required.\n", spec.Key)
+				continue
+			}
+			if spec.Key == "path" && value != "" && filepath.IsAbs(value) {
+				fmt.Printf("Argument %q must be a relative path.\n", spec.Key)
 				continue
 			}
 			if value != "" {
@@ -2232,8 +2260,8 @@ func ghostCommandTemplateCatalog() []CommandTemplate {
 			SeedSelector: "seed.fs",
 			Operation:    "write",
 			Args: []CommandArgSpec{
-				{Key: "path", Prompt: "relative file path", Required: true},
-				{Key: "content", Prompt: "file content", Required: true},
+				{Key: "path", Prompt: "filename (relative path)", Required: true},
+				{Key: "content", Prompt: "file content", Required: true, Multiline: true, Terminator: ".done"},
 			},
 			DefaultBlocking: true,
 		},
@@ -2320,18 +2348,32 @@ func ghostCommandTemplateCatalog() []CommandTemplate {
 
 // mirageIntentTemplateCatalog defines the stable intent wizard entries for Mirage issue submission.
 func mirageIntentTemplateCatalog() []MirageIntentTemplate {
-	commands := ghostCommandTemplateCatalog()
-	out := make([]MirageIntentTemplate, 0, len(commands))
-	for i := range commands {
-		cmd := commands[i]
-		out = append(out, MirageIntentTemplate{
-			ID:          cmd.ID,
-			Label:       cmd.Label,
-			Description: cmd.Description,
-			Command:     cmd,
-		})
+	var storeFile CommandTemplate
+	for _, cmd := range ghostCommandTemplateCatalog() {
+		if cmd.ID == "seed.fs.write" {
+			storeFile = cmd
+			break
+		}
 	}
-	return out
+	if storeFile.ID == "" {
+		return []MirageIntentTemplate{}
+	}
+	return []MirageIntentTemplate{
+		{
+			ID:          "intent.seed.fs.store_file",
+			Label:       "Store File (seed.fs)",
+			Description: "Store a file on one connected ghost filesystem via seed.fs.",
+			Command: CommandTemplate{
+				ID:              "intent.seed.fs.store_file.command",
+				Label:           "Store File Command",
+				Description:     "Write file content to ghost seed.fs.",
+				SeedSelector:    storeFile.SeedSelector,
+				Operation:       storeFile.Operation,
+				Args:            storeFile.Args,
+				DefaultBlocking: true,
+			},
+		},
+	}
 }
 
 // ghostCommandTemplatesForSeedList filters command templates to those supported by connected Ghost seeds.
@@ -2431,6 +2473,24 @@ func connectedGhostCandidatesForSeed(
 	out := make([]string, 0, len(outSet))
 	for ghostID := range outSet {
 		out = append(out, ghostID)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// deriveSeedDependencies returns sorted unique seed dependencies from a command plan.
+func deriveSeedDependencies(plan []MirageIssueCommand) []string {
+	deps := make(map[string]struct{})
+	for i := range plan {
+		seedID := strings.TrimSpace(plan[i].SeedSelector)
+		if seedID == "" {
+			continue
+		}
+		deps[seedID] = struct{}{}
+	}
+	out := make([]string, 0, len(deps))
+	for seedID := range deps {
+		out = append(out, seedID)
 	}
 	sort.Strings(out)
 	return out

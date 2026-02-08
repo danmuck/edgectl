@@ -58,11 +58,12 @@ func (c IssueCommand) Validate() error {
 
 // IssueEnv is Mirage desired-state ingress from the user boundary.
 type IssueEnv struct {
-	IntentID    string
-	Actor       string
-	TargetScope string
-	Objective   string
-	TimestampMS uint64
+	IntentID         string
+	Actor            string
+	TargetScope      string
+	Objective        string
+	SeedDependencies []string
+	TimestampMS      uint64
 
 	// CommandPlan is optional; when present it defines all single-command loops.
 	CommandPlan []IssueCommand
@@ -211,6 +212,7 @@ func (o *Orchestrator) SubmitIssue(issue IssueEnv) error {
 	if err != nil {
 		return err
 	}
+	issue.SeedDependencies = seedDependenciesForCommands(commands)
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.desired[issue.IntentID] = DesiredIntent{
@@ -220,6 +222,24 @@ func (o *Orchestrator) SubmitIssue(issue IssueEnv) error {
 	}
 	delete(o.observed, issue.IntentID)
 	return nil
+}
+
+func seedDependenciesForCommands(commands []PlannedCommand) []string {
+	seen := make(map[string]struct{}, len(commands))
+	out := make([]string, 0, len(commands))
+	for i := range commands {
+		seedID := strings.TrimSpace(commands[i].Command.SeedSelector)
+		if seedID == "" {
+			continue
+		}
+		if _, ok := seen[seedID]; ok {
+			continue
+		}
+		seen[seedID] = struct{}{}
+		out = append(out, seedID)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // SnapshotIntent returns one intent snapshot with explicit desired/observed visibility.

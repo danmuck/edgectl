@@ -52,3 +52,19 @@ func TestConnectedGhostCandidatesForSeed(t *testing.T) {
 		t.Fatalf("unexpected connected ghost candidates: %+v", ghosts)
 	}
 }
+
+func TestDeriveSeedDependencies(t *testing.T) {
+	plan := []MirageIssueCommand{
+		{SeedSelector: "seed.fs"},
+		{SeedSelector: "seed.flow"},
+		{SeedSelector: "seed.fs"},
+		{SeedSelector: " "},
+	}
+	deps := deriveSeedDependencies(plan)
+	if len(deps) != 2 {
+		t.Fatalf("unexpected deps length: %+v", deps)
+	}
+	if deps[0] != "seed.flow" || deps[1] != "seed.fs" {
+		t.Fatalf("unexpected deps order/content: %+v", deps)
+	}
+}
