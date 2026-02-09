@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/BurntSushi/toml"
 	"github.com/danmuck/edgectl/internal/ghost"
 	"github.com/danmuck/edgectl/internal/logging"
 	"github.com/danmuck/edgectl/internal/mirage"
@@ -73,20 +72,6 @@ type GhostAdminCommand struct {
 	Args         map[string]string `json:"args"`
 }
 
-// GhostAdmin defines the client control boundary for one Ghost target.
-type GhostAdmin interface {
-	GhostID() string
-	Address() string
-	Status() (ghost.LifecycleStatus, error)
-	ListSeeds() ([]seeds.SeedMetadata, error)
-	Execute(command GhostAdminCommand) (ghost.ExecutionState, ghost.EventEnv, error)
-	ExecutionByCommandID(commandID string) (ghost.ExecutionState, bool, error)
-	RecentEvents(limit int) ([]ghost.EventEnv, error)
-	Verification(limit int) ([]ghost.VerificationRecord, error)
-	SpawnGhost(req ghost.SpawnGhostRequest) (ghost.SpawnGhostResult, error)
-	Close() error
-}
-
 // RemoteGhostAdmin is a TCP client for ghostctl admin control endpoint.
 type RemoteGhostAdmin struct {
 	addr string
@@ -98,24 +83,6 @@ type RemoteGhostAdmin struct {
 type GhostTarget struct {
 	Name  string
 	Admin GhostAdmin
-}
-
-// MirageAdmin defines the client control boundary for one Mirage target.
-type MirageAdmin interface {
-	Address() string
-	Status() (mirage.LifecycleStatus, error)
-	SubmitIssue(issue MirageIssueRequest) error
-	ReconcileIntent(intentID string) (session.Report, error)
-	ReconcileAll() ([]session.Report, error)
-	SnapshotIntent(intentID string) (mirage.IntentSnapshot, bool, error)
-	ListIntents() ([]string, error)
-	RecentReports(limit int) ([]session.Report, error)
-	SpawnLocalGhost(req mirage.SpawnGhostRequest) (mirage.SpawnGhostResult, error)
-	AttachGhostAdmin(addr string) (MirageAttachGhostResponse, error)
-	RegisteredGhosts() ([]mirage.RegisteredGhost, error)
-	RoutingTable() ([]MirageRoute, error)
-	AvailableServices() ([]MirageAvailableService, error)
-	Close() error
 }
 
 // RemoteMirageAdmin is a TCP client for miragectl admin control endpoint.
@@ -235,13 +202,13 @@ type mirageReconcileAllResponse struct {
 	Reports []session.Report `json:"reports"`
 }
 
-// executionResponse holds execute action output.
+// Holds execute action output.
 type executionResponse struct {
 	Execution ghost.ExecutionState `json:"execution"`
 	Event     ghost.EventEnv       `json:"event"`
 }
 
-// executionLookupResponse holds execution lookup output.
+// Holds execution lookup output.
 type executionLookupResponse struct {
 	Found     bool                 `json:"found"`
 	Execution ghost.ExecutionState `json:"execution"`
@@ -275,251 +242,7 @@ func main() {
 	}
 }
 
-func NewApp(ghostCfgPath string, mirageCfgPath string, mode string) *App {
-	return &App{
-		reader:        bufio.NewReader(os.Stdin),
-		ghostCfgPath:  ghostCfgPath,
-		mirageCfgPath: mirageCfgPath,
-		targets:       make([]GhostTarget, 0),
-		activeTarget:  -1,
-		mirageTargets: make([]MirageTarget, 0),
-		activeMirage:  -1,
-		clearScreen:   false,
-		launchMode:    normalizeClientMode(mode),
-	}
-}
-
-// Run executes the main interactive menu loop.
-func (a *App) Run() error {
-	if err := a.loadOrInitConfigs(); err != nil {
-		return err
-	}
-	logs.Infof(
-		"client-tm loaded ghost_targets=%d mirage_targets=%d",
-		len(a.ghostCfg.Targets),
-		len(a.mirageCfg.Targets),
-	)
-	if a.launchMode != "" && a.launchMode != "ghost" && a.launchMode != "mirage" {
-		return fmt.Errorf("invalid mode %q (expected ghost or mirage)", a.launchMode)
-	}
-	if a.launchMode == "mirage" {
-		return a.runMirageClientLoop()
-	}
-
-	for {
-		a.printMainMenu()
-		choice, err := a.promptInt("Choose", 1, 8, false, true)
-		if err != nil {
-			if errors.Is(err, ErrNavigateExit) {
-				return a.exitClient()
-			}
-			return err
-		}
-		a.clearIfEnabled()
-		switch choice {
-		case 1:
-			a.listTargets()
-		case 2:
-			if err := a.addGhostTarget(); err != nil {
-				logs.Errf("add target failed: %v", err)
-			}
-		case 3:
-			if err := a.selectActiveTarget(); err != nil {
-				if errors.Is(err, ErrNavigateBack) {
-					continue
-				}
-				if errors.Is(err, ErrNavigateExit) {
-					return a.exitClient()
-				}
-				logs.Errf("select target failed: %v", err)
-			}
-		case 4:
-			a.showActiveTargetSummary()
-		case 5:
-			if err := a.runGhostAdminConsole(); err != nil {
-				if errors.Is(err, ErrNavigateExit) {
-					return a.exitClient()
-				}
-				logs.Errf("ghost admin console error: %v", err)
-			}
-		case 6:
-			if err := a.removeGhostTarget(); err != nil {
-				if errors.Is(err, ErrNavigateBack) {
-					continue
-				}
-				if errors.Is(err, ErrNavigateExit) {
-					return a.exitClient()
-				}
-				logs.Errf("remove target failed: %v", err)
-			}
-		case 7:
-			if err := a.runConfigMenu(); err != nil {
-				if errors.Is(err, ErrNavigateBack) {
-					continue
-				}
-				if errors.Is(err, ErrNavigateExit) {
-					return a.exitClient()
-				}
-				logs.Errf("config menu failed: %v", err)
-			}
-		case 8:
-			return a.exitClient()
-		}
-	}
-}
-
-// exitClient saves current config and closes active admin connections.
-func (a *App) exitClient() error {
-	if err := a.saveConfigs(); err != nil {
-		logs.Warnf("save on exit failed: %v", err)
-	}
-	a.closeTargets()
-	a.closeMirageTargets()
-	logs.Infof("client-tm exiting")
-	return nil
-}
-
-// loadOrInitConfigs loads persisted files and initializes runtime targets.
-func (a *App) loadOrInitConfigs() error {
-	if err := ensureFile(a.ghostCfgPath); err != nil {
-		return err
-	}
-	if err := ensureFile(a.mirageCfgPath); err != nil {
-		return err
-	}
-
-	if _, err := toml.DecodeFile(a.ghostCfgPath, &a.ghostCfg); err != nil {
-		return fmt.Errorf("load ghost config: %w", err)
-	}
-	if _, err := toml.DecodeFile(a.mirageCfgPath, &a.mirageCfg); err != nil {
-		return fmt.Errorf("load mirage config: %w", err)
-	}
-	a.clearScreen = a.ghostCfg.ClearScreenAfterCommand
-	needsSave := false
-
-	if len(a.ghostCfg.Targets) == 0 {
-		a.ghostCfg.Targets = append(a.ghostCfg.Targets, ghostTargetConfig{
-			Name:    "local-ghost",
-			Addr:    "127.0.0.1:7010",
-			GhostID: "ghost.local",
-		})
-		needsSave = true
-	}
-	if len(a.mirageCfg.Targets) == 0 {
-		a.mirageCfg.Targets = append(a.mirageCfg.Targets, mirageTargetConfig{
-			Name:     "local-mirage",
-			Addr:     "127.0.0.1:7020",
-			MirageID: "mirage.local",
-		})
-		needsSave = true
-	}
-	if len(a.mirageCfg.Targets) > 1 {
-		logs.Warnf("client-tm mirage config has %d targets; only first target is supported", len(a.mirageCfg.Targets))
-		a.mirageCfg.Targets = a.mirageCfg.Targets[:1]
-		needsSave = true
-	}
-	if strings.TrimSpace(a.mirageCfg.LocalGhostID) == "" {
-		a.mirageCfg.LocalGhostID = "ghost.local"
-		needsSave = true
-	}
-	if strings.TrimSpace(a.mirageCfg.LocalGhostAdminAddr) == "" {
-		a.mirageCfg.LocalGhostAdminAddr = "127.0.0.1:7010"
-		needsSave = true
-	}
-	for i, cfg := range a.ghostCfg.Targets {
-		name := strings.TrimSpace(cfg.Name)
-		addr := strings.TrimSpace(cfg.Addr)
-		if name == "" || addr == "" {
-			continue
-		}
-		ghostID := strings.TrimSpace(cfg.GhostID)
-		admin := NewRemoteGhostAdmin(addr)
-		if ghostID == "" {
-			if status, err := admin.Status(); err == nil && strings.TrimSpace(status.GhostID) != "" {
-				ghostID = strings.TrimSpace(status.GhostID)
-			} else {
-				ghostID = inferGhostIDFromTargetName(name)
-			}
-			a.ghostCfg.Targets[i].GhostID = ghostID
-			needsSave = true
-		}
-		a.targets = append(a.targets, GhostTarget{
-			Name:  name,
-			Admin: admin,
-		})
-	}
-	if len(a.targets) > 0 {
-		a.activeTarget = 0
-	}
-	cfg := a.mirageCfg.Targets[0]
-	name := strings.TrimSpace(cfg.Name)
-	addr := strings.TrimSpace(cfg.Addr)
-	if name == "" || addr == "" {
-		return errors.New("mirage config requires non-empty target name and addr")
-	}
-	mirageID := strings.TrimSpace(cfg.MirageID)
-	admin := NewRemoteMirageAdmin(addr)
-	if mirageID == "" {
-		if status, err := admin.Status(); err == nil && strings.TrimSpace(status.MirageID) != "" {
-			mirageID = strings.TrimSpace(status.MirageID)
-		} else {
-			mirageID = "mirage.local"
-		}
-		a.mirageCfg.Targets[0].MirageID = mirageID
-		needsSave = true
-	}
-	a.mirageTargets = append(a.mirageTargets, MirageTarget{
-		Name:  name,
-		Admin: admin,
-	})
-	if len(a.mirageTargets) > 0 {
-		a.activeMirage = 0
-	}
-	if needsSave {
-		if err := a.saveConfigs(); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// saveConfigs writes current Ghost and Mirage target lists to disk.
-func (a *App) saveConfigs() error {
-	buf := strings.Builder{}
-	if err := toml.NewEncoder(&buf).Encode(a.ghostCfg); err != nil {
-		return err
-	}
-	if err := os.WriteFile(a.ghostCfgPath, []byte(buf.String()), 0o644); err != nil {
-		return err
-	}
-
-	buf.Reset()
-	if err := toml.NewEncoder(&buf).Encode(a.mirageCfg); err != nil {
-		return err
-	}
-	if err := os.WriteFile(a.mirageCfgPath, []byte(buf.String()), 0o644); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (a *App) printMainMenu() {
-	fmt.Println()
-	fmt.Println("Client TM")
-	fmt.Printf("  ghost config:  %s (targets=%d)\n", a.ghostCfgPath, len(a.ghostCfg.Targets))
-	fmt.Printf("  mirage config: %s (targets=%d)\n", a.mirageCfgPath, len(a.mirageCfg.Targets))
-	fmt.Printf("  clear screen after command: %v\n", a.clearScreen)
-	fmt.Println("  1) List ghost targets")
-	fmt.Println("  2) Add/provision ghost target (persist)")
-	fmt.Println("  3) Select active ghost target")
-	fmt.Println("  4) Show active target summary")
-	fmt.Println("  5) Ghost admin console")
-	fmt.Println("  6) Remove ghost target")
-	fmt.Println("  7) Config menu")
-	fmt.Println("  8) Exit")
-}
-
-// runMirageClientLoop executes Mirage-first operator navigation.
+// Executes Mirage-first operator navigation.
 func (a *App) runMirageClientLoop() error {
 	for {
 		a.printMirageMenu()
@@ -569,22 +292,7 @@ func (a *App) runMirageClientLoop() error {
 	}
 }
 
-func (a *App) printMirageMenu() {
-	fmt.Println()
-	fmt.Println("Client TM (Mirage)")
-	fmt.Printf("  ghost config:  %s (targets=%d)\n", a.ghostCfgPath, len(a.ghostCfg.Targets))
-	fmt.Printf("  mirage config: %s (single control plane)\n", a.mirageCfgPath)
-	fmt.Printf("  clear screen after command: %v\n", a.clearScreen)
-	fmt.Println("  (*) not yet fully implemented")
-	fmt.Println("  1) Show mirage control-plane config")
-	fmt.Println("  2) Show mirage status")
-	fmt.Println("  3) Mirage admin console (*)")
-	fmt.Println("  4) Show connected ghosts")
-	fmt.Println("  5) Open local ghost admin console")
-	fmt.Println("  6) Config menu")
-	fmt.Println("  7) Exit")
-}
-
+// todo: single file per menu
 // runConfigMenu centralizes client runtime toggles and persistence actions.
 func (a *App) runConfigMenu() error {
 	for {
@@ -769,61 +477,6 @@ func (a *App) openLocalGhostConsole() error {
 	})
 }
 
-func (a *App) runMirageAdminConsole() error {
-	target, ok := a.activeMirageTarget()
-	if !ok {
-		return errors.New("no active mirage target")
-	}
-	for {
-		fmt.Println()
-		fmt.Printf("Mirage Admin Console (%s @ %s)\n", target.Name, target.Admin.Address())
-		fmt.Println("  (*) not yet fully implemented")
-		fmt.Println("  1) Show status")
-		fmt.Println("  2) Show available services")
-		fmt.Println("  3) Issue intent")
-		fmt.Println("  4) Reconcile intent")
-		fmt.Println("  5) Reports")
-		fmt.Println("  6) Ghost routing")
-		fmt.Println("  7) Back")
-		choice, err := a.promptInt("Choose", 1, 7, true, true)
-		if err != nil {
-			if errors.Is(err, ErrNavigateBack) {
-				return nil
-			}
-			return err
-		}
-		a.clearIfEnabled()
-		switch choice {
-		case 1:
-			if err := a.showActiveMirageSummary(); err != nil {
-				logs.Errf("show mirage summary failed: %v", err)
-			}
-		case 2:
-			if err := a.showMirageAvailableServices(target); err != nil {
-				logs.Errf("show available services failed: %v", err)
-			}
-		case 3:
-			if err := a.submitMirageIssue(target); err != nil {
-				logs.Errf("issue intent failed: %v", err)
-			}
-		case 4:
-			if err := a.runMirageReconcileConsole(target); err != nil {
-				logs.Errf("reconcile console failed: %v", err)
-			}
-		case 5:
-			if err := a.runMirageReportsConsole(target); err != nil {
-				logs.Errf("reports console failed: %v", err)
-			}
-		case 6:
-			if err := a.runMirageGhostRoutingConsole(target); err != nil {
-				logs.Errf("ghost routing console failed: %v", err)
-			}
-		case 7:
-			return nil
-		}
-	}
-}
-
 func (a *App) listTargets() {
 	fmt.Println()
 	fmt.Println("Ghost Targets")
@@ -935,6 +588,7 @@ func (a *App) removeGhostTarget() error {
 	return a.saveConfigs()
 }
 
+// note: default configs
 // resetToDefaultConfig removes stale targets and restores baseline files.
 func (a *App) resetToDefaultConfig() error {
 	confirm, err := a.promptLine("Type RESET to confirm")
@@ -1019,56 +673,6 @@ func (a *App) runGhostAdminConsole() error {
 		return errors.New("no active target")
 	}
 	return a.runGhostAdminConsoleForTarget(target)
-}
-
-// runGhostAdminConsoleForTarget drives one admin session for the selected Ghost target.
-func (a *App) runGhostAdminConsoleForTarget(target GhostTarget) error {
-	for {
-		fmt.Println()
-		fmt.Printf("Ghost Admin Console (%s @ %s)\n", target.Name, target.Admin.Address())
-		fmt.Println("  1) Show status")
-		fmt.Println("  2) List seeds and operations")
-		fmt.Println("  3) Execute seed command")
-		fmt.Println("  4) Lookup execution by command_id")
-		fmt.Println("  5) Show recent events")
-		fmt.Println("  6) Protocol/message verification view")
-		fmt.Println("  7) Back")
-
-		choice, err := a.promptInt("Choose", 1, 7, true, true)
-		if err != nil {
-			if errors.Is(err, ErrNavigateBack) {
-				return nil
-			}
-			return err
-		}
-		a.clearIfEnabled()
-		switch choice {
-		case 1:
-			a.showGhostTargetSummary(target)
-		case 2:
-			if err := a.listSeedOperations(target); err != nil {
-				logs.Errf("list seed operations failed: %v", err)
-			}
-		case 3:
-			if err := a.executeSeedCommand(target); err != nil {
-				logs.Errf("execute command failed: %v", err)
-			}
-		case 4:
-			if err := a.lookupExecution(target); err != nil {
-				logs.Errf("lookup execution failed: %v", err)
-			}
-		case 5:
-			if err := a.showRecentEvents(target); err != nil {
-				logs.Errf("show events failed: %v", err)
-			}
-		case 6:
-			if err := a.showVerification(target); err != nil {
-				logs.Errf("show verification failed: %v", err)
-			}
-		case 7:
-			return nil
-		}
-	}
 }
 
 func (a *App) listSeedOperations(target GhostTarget) error {
@@ -1325,6 +929,7 @@ func (a *App) submitMirageIssue(target MirageTarget) error {
 	return nil
 }
 
+// todo: move all menus into their own files
 func (a *App) runMirageReconcileConsole(target MirageTarget) error {
 	for {
 		fmt.Println()
@@ -1357,6 +962,7 @@ func (a *App) runMirageReconcileConsole(target MirageTarget) error {
 	}
 }
 
+// todo: move all menus into their own files
 func (a *App) runMirageReportsConsole(target MirageTarget) error {
 	for {
 		fmt.Println()
@@ -1386,6 +992,8 @@ func (a *App) runMirageReportsConsole(target MirageTarget) error {
 		}
 	}
 }
+
+// todo: move all menus into their own files
 
 func (a *App) runMirageGhostRoutingConsole(target MirageTarget) error {
 	for {
@@ -1784,344 +1392,6 @@ func (a *App) promptInt(label string, min int, max int, allowBack bool, allowExi
 	}
 }
 
-func NewRemoteGhostAdmin(addr string) *RemoteGhostAdmin {
-	return &RemoteGhostAdmin{addr: strings.TrimSpace(addr)}
-}
-
-func NewRemoteMirageAdmin(addr string) *RemoteMirageAdmin {
-	return &RemoteMirageAdmin{addr: strings.TrimSpace(addr)}
-}
-
-func (c *RemoteGhostAdmin) GhostID() string {
-	status, err := c.Status()
-	if err != nil {
-		return ""
-	}
-	return status.GhostID
-}
-
-func (c *RemoteGhostAdmin) Address() string {
-	return c.addr
-}
-
-func (c *RemoteGhostAdmin) Status() (ghost.LifecycleStatus, error) {
-	var status ghost.LifecycleStatus
-	if err := c.call(controlRequest{Action: "status"}, &status); err != nil {
-		return ghost.LifecycleStatus{}, err
-	}
-	return status, nil
-}
-
-func (c *RemoteGhostAdmin) ListSeeds() ([]seeds.SeedMetadata, error) {
-	var list []seeds.SeedMetadata
-	if err := c.call(controlRequest{Action: "list_seeds"}, &list); err != nil {
-		return nil, err
-	}
-	return list, nil
-}
-
-func (c *RemoteGhostAdmin) Execute(command GhostAdminCommand) (ghost.ExecutionState, ghost.EventEnv, error) {
-	var out executionResponse
-	if err := c.call(controlRequest{Action: "execute", Command: command}, &out); err != nil {
-		return ghost.ExecutionState{}, ghost.EventEnv{}, err
-	}
-	return out.Execution, out.Event, nil
-}
-
-func (c *RemoteGhostAdmin) ExecutionByCommandID(commandID string) (ghost.ExecutionState, bool, error) {
-	var out executionLookupResponse
-	req := controlRequest{
-		Action:    "execution_by_command_id",
-		CommandID: strings.TrimSpace(commandID),
-	}
-	if err := c.call(req, &out); err != nil {
-		return ghost.ExecutionState{}, false, err
-	}
-	return out.Execution, out.Found, nil
-}
-
-func (c *RemoteGhostAdmin) RecentEvents(limit int) ([]ghost.EventEnv, error) {
-	var out []ghost.EventEnv
-	if err := c.call(controlRequest{Action: "recent_events", Limit: limit}, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *RemoteGhostAdmin) Verification(limit int) ([]ghost.VerificationRecord, error) {
-	var out []ghost.VerificationRecord
-	if err := c.call(controlRequest{Action: "verification", Limit: limit}, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-// SpawnGhost asks a connected root Ghost to provision a child Ghost node.
-func (c *RemoteGhostAdmin) SpawnGhost(req ghost.SpawnGhostRequest) (ghost.SpawnGhostResult, error) {
-	var out ghost.SpawnGhostResult
-	controlReq := controlRequest{
-		Action: "spawn_ghost",
-		Spawn:  req,
-	}
-	if err := c.call(controlReq, &out); err != nil {
-		return ghost.SpawnGhostResult{}, err
-	}
-	return out, nil
-}
-
-// call sends one admin request to ghostctl and decodes the response payload.
-func (c *RemoteGhostAdmin) call(req controlRequest, out any) error {
-	if err := c.ensureConn(); err != nil {
-		return err
-	}
-	payload, err := json.Marshal(req)
-	if err != nil {
-		return err
-	}
-	if err := c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		return err
-	}
-	payload = append(payload, '\n')
-	if _, err := c.conn.Write(payload); err != nil {
-		c.resetConn()
-		return err
-	}
-	if err := c.conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		return err
-	}
-	line, err := c.r.ReadBytes('\n')
-	if err != nil {
-		c.resetConn()
-		return err
-	}
-	var resp controlResponse
-	if err := json.Unmarshal(line, &resp); err != nil {
-		return err
-	}
-	if !resp.OK {
-		return errors.New(resp.Error)
-	}
-	if out == nil {
-		return nil
-	}
-	if len(resp.Data) == 0 {
-		return nil
-	}
-	return json.Unmarshal(resp.Data, out)
-}
-
-func (c *RemoteGhostAdmin) ensureConn() error {
-	if c.conn != nil {
-		return nil
-	}
-	conn, err := net.DialTimeout("tcp", c.addr, 3*time.Second)
-	if err != nil {
-		return err
-	}
-	c.conn = conn
-	c.r = bufio.NewReader(conn)
-	return nil
-}
-
-func (c *RemoteGhostAdmin) resetConn() {
-	if c.conn != nil {
-		_ = c.conn.Close()
-	}
-	c.conn = nil
-	c.r = nil
-}
-
-// Close terminates the persistent admin connection for this target.
-func (c *RemoteGhostAdmin) Close() error {
-	if c.conn == nil {
-		return nil
-	}
-	err := c.conn.Close()
-	c.conn = nil
-	c.r = nil
-	return err
-}
-
-func (c *RemoteMirageAdmin) Address() string {
-	return c.addr
-}
-
-func (c *RemoteMirageAdmin) Status() (mirage.LifecycleStatus, error) {
-	var out mirage.LifecycleStatus
-	if err := c.call(mirageControlRequest{Action: "status"}, &out); err != nil {
-		return mirage.LifecycleStatus{}, err
-	}
-	return out, nil
-}
-
-func (c *RemoteMirageAdmin) SubmitIssue(issue MirageIssueRequest) error {
-	return c.call(mirageControlRequest{Action: "submit_issue", Issue: issue}, nil)
-}
-
-func (c *RemoteMirageAdmin) ReconcileIntent(intentID string) (session.Report, error) {
-	var out session.Report
-	req := mirageControlRequest{
-		Action:   "reconcile_intent",
-		IntentID: strings.TrimSpace(intentID),
-	}
-	if err := c.call(req, &out); err != nil {
-		return session.Report{}, err
-	}
-	return out, nil
-}
-
-func (c *RemoteMirageAdmin) ReconcileAll() ([]session.Report, error) {
-	var out mirageReconcileAllResponse
-	if err := c.call(mirageControlRequest{Action: "reconcile_all"}, &out); err != nil {
-		return nil, err
-	}
-	return out.Reports, nil
-}
-
-func (c *RemoteMirageAdmin) SnapshotIntent(intentID string) (mirage.IntentSnapshot, bool, error) {
-	var out mirageSnapshotIntentResponse
-	req := mirageControlRequest{
-		Action:   "snapshot_intent",
-		IntentID: strings.TrimSpace(intentID),
-	}
-	if err := c.call(req, &out); err != nil {
-		return mirage.IntentSnapshot{}, false, err
-	}
-	return out.Snapshot, out.Found, nil
-}
-
-func (c *RemoteMirageAdmin) ListIntents() ([]string, error) {
-	var out []string
-	if err := c.call(mirageControlRequest{Action: "list_intents"}, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *RemoteMirageAdmin) RecentReports(limit int) ([]session.Report, error) {
-	var out []session.Report
-	if err := c.call(mirageControlRequest{Action: "recent_reports", Limit: limit}, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *RemoteMirageAdmin) SpawnLocalGhost(req mirage.SpawnGhostRequest) (mirage.SpawnGhostResult, error) {
-	var out mirage.SpawnGhostResult
-	controlReq := mirageControlRequest{
-		Action: "spawn_local_ghost",
-		Spawn:  req,
-	}
-	if err := c.call(controlReq, &out); err != nil {
-		return mirage.SpawnGhostResult{}, err
-	}
-	return out, nil
-}
-
-func (c *RemoteMirageAdmin) AttachGhostAdmin(addr string) (MirageAttachGhostResponse, error) {
-	var out MirageAttachGhostResponse
-	req := mirageControlRequest{
-		Action:         "attach_ghost_admin",
-		GhostAdminAddr: strings.TrimSpace(addr),
-	}
-	if err := c.call(req, &out); err != nil {
-		return MirageAttachGhostResponse{}, err
-	}
-	return out, nil
-}
-
-func (c *RemoteMirageAdmin) RegisteredGhosts() ([]mirage.RegisteredGhost, error) {
-	var out []mirage.RegisteredGhost
-	if err := c.call(mirageControlRequest{Action: "registered_ghosts"}, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *RemoteMirageAdmin) RoutingTable() ([]MirageRoute, error) {
-	var out []MirageRoute
-	if err := c.call(mirageControlRequest{Action: "routing_table"}, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *RemoteMirageAdmin) AvailableServices() ([]MirageAvailableService, error) {
-	var out []MirageAvailableService
-	if err := c.call(mirageControlRequest{Action: "available_services"}, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *RemoteMirageAdmin) call(req mirageControlRequest, out any) error {
-	if err := c.ensureConn(); err != nil {
-		return err
-	}
-	payload, err := json.Marshal(req)
-	if err != nil {
-		return err
-	}
-	if err := c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		return err
-	}
-	payload = append(payload, '\n')
-	if _, err := c.conn.Write(payload); err != nil {
-		c.resetConn()
-		return err
-	}
-	if err := c.conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		return err
-	}
-	line, err := c.r.ReadBytes('\n')
-	if err != nil {
-		c.resetConn()
-		return err
-	}
-	var resp mirageControlResponse
-	if err := json.Unmarshal(line, &resp); err != nil {
-		return err
-	}
-	if !resp.OK {
-		return errors.New(resp.Error)
-	}
-	if out == nil || len(resp.Data) == 0 {
-		return nil
-	}
-	return json.Unmarshal(resp.Data, out)
-}
-
-func (c *RemoteMirageAdmin) ensureConn() error {
-	if c.conn != nil {
-		return nil
-	}
-	conn, err := net.DialTimeout("tcp", c.addr, 3*time.Second)
-	if err != nil {
-		return err
-	}
-	c.conn = conn
-	c.r = bufio.NewReader(conn)
-	return nil
-}
-
-func (c *RemoteMirageAdmin) resetConn() {
-	if c.conn != nil {
-		_ = c.conn.Close()
-	}
-	c.conn = nil
-	c.r = nil
-}
-
-func (c *RemoteMirageAdmin) Close() error {
-	if c.conn == nil {
-		return nil
-	}
-	err := c.conn.Close()
-	c.conn = nil
-	c.r = nil
-	return err
-}
-
 func (a *App) closeTargets() {
 	for _, t := range a.targets {
 		_ = t.Admin.Close()
@@ -2132,34 +1402,6 @@ func (a *App) closeMirageTargets() {
 	for _, t := range a.mirageTargets {
 		_ = t.Admin.Close()
 	}
-}
-
-func parseArgsCSV(in string) map[string]string {
-	raw := strings.TrimSpace(in)
-	if raw == "" {
-		return nil
-	}
-	parts := strings.Split(raw, ",")
-	out := make(map[string]string)
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		key, value, ok := strings.Cut(part, "=")
-		if !ok {
-			continue
-		}
-		k := strings.TrimSpace(key)
-		if k == "" {
-			continue
-		}
-		out[k] = strings.TrimSpace(value)
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
 }
 
 func indentLines(in string, prefix string) string {
@@ -2176,271 +1418,7 @@ func indentLines(in string, prefix string) string {
 	return b.String()
 }
 
-// ghostCommandTemplateCatalog is the stable list of CLI-exposed Ghost commands.
-func ghostCommandTemplateCatalog() []CommandTemplate {
-	return []CommandTemplate{
-		{
-			ID:           "seed.flow.status",
-			Label:        "Flow Status",
-			Description:  "Read deterministic flow status.",
-			SeedSelector: "seed.flow",
-			Operation:    "status",
-		},
-		{
-			ID:           "seed.flow.step",
-			Label:        "Flow Step",
-			Description:  "Run deterministic flow step transition.",
-			SeedSelector: "seed.flow",
-			Operation:    "step",
-			Args: []CommandArgSpec{
-				{Key: "name", Prompt: "step name (init|plan|apply)", Required: true},
-			},
-		},
-		{
-			ID:           "seed.flow.echo",
-			Label:        "Flow Echo",
-			Description:  "Echo one key/value pair through seed.flow.",
-			SeedSelector: "seed.flow",
-			Operation:    "echo",
-			Args: []CommandArgSpec{
-				{Key: "message", Prompt: "message", Required: true},
-			},
-		},
-		{
-			ID:           "seed.mongod.status",
-			Label:        "MongoDB Status",
-			Description:  "Read mongod service status.",
-			SeedSelector: "seed.mongod",
-			Operation:    "status",
-			Args: []CommandArgSpec{
-				{Key: "unit", Prompt: "systemd unit", Required: false, DefaultValue: "mongod"},
-			},
-		},
-		{
-			ID:           "seed.mongod.start",
-			Label:        "MongoDB Start",
-			Description:  "Start mongod service.",
-			SeedSelector: "seed.mongod",
-			Operation:    "start",
-			Args: []CommandArgSpec{
-				{Key: "unit", Prompt: "systemd unit", Required: false, DefaultValue: "mongod"},
-			},
-		},
-		{
-			ID:           "seed.mongod.stop",
-			Label:        "MongoDB Stop",
-			Description:  "Stop mongod service.",
-			SeedSelector: "seed.mongod",
-			Operation:    "stop",
-			Args: []CommandArgSpec{
-				{Key: "unit", Prompt: "systemd unit", Required: false, DefaultValue: "mongod"},
-			},
-		},
-		{
-			ID:           "seed.mongod.restart",
-			Label:        "MongoDB Restart",
-			Description:  "Restart mongod service.",
-			SeedSelector: "seed.mongod",
-			Operation:    "restart",
-			Args: []CommandArgSpec{
-				{Key: "unit", Prompt: "systemd unit", Required: false, DefaultValue: "mongod"},
-			},
-		},
-		{
-			ID:           "seed.mongod.version",
-			Label:        "MongoDB Version",
-			Description:  "Read mongod binary version.",
-			SeedSelector: "seed.mongod",
-			Operation:    "version",
-		},
-		{
-			ID:           "seed.fs.write",
-			Label:        "Filesystem Write",
-			Description:  "Write file content under ghost-scoped seed.fs root.",
-			SeedSelector: "seed.fs",
-			Operation:    "write",
-			Args: []CommandArgSpec{
-				{Key: "path", Prompt: "filename (relative path)", Required: true},
-				{Key: "content", Prompt: "file content", Required: true, Multiline: true, Terminator: ".done"},
-			},
-			DefaultBlocking: true,
-		},
-		{
-			ID:           "seed.fs.read",
-			Label:        "Filesystem Read",
-			Description:  "Read file content from ghost-scoped seed.fs root.",
-			SeedSelector: "seed.fs",
-			Operation:    "read",
-			Args: []CommandArgSpec{
-				{Key: "path", Prompt: "relative file path", Required: true},
-			},
-			DefaultBlocking: true,
-		},
-		{
-			ID:           "seed.fs.list",
-			Label:        "Filesystem List",
-			Description:  "List file paths from ghost-scoped seed.fs root.",
-			SeedSelector: "seed.fs",
-			Operation:    "list",
-			Args: []CommandArgSpec{
-				{Key: "prefix", Prompt: "path prefix (optional)", Required: false},
-			},
-			DefaultBlocking: true,
-		},
-		{
-			ID:           "seed.fs.delete",
-			Label:        "Filesystem Delete",
-			Description:  "Delete file path from ghost-scoped seed.fs root.",
-			SeedSelector: "seed.fs",
-			Operation:    "delete",
-			Args: []CommandArgSpec{
-				{Key: "path", Prompt: "relative file path", Required: true},
-			},
-			DefaultBlocking: true,
-		},
-		{
-			ID:           "seed.kv.put",
-			Label:        "KV Put",
-			Description:  "Upsert key/value in seed.kv.",
-			SeedSelector: "seed.kv",
-			Operation:    "put",
-			Args: []CommandArgSpec{
-				{Key: "key", Prompt: "key", Required: true},
-				{Key: "value", Prompt: "value", Required: true},
-			},
-			DefaultBlocking: true,
-		},
-		{
-			ID:           "seed.kv.get",
-			Label:        "KV Get",
-			Description:  "Read value by key from seed.kv.",
-			SeedSelector: "seed.kv",
-			Operation:    "get",
-			Args: []CommandArgSpec{
-				{Key: "key", Prompt: "key", Required: true},
-			},
-			DefaultBlocking: true,
-		},
-		{
-			ID:           "seed.kv.list",
-			Label:        "KV List",
-			Description:  "List keys from seed.kv.",
-			SeedSelector: "seed.kv",
-			Operation:    "list",
-			Args: []CommandArgSpec{
-				{Key: "prefix", Prompt: "key prefix (optional)", Required: false},
-			},
-			DefaultBlocking: true,
-		},
-		{
-			ID:           "seed.kv.delete",
-			Label:        "KV Delete",
-			Description:  "Delete key from seed.kv.",
-			SeedSelector: "seed.kv",
-			Operation:    "delete",
-			Args: []CommandArgSpec{
-				{Key: "key", Prompt: "key", Required: true},
-			},
-			DefaultBlocking: true,
-		},
-	}
-}
-
-// mirageIntentTemplateCatalog defines the stable intent wizard entries for Mirage issue submission.
-func mirageIntentTemplateCatalog() []MirageIntentTemplate {
-	var storeFile CommandTemplate
-	for _, cmd := range ghostCommandTemplateCatalog() {
-		if cmd.ID == "seed.fs.write" {
-			storeFile = cmd
-			break
-		}
-	}
-	if storeFile.ID == "" {
-		return []MirageIntentTemplate{}
-	}
-	return []MirageIntentTemplate{
-		{
-			ID:          "intent.seed.fs.store_file",
-			Label:       "Store File (seed.fs)",
-			Description: "Store a file on one connected ghost filesystem via seed.fs.",
-			Command: CommandTemplate{
-				ID:              "intent.seed.fs.store_file.command",
-				Label:           "Store File Command",
-				Description:     "Write file content to ghost seed.fs.",
-				SeedSelector:    storeFile.SeedSelector,
-				Operation:       storeFile.Operation,
-				Args:            storeFile.Args,
-				DefaultBlocking: true,
-			},
-		},
-	}
-}
-
-// ghostCommandTemplatesForSeedList filters command templates to those supported by connected Ghost seeds.
-func ghostCommandTemplatesForSeedList(seedList []seeds.SeedMetadata) []CommandTemplate {
-	seedSet := make(map[string]struct{}, len(seedList))
-	opSetBySeed := make(map[string]map[string]struct{}, len(seedList))
-	for i := range seedList {
-		seedID := strings.TrimSpace(seedList[i].ID)
-		if seedID == "" {
-			continue
-		}
-		seedSet[seedID] = struct{}{}
-		specs := operationsForSeed(seedID)
-		opSet := make(map[string]struct{}, len(specs))
-		for j := range specs {
-			opSet[strings.TrimSpace(specs[j].Name)] = struct{}{}
-		}
-		opSetBySeed[seedID] = opSet
-	}
-	out := make([]CommandTemplate, 0)
-	for _, tpl := range ghostCommandTemplateCatalog() {
-		if _, ok := seedSet[tpl.SeedSelector]; !ok {
-			continue
-		}
-		if opSet, ok := opSetBySeed[tpl.SeedSelector]; ok {
-			if _, exists := opSet[tpl.Operation]; !exists {
-				continue
-			}
-		}
-		out = append(out, tpl)
-	}
-	sort.Slice(out, func(i int, j int) bool {
-		if out[i].SeedSelector == out[j].SeedSelector {
-			return out[i].Operation < out[j].Operation
-		}
-		return out[i].SeedSelector < out[j].SeedSelector
-	})
-	return out
-}
-
-// mirageIntentTemplatesForServices filters intent templates to those available in Mirage service discovery.
-func mirageIntentTemplatesForServices(services []MirageAvailableService) []MirageIntentTemplate {
-	availableSeeds := make(map[string]struct{}, len(services))
-	for i := range services {
-		seedID := strings.TrimSpace(services[i].SeedID)
-		if seedID == "" || len(services[i].GhostIDs) == 0 {
-			continue
-		}
-		availableSeeds[seedID] = struct{}{}
-	}
-	out := make([]MirageIntentTemplate, 0)
-	for _, tpl := range mirageIntentTemplateCatalog() {
-		if _, ok := availableSeeds[tpl.Command.SeedSelector]; !ok {
-			continue
-		}
-		out = append(out, tpl)
-	}
-	sort.Slice(out, func(i int, j int) bool {
-		if out[i].Command.SeedSelector == out[j].Command.SeedSelector {
-			return out[i].Command.Operation < out[j].Command.Operation
-		}
-		return out[i].Command.SeedSelector < out[j].Command.SeedSelector
-	})
-	return out
-}
-
-// connectedGhostCandidatesForSeed returns connected ghost ids that advertise one required seed.
+// Returns connected ghost ids that advertise one required seed.
 func connectedGhostCandidatesForSeed(
 	routes []MirageRoute,
 	services []MirageAvailableService,
@@ -2478,7 +1456,7 @@ func connectedGhostCandidatesForSeed(
 	return out
 }
 
-// deriveSeedDependencies returns sorted unique seed dependencies from a command plan.
+// Returns sorted unique seed dependencies from a command plan.
 func deriveSeedDependencies(plan []MirageIssueCommand) []string {
 	deps := make(map[string]struct{})
 	for i := range plan {
@@ -2614,7 +1592,7 @@ func normalizeTargetAddr(rootAddr string, requested string) (string, error) {
 	return net.JoinHostPort(rootHost, req), nil
 }
 
-// resolveEndpointHost normalizes localhost and resolvable DNS names to stable IP addresses.
+// Normalizes localhost and resolvable DNS names to stable IP addresses.
 func resolveEndpointHost(rawHost string) (string, error) {
 	host := strings.TrimSpace(rawHost)
 	if host == "" || strings.EqualFold(host, "localhost") {
@@ -2665,7 +1643,7 @@ func (a *App) clearIfEnabled() {
 	fmt.Print("\033[H\033[2J")
 }
 
-// ensureFile creates a missing file and parent directory for config bootstrapping.
+// Creates a missing file and parent directory for config bootstrapping.
 func ensureFile(path string) error {
 	if _, err := os.Stat(path); err == nil {
 		return nil

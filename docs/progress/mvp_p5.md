@@ -1,10 +1,10 @@
 # MVP Progress — Phase 5 (Mirage Orchestration Layer)
 
-Status: `In Progress`
+Status: `Complete (Baseline)`
 
 ## Phase Goal
 
-- [ ] Establish Mirage as an orchestration boundary that ingests user-facing `issue` state, reconciles desired vs observed state, drives Ghost command envelopes, and emits user-facing reports.
+- [x] Establish Mirage as an orchestration boundary that ingests user-facing `issue` state, reconciles desired vs observed state, drives Ghost command envelopes, and emits user-facing reports.
 
 ## Tasks (Buildplan-Aligned)
 
