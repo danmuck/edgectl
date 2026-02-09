@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"sync"
@@ -56,6 +57,13 @@ func (c IssueCommand) Validate() error {
 	return nil
 }
 
+// Stages of a multi-stage issue
+type IssueStage struct {
+	ID       string
+	Commands []IssueCommand
+	Barrier  bool
+}
+
 // IssueEnv is Mirage desired-state ingress from the user boundary.
 type IssueEnv struct {
 	IntentID         string
@@ -65,6 +73,7 @@ type IssueEnv struct {
 	SeedDependencies []string
 	TimestampMS      uint64
 
+	Stages []IssueStage `json:"stages,omitempty"`
 	// CommandPlan is optional; when present it defines all single-command loops.
 	CommandPlan []IssueCommand
 
@@ -208,7 +217,11 @@ func (o *Orchestrator) SubmitIssue(issue IssueEnv) error {
 	if issue.TimestampMS == 0 {
 		issue.TimestampMS = uint64(now.UnixMilli())
 	}
-	commands, err := normalizeIssueToCommands(issue)
+	stages, err := normalizeIssueToStages(issue)
+	if err != nil {
+		return err
+	}
+	commands, err := flattenStagesToPlannedCommands(issue.IntentID, stages)
 	if err != nil {
 		return err
 	}
@@ -420,19 +433,50 @@ func (o *Orchestrator) ingestEventEnvelopeAndBuildReport(
 	return wireReport, ingestedEvent, nil
 }
 
-// normalizeIssueToCommands maps issue text or explicit command_plan to command steps.
-func normalizeIssueToCommands(issue IssueEnv) ([]PlannedCommand, error) {
-	if len(issue.CommandPlan) > 0 {
-		return planCommandsFromIssue(issue)
+func normalizeIssueToStages(issue IssueEnv) ([]IssueStage, error) {
+	// explicit stages provided
+	if len(issue.Stages) > 0 {
+		out := make([]IssueStage, 0, len(issue.Stages))
+		for i := range issue.Stages {
+			stage := issue.Stages[i]
+			if strings.TrimSpace(stage.ID) == "" {
+				stage.ID = fmt.Sprintf("stage.%d", i+1)
+			}
+			for j := range stage.Commands {
+				if err := stage.Commands[j].Validate(); err != nil {
+					return nil, fmt.Errorf(
+						"%w: stages[%d].commands[%d]: %v",
+						ErrInvalidIssue, i, j, err,
+					)
+				}
+			}
+			out = append(out, stage)
+		}
+		return out, nil
 	}
+
+	// legacy path — explicit CommandPlan
+	if len(issue.CommandPlan) > 0 {
+		return []IssueStage{
+			{
+				ID:       "legacy.command_plan",
+				Barrier:  true,
+				Commands: issue.CommandPlan,
+			},
+		}, nil
+	}
+
+	// legacy shorthand — single implicit command
 	ghostID := normalizeGhostID(issue.TargetScope)
 	if ghostID == "" {
 		return nil, fmt.Errorf("%w: target_scope=%q", ErrTargetGhostRequired, issue.TargetScope)
 	}
+
 	seedSelector := strings.TrimSpace(issue.SeedSelector)
 	if seedSelector == "" {
 		seedSelector = "seed.flow"
 	}
+
 	operation := strings.TrimSpace(issue.Operation)
 	if operation == "" {
 		operation = strings.TrimSpace(issue.Objective)
@@ -440,43 +484,57 @@ func normalizeIssueToCommands(issue IssueEnv) ([]PlannedCommand, error) {
 	if operation == "" {
 		return nil, fmt.Errorf("%w: missing operation", ErrInvalidIssue)
 	}
-	cmd := session.Command{
-		CommandID:    fmt.Sprintf("cmd.%s.1", sanitizeID(issue.IntentID)),
-		IntentID:     issue.IntentID,
+
+	cmd := IssueCommand{
 		GhostID:      ghostID,
 		SeedSelector: seedSelector,
 		Operation:    operation,
 		Args:         copyArgs(issue.Args),
+		Blocking:     false,
 	}
-	return []PlannedCommand{{
-		Command:  cmd,
-		Blocking: false,
-		SeedKey:  seedLockKey(cmd.GhostID, cmd.SeedSelector),
-	}}, nil
+
+	return []IssueStage{
+		{
+			ID:       "legacy.single_command",
+			Barrier:  true,
+			Commands: []IssueCommand{cmd},
+		},
+	}, nil
 }
 
-// planCommandsFromIssue converts explicit command_plan entries into wire commands.
-func planCommandsFromIssue(issue IssueEnv) ([]PlannedCommand, error) {
-	out := make([]PlannedCommand, 0, len(issue.CommandPlan))
-	for i := range issue.CommandPlan {
-		step := issue.CommandPlan[i]
-		if err := step.Validate(); err != nil {
-			return nil, err
+func flattenStagesToPlannedCommands(
+	intentID string,
+	stages []IssueStage,
+) ([]PlannedCommand, error) {
+	var out []PlannedCommand
+	seq := 0
+
+	for si := range stages {
+		stage := stages[si]
+		for ci := range stage.Commands {
+			seq++
+			step := stage.Commands[ci]
+			if err := step.Validate(); err != nil {
+				return nil, err
+			}
+
+			cmd := session.Command{
+				CommandID:    fmt.Sprintf("cmd.%s.%d", sanitizeID(intentID), seq),
+				IntentID:     intentID,
+				GhostID:      strings.TrimSpace(step.GhostID),
+				SeedSelector: strings.TrimSpace(step.SeedSelector),
+				Operation:    strings.TrimSpace(step.Operation),
+				Args:         copyArgs(step.Args),
+			}
+
+			out = append(out, PlannedCommand{
+				Command:  cmd,
+				Blocking: step.Blocking || stage.Barrier,
+				SeedKey:  seedLockKey(cmd.GhostID, cmd.SeedSelector),
+			})
 		}
-		cmd := session.Command{
-			CommandID:    fmt.Sprintf("cmd.%s.%d", sanitizeID(issue.IntentID), i+1),
-			IntentID:     issue.IntentID,
-			GhostID:      strings.TrimSpace(step.GhostID),
-			SeedSelector: strings.TrimSpace(step.SeedSelector),
-			Operation:    strings.TrimSpace(step.Operation),
-			Args:         copyArgs(step.Args),
-		}
-		out = append(out, PlannedCommand{
-			Command:  cmd,
-			Blocking: step.Blocking,
-			SeedKey:  seedLockKey(cmd.GhostID, cmd.SeedSelector),
-		})
 	}
+
 	return out, nil
 }
 
@@ -567,9 +625,7 @@ func cloneObserved(in ObservedIntent) ObservedIntent {
 		ObservedAt:  in.ObservedAt,
 		ByCommandID: make(map[string]session.Event, len(in.ByCommandID)),
 	}
-	for k, v := range in.ByCommandID {
-		out.ByCommandID[k] = v
-	}
+	maps.Copy(out.ByCommandID, in.ByCommandID)
 	return out
 }
 
@@ -594,9 +650,7 @@ func copyArgs(in map[string]string) map[string]string {
 		return map[string]string{}
 	}
 	out := make(map[string]string, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
+	maps.Copy(out, in)
 	return out
 }
 
@@ -654,4 +708,59 @@ func (o *Orchestrator) releaseSeedLock(seedKey, intentID, commandID string) {
 	if lock.IntentID == intentID && lock.CommandID == commandID {
 		delete(o.seedLocks, seedKey)
 	}
+}
+
+// unused: connectedGhostsForSeed returns ghost IDs that are:
+//  1. currently connected (per routing table)
+//  2. advertising the given seed
+//
+// This is a pure planning helper used by intent planners.
+// It must not mutate state or perform I/O.
+func connectedGhostsForSeed(
+	routes []GhostRoute,
+	services []AvailableService,
+	seedID string,
+) []string {
+	seedID = strings.TrimSpace(seedID)
+	if seedID == "" {
+		return nil
+	}
+
+	// Build set of connected ghosts
+	connected := make(map[string]struct{}, len(routes))
+	for i := range routes {
+		r := routes[i]
+		if r.Connected {
+			id := strings.TrimSpace(r.GhostID)
+			if id != "" {
+				connected[id] = struct{}{}
+			}
+		}
+	}
+
+	// Intersect with seed advertisers
+	out := make(map[string]struct{})
+	for i := range services {
+		svc := services[i]
+		if strings.TrimSpace(svc.SeedID) != seedID {
+			continue
+		}
+		for _, ghostID := range svc.GhostIDs {
+			g := strings.TrimSpace(ghostID)
+			if g == "" {
+				continue
+			}
+			if _, ok := connected[g]; ok {
+				out[g] = struct{}{}
+			}
+		}
+	}
+
+	// Stable ordering
+	result := make([]string, 0, len(out))
+	for g := range out {
+		result = append(result, g)
+	}
+	sort.Strings(result)
+	return result
 }

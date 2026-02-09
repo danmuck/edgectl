@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -31,6 +32,39 @@ func mirageIntentTemplateCatalog() []MirageIntentTemplate {
 				Operation:       storeFile.Operation,
 				Args:            storeFile.Args,
 				DefaultBlocking: true,
+			},
+		},
+		{
+			ID:          "intent.seed.fs.distribute_file",
+			Label:       "Distribute File (seed.fs)",
+			Description: "Write a file to all connected ghosts with seed.fs",
+			Orchestrator: func(ctx MirageIntentContext) ([]MirageIssueStage, error) {
+				ghosts := connectedGhostCandidatesForSeed(
+					ctx.Routes,
+					ctx.Services,
+					"seed.fs",
+				)
+
+				if len(ghosts) == 0 {
+					return nil, fmt.Errorf("no connected ghosts provide seed.fs")
+				}
+
+				stage := MirageIssueStage{
+					ID:      "fs-write-fanout",
+					Barrier: true,
+				}
+
+				for _, ghostID := range ghosts {
+					stage.Commands = append(stage.Commands, MirageIssueCommand{
+						GhostID:      ghostID,
+						SeedSelector: "seed.fs",
+						Operation:    "write",
+						Args:         ctx.Args,
+						Blocking:     true,
+					})
+				}
+
+				return []MirageIssueStage{stage}, nil
 			},
 		},
 	}

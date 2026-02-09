@@ -69,17 +69,25 @@ type MirageIssueCommand struct {
 	Blocking     bool              `json:"blocking"`
 }
 
-// MirageIssueRequest defines one issue ingress payload for mirage admin control.
+// Defines a stage of a single issue's schedule
+type MirageIssueStage struct {
+	ID       string               `json:"id"`
+	Commands []MirageIssueCommand `json:"commands"`
+	Barrier  bool                 `json:"barrier"`
+}
+
+// Defines one issue ingress payload for mirage admin control.
 type MirageIssueRequest struct {
 	IntentID         string               `json:"intent_id"`
 	Actor            string               `json:"actor"`
 	TargetScope      string               `json:"target_scope"`
 	Objective        string               `json:"objective"`
 	SeedDependencies []string             `json:"seed_dependencies,omitempty"`
+	Stages           []MirageIssueStage   `json:"stages,omitempty"`
 	CommandPlan      []MirageIssueCommand `json:"command_plan"`
 }
 
-// CommandArgSpec defines one guided argument prompt for a catalog command template.
+// Defines one guided argument prompt for a catalog command template.
 type CommandArgSpec struct {
 	Key          string
 	Prompt       string
@@ -89,7 +97,7 @@ type CommandArgSpec struct {
 	Terminator   string
 }
 
-// CommandTemplate defines one predeclared command shape used by Ghost/Mirage wizards.
+// Defines one predeclared command shape used by Ghost/Mirage wizards.
 type CommandTemplate struct {
 	ID              string
 	Label           string
@@ -100,12 +108,24 @@ type CommandTemplate struct {
 	DefaultBlocking bool
 }
 
-// MirageIntentTemplate binds one intent wizard entry to a predeclared command template.
+// Orchestration context for multi-stage intent.
+type MirageIntentContext struct {
+	IntentID string
+	Actor    string
+	Args     map[string]string
+
+	// Discovered at runtime
+	Services []MirageAvailableService
+	Routes   []MirageRoute
+}
+
+// Binds one intent wizard entry to a predeclared command template.
 type MirageIntentTemplate struct {
-	ID          string
-	Label       string
-	Description string
-	Command     CommandTemplate
+	ID           string
+	Label        string
+	Description  string
+	Command      CommandTemplate
+	Orchestrator func(ctx MirageIntentContext) ([]MirageIssueStage, error)
 }
 
 type MirageAttachGhostResponse struct {
