@@ -1,7 +1,6 @@
 package session
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -90,22 +89,7 @@ func EncodeCommandFrame(messageID uint64, command Command) ([]byte, error) {
 		}
 		fields = append(fields, tlv.Field{ID: schema.FieldArgs, Type: tlv.TypeBytes, Value: argsPayload})
 	}
-	if err := schema.Validate(schema.MsgCommand, fields); err != nil {
-		return nil, err
-	}
-	payload := tlv.EncodeFields(fields)
-	var buf bytes.Buffer
-	err := frame.WriteFrame(&buf, frame.Frame{
-		Header: frame.Header{
-			MessageID:   messageID,
-			MessageType: schema.MsgCommand,
-		},
-		Payload: payload,
-	}, frame.DefaultLimits())
-	if err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
+	return encodeFrameForMessage(messageID, schema.MsgCommand, 0, fields)
 }
 
 // Session decoder for one command frame payload with schema validation.
@@ -161,22 +145,7 @@ func EncodeReportFrame(messageID uint64, report Report) ([]byte, error) {
 	if report.TimestampMS != 0 {
 		fields = append(fields, tlv.Field{ID: schema.FieldTimestampMS, Type: tlv.TypeU64, Value: putU64(report.TimestampMS)})
 	}
-	if err := schema.Validate(schema.MsgReport, fields); err != nil {
-		return nil, err
-	}
-	payload := tlv.EncodeFields(fields)
-	var buf bytes.Buffer
-	err := frame.WriteFrame(&buf, frame.Frame{
-		Header: frame.Header{
-			MessageID:   messageID,
-			MessageType: schema.MsgReport,
-		},
-		Payload: payload,
-	}, frame.DefaultLimits())
-	if err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
+	return encodeFrameForMessage(messageID, schema.MsgReport, 0, fields)
 }
 
 // Session decoder for one report frame payload with schema validation.

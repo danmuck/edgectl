@@ -279,18 +279,22 @@ func mapAdminIssue(in AdminIssueRequest) IssueEnv {
 			Commands: make([]IssueCommand, 0, len(src.Commands)),
 		}
 		for j := range src.Commands {
-			step := src.Commands[j]
-			stage.Commands = append(stage.Commands, IssueCommand{
-				GhostID:      strings.TrimSpace(step.GhostID),
-				SeedSelector: strings.TrimSpace(step.SeedSelector),
-				Operation:    strings.TrimSpace(step.Operation),
-				Args:         copyArgs(step.Args),
-				Blocking:     step.Blocking,
-			})
+			stage.Commands = append(stage.Commands, mapAdminIssueCommand(src.Commands[j]))
 		}
 		out.Stages = append(out.Stages, stage)
 	}
 	return out
+}
+
+// mapAdminIssueCommand converts one wire-format command to internal IssueCommand.
+func mapAdminIssueCommand(in AdminIssueCommand) IssueCommand {
+	return IssueCommand{
+		GhostID:      strings.TrimSpace(in.GhostID),
+		SeedSelector: strings.TrimSpace(in.SeedSelector),
+		Operation:    strings.TrimSpace(in.Operation),
+		Args:         copyArgs(in.Args),
+		Blocking:     in.Blocking,
+	}
 }
 
 func normalizeStringList(in []string) []string {

@@ -218,14 +218,8 @@ func (o *Orchestrator) SubmitIssue(issue IssueEnv) error {
 	if issue.TimestampMS == 0 {
 		issue.TimestampMS = uint64(now.UnixMilli())
 	}
-	stages, err := normalizeIssueToStages(issue)
-	if err != nil {
-		return err
-	}
-	commands, err := flattenStagesToPlannedCommands(issue.IntentID, stages)
-	if err != nil {
-		return err
-	}
+	stages := normalizeIssueToStages(issue)
+	commands := flattenStagesToPlannedCommands(issue.IntentID, stages)
 	issue.SeedDependencies = seedDependenciesForCommands(commands)
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -434,31 +428,23 @@ func (o *Orchestrator) ingestEventEnvelopeAndBuildReport(
 	return wireReport, ingestedEvent, nil
 }
 
-// normalizeIssueToStages validates and assigns default IDs to issue stages.
-func normalizeIssueToStages(issue IssueEnv) ([]IssueStage, error) {
+// normalizeIssueToStages assigns default IDs to issue stages.
+func normalizeIssueToStages(issue IssueEnv) []IssueStage {
 	out := make([]IssueStage, 0, len(issue.Stages))
 	for i := range issue.Stages {
 		stage := issue.Stages[i]
 		if strings.TrimSpace(stage.ID) == "" {
 			stage.ID = fmt.Sprintf("stage.%d", i+1)
 		}
-		for j := range stage.Commands {
-			if err := stage.Commands[j].Validate(); err != nil {
-				return nil, fmt.Errorf(
-					"%w: stages[%d].commands[%d]: %v",
-					ErrInvalidIssue, i, j, err,
-				)
-			}
-		}
 		out = append(out, stage)
 	}
-	return out, nil
+	return out
 }
 
 func flattenStagesToPlannedCommands(
 	intentID string,
 	stages []IssueStage,
-) ([]PlannedCommand, error) {
+) []PlannedCommand {
 	var out []PlannedCommand
 	seq := 0
 
@@ -467,9 +453,6 @@ func flattenStagesToPlannedCommands(
 		for ci := range stage.Commands {
 			seq++
 			step := stage.Commands[ci]
-			if err := step.Validate(); err != nil {
-				return nil, err
-			}
 
 			cmd := session.Command{
 				CommandID:    fmt.Sprintf("cmd.%s.%d", sanitizeID(intentID), seq),
@@ -488,7 +471,7 @@ func flattenStagesToPlannedCommands(
 		}
 	}
 
-	return out, nil
+	return out
 }
 
 // buildReportFromObserved converts one observed event into a report update.

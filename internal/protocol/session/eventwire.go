@@ -1,7 +1,6 @@
 package session
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -92,22 +91,7 @@ func EncodeEventFrame(messageID uint64, event Event) ([]byte, error) {
 	if event.TimestampMS != 0 {
 		fields = append(fields, tlv.Field{ID: schema.FieldTimestampMS, Type: tlv.TypeU64, Value: putU64(event.TimestampMS)})
 	}
-	if err := schema.Validate(schema.MsgEvent, fields); err != nil {
-		return nil, err
-	}
-	payload := tlv.EncodeFields(fields)
-	var buf bytes.Buffer
-	err := frame.WriteFrame(&buf, frame.Frame{
-		Header: frame.Header{
-			MessageID:   messageID,
-			MessageType: schema.MsgEvent,
-		},
-		Payload: payload,
-	}, frame.DefaultLimits())
-	if err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
+	return encodeFrameForMessage(messageID, schema.MsgEvent, 0, fields)
 }
 
 // Session decoder for one event frame payload with schema validation.
@@ -150,23 +134,7 @@ func EncodeEventAckFrame(messageID uint64, ack EventAck) ([]byte, error) {
 		{ID: schema.FieldAckCode, Type: tlv.TypeU32, Value: putU32(ack.AckCode)},
 		{ID: schema.FieldTimestampMS, Type: tlv.TypeU64, Value: putU64(ack.TimestampMS)},
 	}
-	if err := schema.Validate(schema.MsgEventAck, fields); err != nil {
-		return nil, err
-	}
-	payload := tlv.EncodeFields(fields)
-	var buf bytes.Buffer
-	err := frame.WriteFrame(&buf, frame.Frame{
-		Header: frame.Header{
-			MessageID:   messageID,
-			MessageType: schema.MsgEventAck,
-			Flags:       frame.FlagIsResponse,
-		},
-		Payload: payload,
-	}, frame.DefaultLimits())
-	if err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
+	return encodeFrameForMessage(messageID, schema.MsgEventAck, frame.FlagIsResponse, fields)
 }
 
 // Session decoder for one event.ack frame payload with schema validation.

@@ -134,33 +134,28 @@ func (s *Service) ExecutionByCommandID(commandID string) (ExecutionState, bool) 
 func (s *Service) RecentAdminEvents(limit int) []EventEnv {
 	s.adminMu.Lock()
 	defer s.adminMu.Unlock()
-	if limit <= 0 {
-		limit = 20
-	}
-	if len(s.adminEvents) <= limit {
-		out := make([]EventEnv, len(s.adminEvents))
-		copy(out, s.adminEvents)
-		return out
-	}
-	out := make([]EventEnv, limit)
-	copy(out, s.adminEvents[len(s.adminEvents)-limit:])
-	return out
+	return cloneRecent(s.adminEvents, limit)
 }
 
 // VerificationView returns a bounded list of correlation records for protocol inspection.
 func (s *Service) VerificationView(limit int) []VerificationRecord {
 	s.adminMu.Lock()
 	defer s.adminMu.Unlock()
+	return cloneRecent(s.verificationEvents, limit)
+}
+
+// cloneRecent returns a defensive copy of the most recent items.
+func cloneRecent[T any](in []T, limit int) []T {
 	if limit <= 0 {
 		limit = 20
 	}
-	if len(s.verificationEvents) <= limit {
-		out := make([]VerificationRecord, len(s.verificationEvents))
-		copy(out, s.verificationEvents)
+	if len(in) <= limit {
+		out := make([]T, len(in))
+		copy(out, in)
 		return out
 	}
-	out := make([]VerificationRecord, limit)
-	copy(out, s.verificationEvents[len(s.verificationEvents)-limit:])
+	out := make([]T, limit)
+	copy(out, in[len(in)-limit:])
 	return out
 }
 
