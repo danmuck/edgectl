@@ -113,7 +113,12 @@ func (a *App) promptMirageIntentTemplateSelection(
 	fmt.Println("Available Intents")
 	for i := range templates {
 		tpl := templates[i]
-		fmt.Printf("  %d) %s [%s %s]\n", i+1, tpl.Label, tpl.Command.SeedSelector, tpl.Command.Operation)
+		if tpl.Orchestrator != nil {
+			deps := strings.Join(tpl.SeedDependencies, "+")
+			fmt.Printf("  %d) %s [%s orchestrator]\n", i+1, tpl.Label, deps)
+		} else {
+			fmt.Printf("  %d) %s [%s %s]\n", i+1, tpl.Label, tpl.Command.SeedSelector, tpl.Command.Operation)
+		}
 		if strings.TrimSpace(tpl.Description) != "" {
 			fmt.Printf("     - %s\n", tpl.Description)
 		}

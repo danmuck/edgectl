@@ -10,7 +10,7 @@ The canonical high-level MVP phase schedule is [`mvp_buildplan.md`](mvp_buildpla
 - [x] Phase 2 progress and acceptance checks: [`mvp_p2.md`](mvp_p2.md)
 - [x] Phase 3 progress and acceptance checks: [`mvp_p3.md`](mvp_p3.md)
 - [x] Phase 4 progress and acceptance checks: [`mvp_p4.md`](mvp_p4.md)
-- [ ] Phase 5 progress and acceptance checks: [`mvp_p5.md`](mvp_p5.md)
+- [x] Phase 5 progress and acceptance checks: [`mvp_p5.md`](mvp_p5.md)
 - [ ] Phase 6 progress and acceptance checks: [`mvp_p6.md`](mvp_p6.md)
 - [ ] Phase 7 progress and acceptance checks: [`mvp_p7.md`](mvp_p7.md)
 - [ ] Phase 8 progress and acceptance checks: [`mvp_p8.md`](mvp_p8.md)

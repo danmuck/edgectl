@@ -120,12 +120,16 @@ type MirageIntentContext struct {
 }
 
 // Binds one intent wizard entry to a predeclared command template.
+// Single-seed templates set Command; multi-seed templates set Orchestrator and SeedDependencies.
+// Orchestrator templates use Args for interactive prompting; Command templates use Command.Args.
 type MirageIntentTemplate struct {
-	ID           string
-	Label        string
-	Description  string
-	Command      CommandTemplate
-	Orchestrator func(ctx MirageIntentContext) ([]MirageIssueStage, error)
+	ID               string
+	Label            string
+	Description      string
+	Command          CommandTemplate
+	Args             []CommandArgSpec
+	SeedDependencies []string
+	Orchestrator     func(ctx MirageIntentContext) ([]MirageIssueStage, error)
 }
 
 type MirageAttachGhostResponse struct {

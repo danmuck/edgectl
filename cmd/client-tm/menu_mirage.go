@@ -291,6 +291,107 @@ func (a *App) submitMirageIssue(target MirageTarget) error {
 	if err != nil {
 		return err
 	}
+
+	actorRaw, err := a.promptLine("actor (blank = user:client-tm)")
+	if err != nil {
+		return err
+	}
+	actor := strings.TrimSpace(actorRaw)
+	if actor == "" {
+		actor = "user:client-tm"
+	}
+	intentID := fmt.Sprintf("intent.clienttm.%s.%d", normalizeSuffix(template.ID), time.Now().UnixMilli())
+
+	// Orchestrator templates resolve their own ghost targets and produce multi-stage plans.
+	if template.Orchestrator != nil {
+		return a.submitOrchestratorIssue(target, template, routes, services, intentID, actor)
+	}
+	return a.submitSingleCommandIssue(target, template, routes, services, intentID, actor)
+}
+
+// submitOrchestratorIssue prompts for args, calls the orchestrator, and submits a multi-stage issue.
+func (a *App) submitOrchestratorIssue(
+	target MirageTarget,
+	template MirageIntentTemplate,
+	routes []MirageRoute,
+	services []MirageAvailableService,
+	intentID string,
+	actor string,
+) error {
+	args, err := a.promptCommandArgs(template.Args)
+	if err != nil {
+		return err
+	}
+
+	ctx := MirageIntentContext{
+		IntentID: intentID,
+		Actor:    actor,
+		Args:     args,
+		Services: services,
+		Routes:   routes,
+	}
+	stages, err := template.Orchestrator(ctx)
+	if err != nil {
+		return err
+	}
+	if len(stages) == 0 {
+		return errors.New("orchestrator produced no stages")
+	}
+
+	// Derive target scope from first command in the plan.
+	targetScope := "ghost:orchestrated"
+	if len(stages[0].Commands) > 0 {
+		targetScope = "ghost:" + stages[0].Commands[0].GhostID
+	}
+
+	req := MirageIssueRequest{
+		IntentID:         intentID,
+		Actor:            actor,
+		TargetScope:      targetScope,
+		Objective:        template.Description,
+		SeedDependencies: template.SeedDependencies,
+		Stages:           stages,
+	}
+	if err := target.Admin.SubmitIssue(req); err != nil {
+		return err
+	}
+
+	totalCmds := 0
+	for i := range stages {
+		totalCmds += len(stages[i].Commands)
+	}
+	fmt.Printf(
+		"Issue submitted intent_id=%s template=%s stages=%d commands=%d deps=%s\n",
+		req.IntentID,
+		template.ID,
+		len(stages),
+		totalCmds,
+		strings.Join(req.SeedDependencies, ","),
+	)
+
+	// Reconcile all stages sequentially until terminal report.
+	for pass := 0; pass < totalCmds; pass++ {
+		report, err := target.Admin.ReconcileIntent(req.IntentID)
+		if err != nil {
+			return err
+		}
+		printMirageReport(fmt.Sprintf("Reconcile Pass %d", pass+1), report)
+		if report.Phase == "complete" {
+			return nil
+		}
+	}
+	return nil
+}
+
+// submitSingleCommandIssue prompts for ghost + args and submits a single-command issue.
+func (a *App) submitSingleCommandIssue(
+	target MirageTarget,
+	template MirageIntentTemplate,
+	routes []MirageRoute,
+	services []MirageAvailableService,
+	intentID string,
+	actor string,
+) error {
 	targetGhostIDs := connectedGhostCandidatesForSeed(routes, services, template.Command.SeedSelector)
 	if len(targetGhostIDs) == 0 {
 		return fmt.Errorf("no connected ghost found for seed %q", template.Command.SeedSelector)
@@ -303,15 +404,6 @@ func (a *App) submitMirageIssue(target MirageTarget) error {
 	if err != nil {
 		return err
 	}
-	actorRaw, err := a.promptLine("actor (blank = user:client-tm)")
-	if err != nil {
-		return err
-	}
-	actor := strings.TrimSpace(actorRaw)
-	if actor == "" {
-		actor = "user:client-tm"
-	}
-	intentID := fmt.Sprintf("intent.clienttm.%s.%d", normalizeSuffix(template.ID), time.Now().UnixMilli())
 	commandPlan := []MirageIssueCommand{
 		{
 			GhostID:      ghostID,
@@ -339,7 +431,6 @@ func (a *App) submitMirageIssue(target MirageTarget) error {
 		ghostID,
 		strings.Join(req.SeedDependencies, ","),
 	)
-	// For the current PoC template set (single blocking command), reconcile immediately.
 	report, err := target.Admin.ReconcileIntent(req.IntentID)
 	if err != nil {
 		return err

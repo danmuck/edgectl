@@ -6,11 +6,13 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	seedfs "github.com/danmuck/edgectl/internal/seeds/fs"
+	seedkv "github.com/danmuck/edgectl/internal/seeds/kv"
 	"github.com/danmuck/edgectl/internal/testutil/testlog"
 )
 
@@ -195,6 +197,43 @@ func TestOrchestratorSubmitIssueDerivesSeedDependencies(t *testing.T) {
 	}
 }
 
+// multiSeedExecutor dispatches commands to seed.fs or seed.kv based on SeedSelector.
+type multiSeedExecutor struct {
+	ghostID string
+	fs      seedfs.Seed
+	kv      *seedkv.Seed
+}
+
+// ExecuteCommand routes one command to the matching seed and returns one event.
+func (e *multiSeedExecutor) ExecuteCommand(_ context.Context, cmd session.Command) (session.Event, error) {
+	var outcome string
+	switch cmd.SeedSelector {
+	case "seed.fs":
+		result, err := e.fs.Execute(cmd.Operation, cmd.Args)
+		outcome = OutcomeSuccess
+		if err != nil || result.Status != "ok" || result.ExitCode != 0 {
+			outcome = OutcomeError
+		}
+	case "seed.kv":
+		result, err := e.kv.Execute(cmd.Operation, cmd.Args)
+		outcome = OutcomeSuccess
+		if err != nil || result.Status != "ok" || result.ExitCode != 0 {
+			outcome = OutcomeError
+		}
+	default:
+		outcome = OutcomeError
+	}
+	return session.Event{
+		EventID:     fmt.Sprintf("evt.%s", cmd.CommandID),
+		CommandID:   cmd.CommandID,
+		IntentID:    cmd.IntentID,
+		GhostID:     e.ghostID,
+		SeedID:      cmd.SeedSelector,
+		Outcome:     outcome,
+		TimestampMS: uint64(time.Now().UnixMilli()),
+	}, nil
+}
+
 type fsGhostExecutor struct {
 	ghostID string
 	seed    seedfs.Seed
@@ -322,5 +361,180 @@ func TestOrchestratorControlLoopE2EStoreAndCopyToAllSeedFSGhosts(t *testing.T) {
 		if string(out) != string(sourceContent) {
 			t.Fatalf("unexpected copied content for %s: %q", ghostID, string(out))
 		}
+	}
+}
+
+// E2E: multi-seed, multi-stage intent using explicit Stages.
+// Stage 1 writes a file via seed.fs on ghost.alpha (barrier).
+// Stage 2 indexes file metadata via seed.kv on both ghosts (barrier).
+// Verifies: stage ordering, cross-seed orchestration, real seed state.
+func TestOrchestratorE2EMultiSeedStoreAndIndex(t *testing.T) {
+	testlog.Start(t)
+
+	loop := NewOrchestrator()
+
+	kvAlpha := seedkv.NewSeed()
+	kvBeta := seedkv.NewSeed()
+	fsRoot := t.TempDir()
+
+	executors := map[string]*multiSeedExecutor{
+		"ghost.alpha": {
+			ghostID: "ghost.alpha",
+			fs:      seedfs.NewSeedWithRoot(fsRoot),
+			kv:      kvAlpha,
+		},
+		"ghost.beta": {
+			ghostID: "ghost.beta",
+			fs:      seedfs.NewSeedWithRoot(t.TempDir()),
+			kv:      kvBeta,
+		},
+	}
+	for ghostID, exec := range executors {
+		if err := loop.RegisterExecutor(ghostID, exec); err != nil {
+			t.Fatalf("register executor %s: %v", ghostID, err)
+		}
+	}
+
+	// Submit multi-stage issue using explicit Stages (not CommandPlan).
+	// This mirrors what a properly wired orchestrator template would produce.
+	if err := loop.SubmitIssue(IssueEnv{
+		IntentID:         "intent.multiseed.1",
+		Actor:            "user:test",
+		TargetScope:      "ghost:ghost.alpha",
+		Objective:        "store file then index metadata across seeds",
+		SeedDependencies: []string{"seed.fs", "seed.kv"},
+		Stages: []IssueStage{
+			{
+				ID:      "fs-write",
+				Barrier: true,
+				Commands: []IssueCommand{
+					{
+						GhostID:      "ghost.alpha",
+						SeedSelector: "seed.fs",
+						Operation:    "write",
+						Args: map[string]string{
+							"path":    "artifacts/report.txt",
+							"content": "multi-seed-e2e-payload",
+						},
+						Blocking: true,
+					},
+				},
+			},
+			{
+				ID:      "kv-index",
+				Barrier: true,
+				Commands: []IssueCommand{
+					{
+						GhostID:      "ghost.alpha",
+						SeedSelector: "seed.kv",
+						Operation:    "put",
+						Args: map[string]string{
+							"key":   "index:artifacts/report.txt",
+							"value": "ghost=ghost.alpha,path=artifacts/report.txt",
+						},
+						Blocking: true,
+					},
+					{
+						GhostID:      "ghost.beta",
+						SeedSelector: "seed.kv",
+						Operation:    "put",
+						Args: map[string]string{
+							"key":   "index:artifacts/report.txt",
+							"value": "ghost=ghost.alpha,path=artifacts/report.txt",
+						},
+						Blocking: true,
+					},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("submit multi-seed issue: %v", err)
+	}
+
+	// Verify desired state: 3 planned commands (1 fs + 2 kv).
+	snap, ok := loop.SnapshotIntent("intent.multiseed.1")
+	if !ok {
+		t.Fatalf("expected intent snapshot")
+	}
+	if len(snap.Desired.Commands) != 3 {
+		t.Fatalf("expected 3 planned commands, got %d", len(snap.Desired.Commands))
+	}
+	if snap.PendingCount != 3 {
+		t.Fatalf("expected 3 pending, got %d", snap.PendingCount)
+	}
+
+	// Verify derived seed dependencies include both seeds.
+	deps := snap.Desired.Issue.SeedDependencies
+	if len(deps) != 2 {
+		t.Fatalf("expected 2 seed dependencies, got %+v", deps)
+	}
+
+	// Reconcile pass 1: stage 1 seed.fs write.
+	rep1, err := loop.ReconcileOnce(context.Background(), "intent.multiseed.1")
+	if err != nil {
+		t.Fatalf("reconcile pass 1: %v", err)
+	}
+	if rep1.Phase != ReportPhaseInProgress {
+		t.Fatalf("expected in_progress after stage 1, got %q", rep1.Phase)
+	}
+
+	// Verify file was written to disk.
+	content, err := os.ReadFile(filepath.Join(fsRoot, "artifacts", "report.txt"))
+	if err != nil {
+		t.Fatalf("read written file: %v", err)
+	}
+	if string(content) != "multi-seed-e2e-payload" {
+		t.Fatalf("unexpected file content: %q", string(content))
+	}
+
+	// Reconcile pass 2: stage 2 first kv put (ghost.alpha).
+	rep2, err := loop.ReconcileOnce(context.Background(), "intent.multiseed.1")
+	if err != nil {
+		t.Fatalf("reconcile pass 2: %v", err)
+	}
+	if rep2.Phase != ReportPhaseInProgress {
+		t.Fatalf("expected in_progress after stage 2 cmd 1, got %q", rep2.Phase)
+	}
+
+	// Reconcile pass 3: stage 2 second kv put (ghost.beta) — terminal.
+	rep3, err := loop.ReconcileOnce(context.Background(), "intent.multiseed.1")
+	if err != nil {
+		t.Fatalf("reconcile pass 3: %v", err)
+	}
+	if rep3.Phase != ReportPhaseComplete {
+		t.Fatalf("expected complete after all stages, got %q", rep3.Phase)
+	}
+	if rep3.CompletionState != CompletionSatisfied {
+		t.Fatalf("expected satisfied, got %q", rep3.CompletionState)
+	}
+
+	// Verify kv index state on both ghosts.
+	for name, kv := range map[string]*seedkv.Seed{"alpha": kvAlpha, "beta": kvBeta} {
+		result, err := kv.Execute("get", map[string]string{"key": "index:artifacts/report.txt"})
+		if err != nil {
+			t.Fatalf("kv get on %s: %v", name, err)
+		}
+		if result.Status != "ok" {
+			t.Fatalf("kv get on %s status: %q", name, result.Status)
+		}
+		val := strings.TrimSpace(string(result.Stdout))
+		if val != "ghost=ghost.alpha,path=artifacts/report.txt" {
+			t.Fatalf("unexpected kv value on %s: %q", name, val)
+		}
+	}
+
+	// Verify final snapshot reflects full completion.
+	finalSnap, ok := loop.SnapshotIntent("intent.multiseed.1")
+	if !ok {
+		t.Fatalf("expected final snapshot")
+	}
+	if finalSnap.PendingCount != 0 {
+		t.Fatalf("expected 0 pending after completion, got %d", finalSnap.PendingCount)
+	}
+	if !finalSnap.HasObserved {
+		t.Fatalf("expected observed state")
+	}
+	if len(finalSnap.Observed.Events) != 3 {
+		t.Fatalf("expected 3 observed events, got %d", len(finalSnap.Observed.Events))
 	}
 }

@@ -13,13 +13,14 @@
   - [x] Target selection (`Ghost Admin Console`, `Seed Operations`)
   - [x] Command execution views
   - [x] Monitoring views
-  - [ ] `Mirage Control` (placeholder only; not wired)
+  - [x] `Mirage Control` (admin console, issue submission, reconcile, reports, ghost routing)
 - [ ] Integrate `smplog` for formatted output (operator-friendly tables, status panels, structured event lines).
 - [x] Implement Ghost admin console workflows (connect, inspect, run control commands, monitor server/seed activity).
 - [x] Implement seed workflows via Ghost (issue commands to seeds, stream status/events, verify responses).
 - [x] Implement protocol/message verification view (request/response IDs, component, peer, trace/request IDs, result/error).
 - [x] Add support for managing many Ghost targets in one session (switching context safely and explicitly).
 - [x] Add single-Mirage control path placeholder + abstraction for future multi-Mirage support (no hardcoded singleton assumptions).
+- [x] Fix multi-seed intent orchestrator submission path: template filtering, orchestrator invocation, ghost selection (see `mvp_p6.md` stop-gaps — all resolved).
 - [ ] Define failure behavior for CLI operations: timeouts, retries/backoff, idempotent command handling, reconnect/resume.
 - [ ] Add architecture + message-flow diagrams for this phase (CLI-to-Ghost now, CLI-to-Mirage extension path later).
 

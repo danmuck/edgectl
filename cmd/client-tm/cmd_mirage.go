@@ -6,7 +6,6 @@ import (
 	"strings"
 )
 
-// todo: more intengs
 // Defines the stable intent wizard entries for Mirage issue submission.
 func mirageIntentTemplateCatalog() []MirageIntentTemplate {
 	var storeFile CommandTemplate
@@ -38,6 +37,11 @@ func mirageIntentTemplateCatalog() []MirageIntentTemplate {
 			ID:          "intent.seed.fs.distribute_file",
 			Label:       "Distribute File (seed.fs)",
 			Description: "Write a file to all connected ghosts with seed.fs",
+			SeedDependencies: []string{"seed.fs"},
+			Args: []CommandArgSpec{
+				{Key: "path", Prompt: "filename (relative path)", Required: true},
+				{Key: "content", Prompt: "file content", Required: true, Multiline: true, Terminator: ".done"},
+			},
 			Orchestrator: func(ctx MirageIntentContext) ([]MirageIssueStage, error) {
 				ghosts := connectedGhostCandidatesForSeed(
 					ctx.Routes,
@@ -67,10 +71,68 @@ func mirageIntentTemplateCatalog() []MirageIntentTemplate {
 				return []MirageIssueStage{stage}, nil
 			},
 		},
+		{
+			ID:          "intent.multi.store_and_index",
+			Label:       "Store and Index File (seed.fs + seed.kv)",
+			Description: "Write a file to seed.fs then index its metadata in seed.kv. Multi-seed, multi-stage example.",
+			SeedDependencies: []string{"seed.fs", "seed.kv"},
+			Args: []CommandArgSpec{
+				{Key: "path", Prompt: "filename (relative path)", Required: true},
+				{Key: "content", Prompt: "file content", Required: true, Multiline: true, Terminator: ".done"},
+			},
+			Orchestrator: func(ctx MirageIntentContext) ([]MirageIssueStage, error) {
+				fsGhosts := connectedGhostCandidatesForSeed(ctx.Routes, ctx.Services, "seed.fs")
+				if len(fsGhosts) == 0 {
+					return nil, fmt.Errorf("no connected ghosts provide seed.fs")
+				}
+				kvGhosts := connectedGhostCandidatesForSeed(ctx.Routes, ctx.Services, "seed.kv")
+				if len(kvGhosts) == 0 {
+					return nil, fmt.Errorf("no connected ghosts provide seed.kv")
+				}
+
+				// Stage 1: write file to the first ghost with seed.fs.
+				writeStage := MirageIssueStage{
+					ID:      "fs-write",
+					Barrier: true,
+					Commands: []MirageIssueCommand{
+						{
+							GhostID:      fsGhosts[0],
+							SeedSelector: "seed.fs",
+							Operation:    "write",
+							Args:         ctx.Args,
+							Blocking:     true,
+						},
+					},
+				}
+
+				// Stage 2: index file metadata in seed.kv on all ghosts that provide it.
+				indexStage := MirageIssueStage{
+					ID:      "kv-index",
+					Barrier: true,
+				}
+				filePath := ctx.Args["path"]
+				for _, ghostID := range kvGhosts {
+					indexStage.Commands = append(indexStage.Commands, MirageIssueCommand{
+						GhostID:      ghostID,
+						SeedSelector: "seed.kv",
+						Operation:    "put",
+						Args: map[string]string{
+							"key":   "index:" + filePath,
+							"value": fmt.Sprintf("ghost=%s,path=%s,intent=%s", fsGhosts[0], filePath, ctx.IntentID),
+						},
+						Blocking: true,
+					})
+				}
+
+				return []MirageIssueStage{writeStage, indexStage}, nil
+			},
+		},
 	}
 }
 
 // Filters intent templates to those available in Mirage service discovery.
+// Single-seed templates match on Command.SeedSelector; orchestrator templates
+// match when all declared SeedDependencies are available.
 func mirageIntentTemplatesForServices(services []MirageAvailableService) []MirageIntentTemplate {
 	availableSeeds := make(map[string]struct{}, len(services))
 	for i := range services {
@@ -82,16 +144,28 @@ func mirageIntentTemplatesForServices(services []MirageAvailableService) []Mirag
 	}
 	out := make([]MirageIntentTemplate, 0)
 	for _, tpl := range mirageIntentTemplateCatalog() {
+		if tpl.Orchestrator != nil && len(tpl.SeedDependencies) > 0 {
+			// Orchestrator template: all declared seed dependencies must be available.
+			allPresent := true
+			for _, dep := range tpl.SeedDependencies {
+				if _, ok := availableSeeds[strings.TrimSpace(dep)]; !ok {
+					allPresent = false
+					break
+				}
+			}
+			if allPresent {
+				out = append(out, tpl)
+			}
+			continue
+		}
+		// Single-command template: match on Command.SeedSelector.
 		if _, ok := availableSeeds[tpl.Command.SeedSelector]; !ok {
 			continue
 		}
 		out = append(out, tpl)
 	}
 	sort.Slice(out, func(i int, j int) bool {
-		if out[i].Command.SeedSelector == out[j].Command.SeedSelector {
-			return out[i].Command.Operation < out[j].Command.Operation
-		}
-		return out[i].Command.SeedSelector < out[j].Command.SeedSelector
+		return out[i].ID < out[j].ID
 	})
 	return out
 }

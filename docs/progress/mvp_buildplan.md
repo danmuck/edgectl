@@ -1,6 +1,6 @@
 # MVP Build Plan and Slices (Canonical)
 
-Status: `Phase 4 complete; Phase 5 in implementation; Phases 6-9 templated`
+Status: `Phase 5 complete (baseline); Phase 6 in progress; Phases 7-9 templated`
 
 This is the canonical high-level schedule for `mvp_p0.md` through `mvp_p9.md`.
 Use phase files for detailed task execution and acceptance check tracking.
@@ -12,7 +12,7 @@ Use phase files for detailed task execution and acceptance check tracking.
 - [x] Phase 2: `mvp_p2.md`
 - [x] Phase 3: `mvp_p3.md`
 - [x] Phase 4: `mvp_p4.md`
-- [ ] Phase 5: `mvp_p5.md`
+- [x] Phase 5: `mvp_p5.md`
 - [ ] Phase 6: `mvp_p6.md`
 - [ ] Phase 7: `mvp_p7.md`
 - [ ] Phase 8: `mvp_p8.md`
@@ -60,7 +60,7 @@ Use phase files for detailed task execution and acceptance check tracking.
 - [ ] Add error mapping per `errors.toml`
 - [x] Add failure-path tests (disconnect, duplicate IDs, timeout, validation failures)
 
-- [ ] Milestone 5: Mirage orchestration loop baseline (`mvp_p5.md`)
+- [x] Milestone 5: Mirage orchestration loop baseline (`mvp_p5.md`)
 - [x] Implement `issue` ingestion + desired-state persistence
 - [x] Implement reconcile loop (single-ghost first)
 - [x] Dispatch commands and ingest events into observed state
@@ -77,6 +77,8 @@ Use phase files for detailed task execution and acceptance check tracking.
 - [ ] Replace direct action-style HTTP shortcuts between Mirage and Ghost
 - [ ] Wire optional auth block handling and validation hooks
 - [ ] Add contract tests for all boundaries
+- [ ] Fix client-tm multi-stage intent submission path (template filtering, orchestrator invocation, ghost selection)
+- [ ] Add E2E test for multi-seed orchestrator intent template through full mirage orchestration
 
 - [ ] Milestone 7: End-to-end control loop validation (`mvp_p7.md`)
 - [x] Add E2E scenario: intent -> command -> seed execution -> event -> report
@@ -115,5 +117,7 @@ Use phase files for detailed task execution and acceptance check tracking.
 
 Current state:
 - P4 conformance transport/handshake/reliability baseline is closed (`docs/progress/p4_conformance_report.md`).
-- Phase 5 baseline orchestration is in implementation with core loop/report/admin boundaries landed.
-- Deterministic orchestration e2e coverage is now present for `seed.fs` store/fanout flow; remaining major gaps are Milestones 4/6+ hardening, full boundary envelope migration, and contract test expansion.
+- Phase 5 baseline orchestration is complete: core loop, report, admin boundaries, persistence seeds, local ghost spin-up, discovery surfaces all landed and tested.
+- Phase 6 boundary transport integration is in progress: protocol envelope dispatch landed, but HTTP shortcut replacement, auth hooks, and contract tests remain.
+- Multi-stage intent orchestration infrastructure exists at the mirage layer (`IssueStage`, `normalizeIssueToStages`, `flattenStagesToPlannedCommands`) and is E2E tested, but the client-tm submission path bypasses orchestrators due to legacy single-command scoping (see `mvp_p6.md` stop-gaps).
+- Remaining major gaps: Milestones 4/6+ hardening, full boundary envelope migration, contract test expansion, and client-tm multi-stage intent fix.
