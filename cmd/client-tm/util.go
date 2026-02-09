@@ -71,24 +71,6 @@ func connectedGhostCandidatesForSeed(
 	return out
 }
 
-// Returns sorted unique seed dependencies from a command plan.
-func deriveSeedDependencies(plan []MirageIssueCommand) []string {
-	deps := make(map[string]struct{})
-	for i := range plan {
-		seedID := strings.TrimSpace(plan[i].SeedSelector)
-		if seedID == "" {
-			continue
-		}
-		deps[seedID] = struct{}{}
-	}
-	out := make([]string, 0, len(deps))
-	for seedID := range deps {
-		out = append(out, seedID)
-	}
-	sort.Strings(out)
-	return out
-}
-
 func operationsForSeed(seedID string) []seeds.OperationSpec {
 	switch strings.TrimSpace(seedID) {
 	case "seed.flow":

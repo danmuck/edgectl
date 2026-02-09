@@ -262,8 +262,14 @@ func TestServiceIngestEventEmitsReportHistory(t *testing.T) {
 		Actor:       "user:dan",
 		TargetScope: "ghost:ghost.alpha",
 		Objective:   "status",
-		CommandPlan: []IssueCommand{
-			{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status"},
+		Stages: []IssueStage{
+			{
+				ID:      "stage.1",
+				Barrier: true,
+				Commands: []IssueCommand{
+					{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status"},
+				},
+			},
 		},
 	}); err != nil {
 		t.Fatalf("submit issue: %v", err)

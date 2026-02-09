@@ -8,35 +8,44 @@ import (
 
 // Defines the stable intent wizard entries for Mirage issue submission.
 func mirageIntentTemplateCatalog() []MirageIntentTemplate {
-	var storeFile CommandTemplate
+	storeFileArgs := []CommandArgSpec{
+		{Key: "path", Prompt: "filename (relative path)", Required: true},
+		{Key: "content", Prompt: "file content", Required: true, Multiline: true, Terminator: ".done"},
+	}
 	for _, cmd := range ghostCommandTemplateCatalog() {
-		if cmd.ID == "seed.fs.write" {
-			storeFile = cmd
-			break
+		if cmd.ID != "seed.fs.write" || len(cmd.Args) == 0 {
+			continue
 		}
+		storeFileArgs = append([]CommandArgSpec(nil), cmd.Args...)
+		break
 	}
-	if storeFile.ID == "" {
-		return []MirageIntentTemplate{}
-	}
+
 	return []MirageIntentTemplate{
 		{
-			ID:          "intent.seed.fs.store_file",
-			Label:       "Store File (seed.fs)",
-			Description: "Store a file on one connected ghost filesystem via seed.fs.",
-			Command: CommandTemplate{
-				ID:              "intent.seed.fs.store_file.command",
-				Label:           "Store File Command",
-				Description:     "Write file content to ghost seed.fs.",
-				SeedSelector:    storeFile.SeedSelector,
-				Operation:       storeFile.Operation,
-				Args:            storeFile.Args,
-				DefaultBlocking: true,
+			ID:                     "intent.seed.fs.store_file",
+			Label:                  "Store File (seed.fs)",
+			Description:            "Store a file on one connected ghost filesystem via seed.fs.",
+			RequiresGhostSelection: true,
+			SeedDependencies:       []string{"seed.fs"},
+			Args:                   storeFileArgs,
+			Orchestrator: func(ctx MirageIntentContext) ([]MirageIssueStage, error) {
+				return []MirageIssueStage{{
+					ID:      "fs-write",
+					Barrier: true,
+					Commands: []MirageIssueCommand{{
+						GhostID:      ctx.GhostID,
+						SeedSelector: "seed.fs",
+						Operation:    "write",
+						Args:         ctx.Args,
+						Blocking:     true,
+					}},
+				}}, nil
 			},
 		},
 		{
-			ID:          "intent.seed.fs.distribute_file",
-			Label:       "Distribute File (seed.fs)",
-			Description: "Write a file to all connected ghosts with seed.fs",
+			ID:               "intent.seed.fs.distribute_file",
+			Label:            "Distribute File (seed.fs)",
+			Description:      "Write a file to all connected ghosts with seed.fs",
 			SeedDependencies: []string{"seed.fs"},
 			Args: []CommandArgSpec{
 				{Key: "path", Prompt: "filename (relative path)", Required: true},
@@ -72,9 +81,9 @@ func mirageIntentTemplateCatalog() []MirageIntentTemplate {
 			},
 		},
 		{
-			ID:          "intent.multi.store_and_index",
-			Label:       "Store and Index File (seed.fs + seed.kv)",
-			Description: "Write a file to seed.fs then index its metadata in seed.kv. Multi-seed, multi-stage example.",
+			ID:               "intent.multi.store_and_index",
+			Label:            "Store and Index File (seed.fs + seed.kv)",
+			Description:      "Write a file to seed.fs then index its metadata in seed.kv. Multi-seed, multi-stage example.",
 			SeedDependencies: []string{"seed.fs", "seed.kv"},
 			Args: []CommandArgSpec{
 				{Key: "path", Prompt: "filename (relative path)", Required: true},
@@ -130,9 +139,7 @@ func mirageIntentTemplateCatalog() []MirageIntentTemplate {
 	}
 }
 
-// Filters intent templates to those available in Mirage service discovery.
-// Single-seed templates match on Command.SeedSelector; orchestrator templates
-// match when all declared SeedDependencies are available.
+// Filters intent templates to those whose seed dependencies are all available.
 func mirageIntentTemplatesForServices(services []MirageAvailableService) []MirageIntentTemplate {
 	availableSeeds := make(map[string]struct{}, len(services))
 	for i := range services {
@@ -144,25 +151,16 @@ func mirageIntentTemplatesForServices(services []MirageAvailableService) []Mirag
 	}
 	out := make([]MirageIntentTemplate, 0)
 	for _, tpl := range mirageIntentTemplateCatalog() {
-		if tpl.Orchestrator != nil && len(tpl.SeedDependencies) > 0 {
-			// Orchestrator template: all declared seed dependencies must be available.
-			allPresent := true
-			for _, dep := range tpl.SeedDependencies {
-				if _, ok := availableSeeds[strings.TrimSpace(dep)]; !ok {
-					allPresent = false
-					break
-				}
+		allPresent := true
+		for _, dep := range tpl.SeedDependencies {
+			if _, ok := availableSeeds[strings.TrimSpace(dep)]; !ok {
+				allPresent = false
+				break
 			}
-			if allPresent {
-				out = append(out, tpl)
-			}
-			continue
 		}
-		// Single-command template: match on Command.SeedSelector.
-		if _, ok := availableSeeds[tpl.Command.SeedSelector]; !ok {
-			continue
+		if allPresent {
+			out = append(out, tpl)
 		}
-		out = append(out, tpl)
 	}
 	sort.Slice(out, func(i int, j int) bool {
 		return out[i].ID < out[j].ID

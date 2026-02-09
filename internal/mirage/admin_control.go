@@ -25,14 +25,21 @@ type AdminIssueCommand struct {
 	Blocking     bool              `json:"blocking"`
 }
 
+// AdminIssueStage defines one stage containing ordered commands in a mirage issue.
+type AdminIssueStage struct {
+	ID       string              `json:"id"`
+	Commands []AdminIssueCommand `json:"commands"`
+	Barrier  bool                `json:"barrier"`
+}
+
 // AdminIssueRequest defines one issue ingest request for mirage admin controls.
 type AdminIssueRequest struct {
-	IntentID         string              `json:"intent_id"`
-	Actor            string              `json:"actor"`
-	TargetScope      string              `json:"target_scope"`
-	Objective        string              `json:"objective"`
-	SeedDependencies []string            `json:"seed_dependencies,omitempty"`
-	CommandPlan      []AdminIssueCommand `json:"command_plan"`
+	IntentID         string            `json:"intent_id"`
+	Actor            string            `json:"actor"`
+	TargetScope      string            `json:"target_scope"`
+	Objective        string            `json:"objective"`
+	SeedDependencies []string          `json:"seed_dependencies,omitempty"`
+	Stages           []AdminIssueStage `json:"stages"`
 }
 
 // AdminSnapshotIntentResponse captures one intent snapshot response payload.
@@ -254,6 +261,7 @@ func (s *Service) attachGhostAdmin(expectedGhostID string, adminAddr string) (Ad
 	return AdminAttachGhostResponse{GhostID: ghostID, AdminAddr: addr}, nil
 }
 
+// mapAdminIssue converts a wire-format admin issue request to an internal IssueEnv.
 func mapAdminIssue(in AdminIssueRequest) IssueEnv {
 	out := IssueEnv{
 		IntentID:         strings.TrimSpace(in.IntentID),
@@ -261,17 +269,26 @@ func mapAdminIssue(in AdminIssueRequest) IssueEnv {
 		TargetScope:      strings.TrimSpace(in.TargetScope),
 		Objective:        strings.TrimSpace(in.Objective),
 		SeedDependencies: normalizeStringList(in.SeedDependencies),
-		CommandPlan:      make([]IssueCommand, 0, len(in.CommandPlan)),
+		Stages:           make([]IssueStage, 0, len(in.Stages)),
 	}
-	for i := range in.CommandPlan {
-		step := in.CommandPlan[i]
-		out.CommandPlan = append(out.CommandPlan, IssueCommand{
-			GhostID:      strings.TrimSpace(step.GhostID),
-			SeedSelector: strings.TrimSpace(step.SeedSelector),
-			Operation:    strings.TrimSpace(step.Operation),
-			Args:         copyArgs(step.Args),
-			Blocking:     step.Blocking,
-		})
+	for i := range in.Stages {
+		src := in.Stages[i]
+		stage := IssueStage{
+			ID:       strings.TrimSpace(src.ID),
+			Barrier:  src.Barrier,
+			Commands: make([]IssueCommand, 0, len(src.Commands)),
+		}
+		for j := range src.Commands {
+			step := src.Commands[j]
+			stage.Commands = append(stage.Commands, IssueCommand{
+				GhostID:      strings.TrimSpace(step.GhostID),
+				SeedSelector: strings.TrimSpace(step.SeedSelector),
+				Operation:    strings.TrimSpace(step.Operation),
+				Args:         copyArgs(step.Args),
+				Blocking:     step.Blocking,
+			})
+		}
+		out.Stages = append(out.Stages, stage)
 	}
 	return out
 }

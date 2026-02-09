@@ -21,6 +21,7 @@
 - [x] Add support for managing many Ghost targets in one session (switching context safely and explicitly).
 - [x] Add single-Mirage control path placeholder + abstraction for future multi-Mirage support (no hardcoded singleton assumptions).
 - [x] Fix multi-seed intent orchestrator submission path: template filtering, orchestrator invocation, ghost selection (see `mvp_p6.md` stop-gaps — all resolved).
+- [x] Unify Mirage intent template and issue submission path to stages-only payloads (`stages` only, no `command_plan` fallback path).
 - [ ] Define failure behavior for CLI operations: timeouts, retries/backoff, idempotent command handling, reconnect/resume.
 - [ ] Add architecture + message-flow diagrams for this phase (CLI-to-Ghost now, CLI-to-Mirage extension path later).
 
@@ -34,6 +35,7 @@
 - [ ] Protocol verification output allows matching request->response and clearly surfaces timeout/retry/error cases.
 - [ ] `smplog` formatting is applied consistently across command output, monitoring, and error paths.
 - [x] Single-Mirage path is represented in routing/config and works as a placeholder without blocking Ghost workflows.
+- [x] Mirage issue payloads carry explicit stages end-to-end (client template -> admin control wire -> orchestrator ingest).
 - [ ] Client architecture explicitly supports future multi-Mirage (typed target model and non-singleton interfaces).
 - [ ] Failure semantics are explicit and testable: timeout defaults, retry policy, backoff behavior, and idempotency expectations.
 - [ ] Diagrams are committed and current:

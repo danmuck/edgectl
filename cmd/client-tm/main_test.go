@@ -31,12 +31,10 @@ func TestMirageIntentTemplatesForServicesFiltersBySeed(t *testing.T) {
 	}
 	for i := range templates {
 		tpl := templates[i]
-		if tpl.Orchestrator != nil {
-			// Orchestrator templates validate via SeedDependencies, not Command.SeedSelector.
-			continue
-		}
-		if tpl.Command.SeedSelector != "seed.fs" {
-			t.Fatalf("unexpected seed selector in intent template: %q", tpl.Command.SeedSelector)
+		for j := range tpl.SeedDependencies {
+			if tpl.SeedDependencies[j] != "seed.fs" {
+				t.Fatalf("unexpected seed dependency in intent template %q: %q", tpl.ID, tpl.SeedDependencies[j])
+			}
 		}
 	}
 }
@@ -158,18 +156,36 @@ func TestConnectedGhostCandidatesForSeed(t *testing.T) {
 	}
 }
 
-func TestDeriveSeedDependencies(t *testing.T) {
-	plan := []MirageIssueCommand{
-		{SeedSelector: "seed.fs"},
-		{SeedSelector: "seed.flow"},
-		{SeedSelector: "seed.fs"},
-		{SeedSelector: " "},
+func TestStoreFileOrchestratorRequiresGhostSelectionAndUsesGhostID(t *testing.T) {
+	catalog := mirageIntentTemplateCatalog()
+	var tpl MirageIntentTemplate
+	for i := range catalog {
+		if catalog[i].ID == "intent.seed.fs.store_file" {
+			tpl = catalog[i]
+			break
+		}
 	}
-	deps := deriveSeedDependencies(plan)
-	if len(deps) != 2 {
-		t.Fatalf("unexpected deps length: %+v", deps)
+	if tpl.ID == "" {
+		t.Fatalf("store_file template not found in catalog")
 	}
-	if deps[0] != "seed.flow" || deps[1] != "seed.fs" {
-		t.Fatalf("unexpected deps order/content: %+v", deps)
+	if !tpl.RequiresGhostSelection {
+		t.Fatalf("expected store_file template to require ghost selection")
+	}
+	if tpl.Orchestrator == nil {
+		t.Fatalf("expected orchestrator on store_file template")
+	}
+	ctx := MirageIntentContext{
+		Args:    map[string]string{"path": "a.txt", "content": "hi"},
+		GhostID: "ghost.local",
+	}
+	stages, err := tpl.Orchestrator(ctx)
+	if err != nil {
+		t.Fatalf("orchestrator error: %v", err)
+	}
+	if len(stages) != 1 || len(stages[0].Commands) != 1 {
+		t.Fatalf("unexpected stages: %+v", stages)
+	}
+	if stages[0].Commands[0].GhostID != "ghost.local" {
+		t.Fatalf("unexpected ghost id in stage command: %+v", stages[0].Commands[0])
 	}
 }

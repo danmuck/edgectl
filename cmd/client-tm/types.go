@@ -78,13 +78,12 @@ type MirageIssueStage struct {
 
 // Defines one issue ingress payload for mirage admin control.
 type MirageIssueRequest struct {
-	IntentID         string               `json:"intent_id"`
-	Actor            string               `json:"actor"`
-	TargetScope      string               `json:"target_scope"`
-	Objective        string               `json:"objective"`
-	SeedDependencies []string             `json:"seed_dependencies,omitempty"`
-	Stages           []MirageIssueStage   `json:"stages,omitempty"`
-	CommandPlan      []MirageIssueCommand `json:"command_plan"`
+	IntentID         string             `json:"intent_id"`
+	Actor            string             `json:"actor"`
+	TargetScope      string             `json:"target_scope"`
+	Objective        string             `json:"objective"`
+	SeedDependencies []string           `json:"seed_dependencies,omitempty"`
+	Stages           []MirageIssueStage `json:"stages"`
 }
 
 // Defines one guided argument prompt for a catalog command template.
@@ -113,23 +112,23 @@ type MirageIntentContext struct {
 	IntentID string
 	Actor    string
 	Args     map[string]string
+	GhostID  string
 
 	// Discovered at runtime
 	Services []MirageAvailableService
 	Routes   []MirageRoute
 }
 
-// Binds one intent wizard entry to a predeclared command template.
-// Single-seed templates set Command; multi-seed templates set Orchestrator and SeedDependencies.
-// Orchestrator templates use Args for interactive prompting; Command templates use Command.Args.
+// Binds one intent wizard entry to an orchestrator that produces stages.
+// Templates requiring user ghost selection set RequiresGhostSelection.
 type MirageIntentTemplate struct {
-	ID               string
-	Label            string
-	Description      string
-	Command          CommandTemplate
-	Args             []CommandArgSpec
-	SeedDependencies []string
-	Orchestrator     func(ctx MirageIntentContext) ([]MirageIssueStage, error)
+	ID                     string
+	Label                  string
+	Description            string
+	Args                   []CommandArgSpec
+	SeedDependencies       []string
+	RequiresGhostSelection bool
+	Orchestrator           func(ctx MirageIntentContext) ([]MirageIssueStage, error)
 }
 
 type MirageAttachGhostResponse struct {

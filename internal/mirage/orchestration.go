@@ -72,15 +72,7 @@ type IssueEnv struct {
 	Objective        string
 	SeedDependencies []string
 	TimestampMS      uint64
-
-	Stages []IssueStage `json:"stages,omitempty"`
-	// CommandPlan is optional; when present it defines all single-command loops.
-	CommandPlan []IssueCommand
-
-	// Legacy single-command fields used when CommandPlan is empty.
-	SeedSelector string
-	Operation    string
-	Args         map[string]string
+	Stages           []IssueStage
 }
 
 // Validate enforces required issue fields for desired-state ingestion.
@@ -97,15 +89,24 @@ func (i IssueEnv) Validate() error {
 	if strings.TrimSpace(i.Objective) == "" {
 		return fmt.Errorf("%w: missing objective", ErrInvalidIssue)
 	}
-	for idx := range i.CommandPlan {
-		if err := i.CommandPlan[idx].Validate(); err != nil {
-			return fmt.Errorf("%w: command_plan[%d]: %v", ErrInvalidIssue, idx, err)
+	if len(i.Stages) == 0 {
+		return fmt.Errorf("%w: at least one stage required", ErrInvalidIssue)
+	}
+	for si := range i.Stages {
+		stage := i.Stages[si]
+		if len(stage.Commands) == 0 {
+			return fmt.Errorf("%w: stages[%d]: no commands", ErrInvalidIssue, si)
+		}
+		for ci := range stage.Commands {
+			if err := stage.Commands[ci].Validate(); err != nil {
+				return fmt.Errorf("%w: stages[%d].commands[%d]: %v", ErrInvalidIssue, si, ci, err)
+			}
 		}
 	}
 	return nil
 }
 
-// DesiredIntent stores one normalized command plan derived from an issue.
+// DesiredIntent stores normalized planned commands derived from issue stages.
 type DesiredIntent struct {
 	Issue      IssueEnv
 	Commands   []PlannedCommand
@@ -433,73 +434,25 @@ func (o *Orchestrator) ingestEventEnvelopeAndBuildReport(
 	return wireReport, ingestedEvent, nil
 }
 
+// normalizeIssueToStages validates and assigns default IDs to issue stages.
 func normalizeIssueToStages(issue IssueEnv) ([]IssueStage, error) {
-	// explicit stages provided
-	if len(issue.Stages) > 0 {
-		out := make([]IssueStage, 0, len(issue.Stages))
-		for i := range issue.Stages {
-			stage := issue.Stages[i]
-			if strings.TrimSpace(stage.ID) == "" {
-				stage.ID = fmt.Sprintf("stage.%d", i+1)
-			}
-			for j := range stage.Commands {
-				if err := stage.Commands[j].Validate(); err != nil {
-					return nil, fmt.Errorf(
-						"%w: stages[%d].commands[%d]: %v",
-						ErrInvalidIssue, i, j, err,
-					)
-				}
-			}
-			out = append(out, stage)
+	out := make([]IssueStage, 0, len(issue.Stages))
+	for i := range issue.Stages {
+		stage := issue.Stages[i]
+		if strings.TrimSpace(stage.ID) == "" {
+			stage.ID = fmt.Sprintf("stage.%d", i+1)
 		}
-		return out, nil
+		for j := range stage.Commands {
+			if err := stage.Commands[j].Validate(); err != nil {
+				return nil, fmt.Errorf(
+					"%w: stages[%d].commands[%d]: %v",
+					ErrInvalidIssue, i, j, err,
+				)
+			}
+		}
+		out = append(out, stage)
 	}
-
-	// legacy path — explicit CommandPlan
-	if len(issue.CommandPlan) > 0 {
-		return []IssueStage{
-			{
-				ID:       "legacy.command_plan",
-				Barrier:  true,
-				Commands: issue.CommandPlan,
-			},
-		}, nil
-	}
-
-	// legacy shorthand — single implicit command
-	ghostID := normalizeGhostID(issue.TargetScope)
-	if ghostID == "" {
-		return nil, fmt.Errorf("%w: target_scope=%q", ErrTargetGhostRequired, issue.TargetScope)
-	}
-
-	seedSelector := strings.TrimSpace(issue.SeedSelector)
-	if seedSelector == "" {
-		seedSelector = "seed.flow"
-	}
-
-	operation := strings.TrimSpace(issue.Operation)
-	if operation == "" {
-		operation = strings.TrimSpace(issue.Objective)
-	}
-	if operation == "" {
-		return nil, fmt.Errorf("%w: missing operation", ErrInvalidIssue)
-	}
-
-	cmd := IssueCommand{
-		GhostID:      ghostID,
-		SeedSelector: seedSelector,
-		Operation:    operation,
-		Args:         copyArgs(issue.Args),
-		Blocking:     false,
-	}
-
-	return []IssueStage{
-		{
-			ID:       "legacy.single_command",
-			Barrier:  true,
-			Commands: []IssueCommand{cmd},
-		},
-	}, nil
+	return out, nil
 }
 
 func flattenStagesToPlannedCommands(
@@ -580,7 +533,7 @@ func latestReportOrSynthesizeComplete(desired DesiredIntent, obs *ObservedIntent
 	return session.Report{
 		IntentID:        desired.Issue.IntentID,
 		Phase:           ReportPhaseComplete,
-		Summary:         fmt.Sprintf("intent %s has no command plan", desired.Issue.IntentID),
+		Summary:         fmt.Sprintf("intent %s has no planned commands", desired.Issue.IntentID),
 		CompletionState: CompletionSatisfied,
 		TimestampMS:     uint64(time.Now().UnixMilli()),
 	}
@@ -627,13 +580,6 @@ func cloneObserved(in ObservedIntent) ObservedIntent {
 	}
 	maps.Copy(out.ByCommandID, in.ByCommandID)
 	return out
-}
-
-// normalizeGhostID resolves single-ghost target identifiers from target_scope text.
-func normalizeGhostID(targetScope string) string {
-	out := strings.TrimSpace(targetScope)
-	out = strings.TrimPrefix(out, "ghost:")
-	return strings.TrimSpace(out)
 }
 
 // sanitizeID converts ids into command-safe dot-separated text.

@@ -27,8 +27,14 @@ func TestHandleAdminControlSubmitAndReconcileIntent(t *testing.T) {
 			Actor:       "user:dan",
 			TargetScope: "ghost:ghost.alpha",
 			Objective:   "status",
-			CommandPlan: []AdminIssueCommand{
-				{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status"},
+			Stages: []AdminIssueStage{
+				{
+					ID:      "stage.1",
+					Barrier: true,
+					Commands: []AdminIssueCommand{
+						{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status"},
+					},
+				},
 			},
 		},
 	})

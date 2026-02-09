@@ -50,9 +50,15 @@ func TestOrchestratorMultiCommandProgressAndComplete(t *testing.T) {
 		Actor:       "user:dan",
 		TargetScope: "ghost:ghost.alpha",
 		Objective:   "ordered rollout",
-		CommandPlan: []IssueCommand{
-			{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status"},
-			{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status"},
+		Stages: []IssueStage{
+			{
+				ID:      "stage.1",
+				Barrier: true,
+				Commands: []IssueCommand{
+					{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status"},
+					{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status"},
+				},
+			},
 		},
 	}); err != nil {
 		t.Fatalf("submit issue: %v", err)
@@ -91,8 +97,14 @@ func TestOrchestratorBlockingSeedLockAcrossIntents(t *testing.T) {
 		Actor:       "user:dan",
 		TargetScope: "ghost:ghost.alpha",
 		Objective:   "holder",
-		CommandPlan: []IssueCommand{
-			{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status", Blocking: true},
+		Stages: []IssueStage{
+			{
+				ID:      "stage.1",
+				Barrier: true,
+				Commands: []IssueCommand{
+					{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status", Blocking: true},
+				},
+			},
 		},
 	}); err != nil {
 		t.Fatalf("submit holder: %v", err)
@@ -102,8 +114,14 @@ func TestOrchestratorBlockingSeedLockAcrossIntents(t *testing.T) {
 		Actor:       "user:dan",
 		TargetScope: "ghost:ghost.alpha",
 		Objective:   "waiter",
-		CommandPlan: []IssueCommand{
-			{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status", Blocking: true},
+		Stages: []IssueStage{
+			{
+				ID:      "stage.1",
+				Barrier: true,
+				Commands: []IssueCommand{
+					{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status", Blocking: true},
+				},
+			},
 		},
 	}); err != nil {
 		t.Fatalf("submit waiter: %v", err)
@@ -138,8 +156,14 @@ func TestOrchestratorIngestObservedEventByCommandID(t *testing.T) {
 		Actor:       "user:dan",
 		TargetScope: "ghost:ghost.alpha",
 		Objective:   "status",
-		CommandPlan: []IssueCommand{
-			{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status"},
+		Stages: []IssueStage{
+			{
+				ID:      "stage.1",
+				Barrier: true,
+				Commands: []IssueCommand{
+					{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status"},
+				},
+			},
 		},
 	}); err != nil {
 		t.Fatalf("submit issue: %v", err)
@@ -175,10 +199,16 @@ func TestOrchestratorSubmitIssueDerivesSeedDependencies(t *testing.T) {
 		Actor:       "user:dan",
 		TargetScope: "ghost:ghost.alpha",
 		Objective:   "derive deps",
-		CommandPlan: []IssueCommand{
-			{GhostID: "ghost.alpha", SeedSelector: "seed.fs", Operation: "write"},
-			{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status"},
-			{GhostID: "ghost.alpha", SeedSelector: "seed.fs", Operation: "read"},
+		Stages: []IssueStage{
+			{
+				ID:      "stage.1",
+				Barrier: true,
+				Commands: []IssueCommand{
+					{GhostID: "ghost.alpha", SeedSelector: "seed.fs", Operation: "write"},
+					{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status"},
+					{GhostID: "ghost.alpha", SeedSelector: "seed.fs", Operation: "read"},
+				},
+			},
 		},
 	}); err != nil {
 		t.Fatalf("submit issue: %v", err)
@@ -280,16 +310,22 @@ func TestOrchestratorControlLoopE2EStoreAndCopyToAllSeedFSGhosts(t *testing.T) {
 		Actor:       "user:dan",
 		TargetScope: "ghost:ghost.alpha",
 		Objective:   "store seed file",
-		CommandPlan: []IssueCommand{
+		Stages: []IssueStage{
 			{
-				GhostID:      "ghost.alpha",
-				SeedSelector: "seed.fs",
-				Operation:    "write",
-				Args: map[string]string{
-					"path":    "payloads/source.txt",
-					"content": "hello from mirage intent",
+				ID:      "stage.1",
+				Barrier: true,
+				Commands: []IssueCommand{
+					{
+						GhostID:      "ghost.alpha",
+						SeedSelector: "seed.fs",
+						Operation:    "write",
+						Args: map[string]string{
+							"path":    "payloads/source.txt",
+							"content": "hello from mirage intent",
+						},
+						Blocking: true,
+					},
 				},
-				Blocking: true,
 			},
 		},
 	}); err != nil {
@@ -332,7 +368,13 @@ func TestOrchestratorControlLoopE2EStoreAndCopyToAllSeedFSGhosts(t *testing.T) {
 		Actor:       "user:dan",
 		TargetScope: "ghost:all",
 		Objective:   "copy to all seed.fs ghosts",
-		CommandPlan: commands,
+		Stages: []IssueStage{
+			{
+				ID:       "stage.1",
+				Barrier:  true,
+				Commands: commands,
+			},
+		},
 	}); err != nil {
 		t.Fatalf("submit copy intent: %v", err)
 	}
@@ -395,7 +437,7 @@ func TestOrchestratorE2EMultiSeedStoreAndIndex(t *testing.T) {
 		}
 	}
 
-	// Submit multi-stage issue using explicit Stages (not CommandPlan).
+	// Submit multi-stage issue using explicit stages.
 	// This mirrors what a properly wired orchestrator template would produce.
 	if err := loop.SubmitIssue(IssueEnv{
 		IntentID:         "intent.multiseed.1",

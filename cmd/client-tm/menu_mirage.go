@@ -301,23 +301,29 @@ func (a *App) submitMirageIssue(target MirageTarget) error {
 		actor = "user:client-tm"
 	}
 	intentID := fmt.Sprintf("intent.clienttm.%s.%d", normalizeSuffix(template.ID), time.Now().UnixMilli())
-
-	// Orchestrator templates resolve their own ghost targets and produce multi-stage plans.
-	if template.Orchestrator != nil {
-		return a.submitOrchestratorIssue(target, template, routes, services, intentID, actor)
+	if template.Orchestrator == nil {
+		return fmt.Errorf("intent template %q has no orchestrator", template.ID)
 	}
-	return a.submitSingleCommandIssue(target, template, routes, services, intentID, actor)
-}
 
-// submitOrchestratorIssue prompts for args, calls the orchestrator, and submits a multi-stage issue.
-func (a *App) submitOrchestratorIssue(
-	target MirageTarget,
-	template MirageIntentTemplate,
-	routes []MirageRoute,
-	services []MirageAvailableService,
-	intentID string,
-	actor string,
-) error {
+	ghostID := ""
+	if template.RequiresGhostSelection {
+		if len(template.SeedDependencies) == 0 {
+			return fmt.Errorf("intent template %q requires ghost selection but has no seed dependency", template.ID)
+		}
+		targetGhostIDs := connectedGhostCandidatesForSeed(
+			routes,
+			services,
+			template.SeedDependencies[0],
+		)
+		if len(targetGhostIDs) == 0 {
+			return fmt.Errorf("no connected ghost found for seed %q", template.SeedDependencies[0])
+		}
+		ghostID, err = a.promptGhostIDSelection("Select target ghost", targetGhostIDs)
+		if err != nil {
+			return err
+		}
+	}
+
 	args, err := a.promptCommandArgs(template.Args)
 	if err != nil {
 		return err
@@ -327,6 +333,7 @@ func (a *App) submitOrchestratorIssue(
 		IntentID: intentID,
 		Actor:    actor,
 		Args:     args,
+		GhostID:  ghostID,
 		Services: services,
 		Routes:   routes,
 	}
@@ -338,10 +345,13 @@ func (a *App) submitOrchestratorIssue(
 		return errors.New("orchestrator produced no stages")
 	}
 
-	// Derive target scope from first command in the plan.
+	// Derive target scope from explicit ghost selection when present.
+	if ghostID == "" && len(stages[0].Commands) > 0 {
+		ghostID = stages[0].Commands[0].GhostID
+	}
 	targetScope := "ghost:orchestrated"
-	if len(stages[0].Commands) > 0 {
-		targetScope = "ghost:" + stages[0].Commands[0].GhostID
+	if ghostID != "" {
+		targetScope = "ghost:" + ghostID
 	}
 
 	req := MirageIssueRequest{
@@ -380,62 +390,6 @@ func (a *App) submitOrchestratorIssue(
 			return nil
 		}
 	}
-	return nil
-}
-
-// submitSingleCommandIssue prompts for ghost + args and submits a single-command issue.
-func (a *App) submitSingleCommandIssue(
-	target MirageTarget,
-	template MirageIntentTemplate,
-	routes []MirageRoute,
-	services []MirageAvailableService,
-	intentID string,
-	actor string,
-) error {
-	targetGhostIDs := connectedGhostCandidatesForSeed(routes, services, template.Command.SeedSelector)
-	if len(targetGhostIDs) == 0 {
-		return fmt.Errorf("no connected ghost found for seed %q", template.Command.SeedSelector)
-	}
-	ghostID, err := a.promptGhostIDSelection("Select target ghost", targetGhostIDs)
-	if err != nil {
-		return err
-	}
-	args, err := a.promptCommandArgs(template.Command.Args)
-	if err != nil {
-		return err
-	}
-	commandPlan := []MirageIssueCommand{
-		{
-			GhostID:      ghostID,
-			SeedSelector: template.Command.SeedSelector,
-			Operation:    template.Command.Operation,
-			Args:         args,
-			Blocking:     template.Command.DefaultBlocking,
-		},
-	}
-	req := MirageIssueRequest{
-		IntentID:         intentID,
-		Actor:            actor,
-		TargetScope:      "ghost:" + ghostID,
-		Objective:        template.Description,
-		SeedDependencies: deriveSeedDependencies(commandPlan),
-		CommandPlan:      commandPlan,
-	}
-	if err := target.Admin.SubmitIssue(req); err != nil {
-		return err
-	}
-	fmt.Printf(
-		"Issue submitted intent_id=%s template=%s ghost=%s deps=%s\n",
-		req.IntentID,
-		template.ID,
-		ghostID,
-		strings.Join(req.SeedDependencies, ","),
-	)
-	report, err := target.Admin.ReconcileIntent(req.IntentID)
-	if err != nil {
-		return err
-	}
-	printMirageReport("Issue Reconcile Result", report)
 	return nil
 }
 
