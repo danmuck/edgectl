@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	ghostConfigPath  = "cmd/client-tm/ghost.toml"
-	mirageConfigPath = "cmd/client-tm/mirage.toml"
+	ghostConfigPath  = "cmd/client-tm/a.ghost.toml"
+	mirageConfigPath = "cmd/client-tm/a.mirage.toml"
 )
 
 var (
