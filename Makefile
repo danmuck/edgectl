@@ -26,7 +26,11 @@ run-ghost:
 	go run ./cmd/ghostctl
 
 run-pi:
-	go run ./cmd/ghostctl -config cmd/ghostctl/pi.config.toml
+	clear; go run ./cmd/ghostctl -config cmd/ghostctl/pi.tls.config.toml
+
+run-tls:
+	clear; go run ./cmd/miragectl -config cmd/miragectl/mac.tls.config.toml
+
 
 run-client:
 	@printf "Run client for ghost or mirage? [g/m] (default g): "; \
