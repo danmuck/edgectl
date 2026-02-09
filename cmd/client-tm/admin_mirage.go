@@ -1,17 +1,17 @@
 package main
 
+// admin_mirage.go defines the MirageAdmin interface and RemoteMirageAdmin TCP client implementation.
+
 import (
 	"bufio"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net"
 	"strings"
 	"time"
 
 	"github.com/danmuck/edgectl/internal/mirage"
 	"github.com/danmuck/edgectl/internal/protocol/session"
-	logs "github.com/danmuck/smplog"
 )
 
 // MirageAdmin defines the client control boundary for one Mirage target.
@@ -32,76 +32,6 @@ type MirageAdmin interface {
 	Close() error
 }
 
-func (a *App) printMirageMenu() {
-	fmt.Println()
-	fmt.Println("Client TM (Mirage)")
-	fmt.Printf("  ghost config:  %s (targets=%d)\n", a.ghostCfgPath, len(a.ghostCfg.Targets))
-	fmt.Printf("  mirage config: %s (single control plane)\n", a.mirageCfgPath)
-	fmt.Printf("  clear screen after command: %v\n", a.clearScreen)
-	fmt.Println("  (*) not yet fully implemented")
-	fmt.Println("  1) Show mirage control-plane config")
-	fmt.Println("  2) Show mirage status")
-	fmt.Println("  3) Mirage admin console (*)")
-	fmt.Println("  4) Show connected ghosts")
-	fmt.Println("  5) Open local ghost admin console")
-	fmt.Println("  6) Config menu")
-	fmt.Println("  7) Exit")
-}
-
-func (a *App) runMirageAdminConsole() error {
-	target, ok := a.activeMirageTarget()
-	if !ok {
-		return errors.New("no active mirage target")
-	}
-	for {
-		fmt.Println()
-		fmt.Printf("Mirage Admin Console (%s @ %s)\n", target.Name, target.Admin.Address())
-		fmt.Println("  (*) not yet fully implemented")
-		fmt.Println("  1) Show status")
-		fmt.Println("  2) Show available services")
-		fmt.Println("  3) Issue intent")
-		fmt.Println("  4) Reconcile intent")
-		fmt.Println("  5) Reports")
-		fmt.Println("  6) Ghost routing")
-		fmt.Println("  7) Back")
-		choice, err := a.promptInt("Choose", 1, 7, true, true)
-		if err != nil {
-			if errors.Is(err, ErrNavigateBack) {
-				return nil
-			}
-			return err
-		}
-		a.clearIfEnabled()
-		switch choice {
-		case 1:
-			if err := a.showActiveMirageSummary(); err != nil {
-				logs.Errf("show mirage summary failed: %v", err)
-			}
-		case 2:
-			if err := a.showMirageAvailableServices(target); err != nil {
-				logs.Errf("show available services failed: %v", err)
-			}
-		case 3:
-			if err := a.submitMirageIssue(target); err != nil {
-				logs.Errf("issue intent failed: %v", err)
-			}
-		case 4:
-			if err := a.runMirageReconcileConsole(target); err != nil {
-				logs.Errf("reconcile console failed: %v", err)
-			}
-		case 5:
-			if err := a.runMirageReportsConsole(target); err != nil {
-				logs.Errf("reports console failed: %v", err)
-			}
-		case 6:
-			if err := a.runMirageGhostRoutingConsole(target); err != nil {
-				logs.Errf("ghost routing console failed: %v", err)
-			}
-		case 7:
-			return nil
-		}
-	}
-}
 func NewRemoteMirageAdmin(addr string) *RemoteMirageAdmin {
 	return &RemoteMirageAdmin{addr: strings.TrimSpace(addr)}
 }

@@ -6,7 +6,7 @@
 
 ### Tasks
 
-- [ ] Define `cmd/client-tm` scope and module boundaries (UI shell, command router, transport client, formatting layer).
+- [x] Define `cmd/client-tm` scope and module boundaries (UI shell, command router, transport client, formatting layer).
 - [ ] Define contracts-first interfaces for control actions: `start/stop/status/health/version/config`, RPC command execution, and monitoring streams.
 - [ ] Define identity/addressing model in client state: `ghost_id`, `seed_id`, `mirage_id`, endpoint, and active target context.
 - [x] Implement interactive TUI shell in `cmd/client-tm` with navigation for:

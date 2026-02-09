@@ -1,17 +1,17 @@
 package main
 
+// admin_ghost.go defines the GhostAdmin interface and RemoteGhostAdmin TCP client implementation.
+
 import (
 	"bufio"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net"
 	"strings"
 	"time"
 
 	"github.com/danmuck/edgectl/internal/ghost"
 	"github.com/danmuck/edgectl/internal/seeds"
-	logs "github.com/danmuck/smplog"
 )
 
 // GhostAdmin defines the client control boundary for one Ghost target.
@@ -26,56 +26,6 @@ type GhostAdmin interface {
 	Verification(limit int) ([]ghost.VerificationRecord, error)
 	SpawnGhost(req ghost.SpawnGhostRequest) (ghost.SpawnGhostResult, error)
 	Close() error
-}
-
-// Drives one admin session for the selected Ghost target.
-func (a *App) runGhostAdminConsoleForTarget(target GhostTarget) error {
-	for {
-		fmt.Println()
-		fmt.Printf("Ghost Admin Console (%s @ %s)\n", target.Name, target.Admin.Address())
-		fmt.Println("  1) Show status")
-		fmt.Println("  2) List seeds and operations")
-		fmt.Println("  3) Execute seed command")
-		fmt.Println("  4) Lookup execution by command_id")
-		fmt.Println("  5) Show recent events")
-		fmt.Println("  6) Protocol/message verification view")
-		fmt.Println("  7) Back")
-
-		choice, err := a.promptInt("Choose", 1, 7, true, true)
-		if err != nil {
-			if errors.Is(err, ErrNavigateBack) {
-				return nil
-			}
-			return err
-		}
-		a.clearIfEnabled()
-		switch choice {
-		case 1:
-			a.showGhostTargetSummary(target)
-		case 2:
-			if err := a.listSeedOperations(target); err != nil {
-				logs.Errf("list seed operations failed: %v", err)
-			}
-		case 3:
-			if err := a.executeSeedCommand(target); err != nil {
-				logs.Errf("execute command failed: %v", err)
-			}
-		case 4:
-			if err := a.lookupExecution(target); err != nil {
-				logs.Errf("lookup execution failed: %v", err)
-			}
-		case 5:
-			if err := a.showRecentEvents(target); err != nil {
-				logs.Errf("show events failed: %v", err)
-			}
-		case 6:
-			if err := a.showVerification(target); err != nil {
-				logs.Errf("show verification failed: %v", err)
-			}
-		case 7:
-			return nil
-		}
-	}
 }
 
 func NewRemoteGhostAdmin(addr string) *RemoteGhostAdmin {
