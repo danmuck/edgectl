@@ -21,6 +21,7 @@ import (
 	"github.com/danmuck/edgectl/internal/protocol/frame"
 	"github.com/danmuck/edgectl/internal/protocol/schema"
 	"github.com/danmuck/edgectl/internal/protocol/session"
+	"github.com/danmuck/edgectl/internal/seeds"
 	logs "github.com/danmuck/smplog"
 )
 
@@ -82,6 +83,22 @@ type GhostRoute struct {
 type AvailableService struct {
 	SeedID   string   `json:"seed_id"`
 	GhostIDs []string `json:"ghost_ids"`
+}
+
+// SeedCapability mirrors one Ghost-published seed capability entry.
+type SeedCapability struct {
+	Metadata       seeds.SeedMetadata      `json:"metadata"`
+	Operations     []seeds.OperationSpec   `json:"operations"`
+	CommandCatalog []seeds.CommandTemplate `json:"command_catalog"`
+}
+
+// GhostSeedCatalog captures one Ghost capability snapshot and fetch status.
+type GhostSeedCatalog struct {
+	GhostID     string           `json:"ghost_id"`
+	AdminAddr   string           `json:"admin_addr"`
+	Connected   bool             `json:"connected"`
+	Error       string           `json:"error,omitempty"`
+	SeedCatalog []SeedCapability `json:"seed_catalog"`
 }
 
 // Mirage internal state with mutable registration metadata and ack idempotency map.
@@ -363,6 +380,50 @@ func (s *Service) SnapshotAvailableServices() []AvailableService {
 	return out
 }
 
+// SnapshotSeedCatalog returns per-ghost seed capability catalogs via Ghost admin routes.
+func (s *Service) SnapshotSeedCatalog() []GhostSeedCatalog {
+	bound := s.snapshotGhostAdmins()
+	out := make([]GhostSeedCatalog, 0, len(bound))
+	for ghostID, adminAddr := range bound {
+		entry := GhostSeedCatalog{
+			GhostID:   strings.TrimSpace(ghostID),
+			AdminAddr: strings.TrimSpace(adminAddr),
+		}
+
+		client := s.newGhostControlClient(entry.AdminAddr)
+		statusCtx, statusCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		status, statusErr := client.Status(statusCtx)
+		statusCancel()
+		resolvedID := strings.TrimSpace(status.GhostID)
+		if resolvedID != "" && resolvedID != entry.GhostID {
+			s.bindGhostAdmin(resolvedID, entry.AdminAddr)
+			entry.GhostID = resolvedID
+		}
+		if statusErr != nil {
+			entry.Connected = false
+			entry.Error = statusErr.Error()
+			out = append(out, entry)
+			continue
+		}
+
+		entry.Connected = true
+		catalogCtx, catalogCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		catalog, catalogErr := client.ListSeedCatalog(catalogCtx)
+		catalogCancel()
+		if catalogErr != nil {
+			entry.Error = catalogErr.Error()
+			out = append(out, entry)
+			continue
+		}
+		entry.SeedCatalog = cloneSeedCapabilities(catalog)
+		out = append(out, entry)
+	}
+	sort.Slice(out, func(i int, j int) bool {
+		return out[i].GhostID < out[j].GhostID
+	})
+	return out
+}
+
 func (s *Service) bindGhostAdmin(ghostID string, adminAddr string) {
 	id := strings.TrimSpace(ghostID)
 	addr := strings.TrimSpace(adminAddr)
@@ -372,6 +433,49 @@ func (s *Service) bindGhostAdmin(ghostID string, adminAddr string) {
 	s.adminGhostMu.Lock()
 	defer s.adminGhostMu.Unlock()
 	s.adminGhostAddrs[id] = addr
+}
+
+func cloneSeedCapabilities(in []SeedCapability) []SeedCapability {
+	if len(in) == 0 {
+		return []SeedCapability{}
+	}
+	out := make([]SeedCapability, len(in))
+	copy(out, in)
+	for i := range out {
+		out[i].Operations = cloneOperationSpecs(out[i].Operations)
+		out[i].CommandCatalog = cloneCommandTemplates(out[i].CommandCatalog)
+	}
+	return out
+}
+
+func cloneOperationSpecs(in []seeds.OperationSpec) []seeds.OperationSpec {
+	if len(in) == 0 {
+		return []seeds.OperationSpec{}
+	}
+	out := make([]seeds.OperationSpec, len(in))
+	copy(out, in)
+	return out
+}
+
+func cloneCommandTemplates(in []seeds.CommandTemplate) []seeds.CommandTemplate {
+	if len(in) == 0 {
+		return []seeds.CommandTemplate{}
+	}
+	out := make([]seeds.CommandTemplate, len(in))
+	copy(out, in)
+	for i := range out {
+		out[i].Args = cloneCommandArgSpecs(out[i].Args)
+	}
+	return out
+}
+
+func cloneCommandArgSpecs(in []seeds.CommandArgSpec) []seeds.CommandArgSpec {
+	if len(in) == 0 {
+		return []seeds.CommandArgSpec{}
+	}
+	out := make([]seeds.CommandArgSpec, len(in))
+	copy(out, in)
+	return out
 }
 
 func (s *Service) snapshotGhostAdmins() map[string]string {

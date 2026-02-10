@@ -199,6 +199,8 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 		return adminControlResponse{OK: true, Data: s.SnapshotRoutingTable()}
 	case "available_services":
 		return adminControlResponse{OK: true, Data: s.SnapshotAvailableServices()}
+	case "seed_catalog":
+		return adminControlResponse{OK: true, Data: s.SnapshotSeedCatalog()}
 	case "attach_ghost_admin":
 		addr := strings.TrimSpace(req.GhostAdminAddr)
 		if addr == "" {

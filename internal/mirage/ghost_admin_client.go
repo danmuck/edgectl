@@ -12,6 +12,7 @@ import (
 
 	"github.com/danmuck/edgectl/internal/protocol/frame"
 	"github.com/danmuck/edgectl/internal/protocol/session"
+	"github.com/danmuck/edgectl/internal/seeds"
 )
 
 const (
@@ -19,6 +20,7 @@ const (
 	executeEnvelopeAction = "execute_envelope"
 	statusAction          = "status"
 	listSeedsAction       = "list_seeds"
+	listSeedCatalogAction = "list_seed_catalog"
 	bindMirageAction      = "bind_mirage"
 )
 
@@ -73,6 +75,37 @@ type ghostSeedMetadata struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
+}
+
+type ghostSeedCapability struct {
+	Metadata       ghostSeedMetadata      `json:"metadata"`
+	Operations     []ghostOperationSpec   `json:"operations"`
+	CommandCatalog []ghostCommandTemplate `json:"command_catalog"`
+}
+
+type ghostOperationSpec struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Idempotent  bool   `json:"idempotent"`
+}
+
+type ghostCommandTemplate struct {
+	ID              string                `json:"id"`
+	Label           string                `json:"label"`
+	Description     string                `json:"description"`
+	SeedSelector    string                `json:"seed_selector"`
+	Operation       string                `json:"operation"`
+	Args            []ghostCommandArgSpec `json:"args"`
+	DefaultBlocking bool                  `json:"default_blocking"`
+}
+
+type ghostCommandArgSpec struct {
+	Key          string `json:"key"`
+	Prompt       string `json:"prompt"`
+	Required     bool   `json:"required"`
+	DefaultValue string `json:"default_value"`
+	Multiline    bool   `json:"multiline"`
+	Terminator   string `json:"terminator"`
 }
 
 // GhostControlClient is a TCP JSON control client for one root/local ghost admin endpoint.
@@ -174,12 +207,86 @@ func (c *GhostControlClient) ListSeeds(ctx context.Context) ([]session.SeedInfo,
 	return seeds, nil
 }
 
+// ListSeedCatalog reads full seed capability descriptors from the ghost admin endpoint.
+func (c *GhostControlClient) ListSeedCatalog(ctx context.Context) ([]SeedCapability, error) {
+	var out []ghostSeedCapability
+	if err := c.call(ctx, ghostControlRequest{Action: listSeedCatalogAction}, &out); err != nil {
+		return nil, err
+	}
+	caps := make([]SeedCapability, 0, len(out))
+	for i := range out {
+		item := out[i]
+		caps = append(caps, SeedCapability{
+			Metadata: seeds.SeedMetadata{
+				ID:          strings.TrimSpace(item.Metadata.ID),
+				Name:        strings.TrimSpace(item.Metadata.Name),
+				Description: strings.TrimSpace(item.Metadata.Description),
+			},
+			Operations:     mapOperationSpecs(item.Operations),
+			CommandCatalog: mapCommandTemplates(item.CommandCatalog),
+		})
+	}
+	return caps, nil
+}
+
 // BindMirage marks a ghost admin endpoint as attached to one Mirage control plane.
 func (c *GhostControlClient) BindMirage(ctx context.Context, mirageID string) error {
 	return c.call(ctx, ghostControlRequest{
 		Action:   bindMirageAction,
 		MirageID: strings.TrimSpace(mirageID),
 	}, nil)
+}
+
+func mapOperationSpecs(in []ghostOperationSpec) []seeds.OperationSpec {
+	if len(in) == 0 {
+		return []seeds.OperationSpec{}
+	}
+	out := make([]seeds.OperationSpec, len(in))
+	for i := range in {
+		out[i] = seeds.OperationSpec{
+			Name:        strings.TrimSpace(in[i].Name),
+			Description: strings.TrimSpace(in[i].Description),
+			Idempotent:  in[i].Idempotent,
+		}
+	}
+	return out
+}
+
+func mapCommandTemplates(in []ghostCommandTemplate) []seeds.CommandTemplate {
+	if len(in) == 0 {
+		return []seeds.CommandTemplate{}
+	}
+	out := make([]seeds.CommandTemplate, len(in))
+	for i := range in {
+		out[i] = seeds.CommandTemplate{
+			ID:              strings.TrimSpace(in[i].ID),
+			Label:           strings.TrimSpace(in[i].Label),
+			Description:     strings.TrimSpace(in[i].Description),
+			SeedSelector:    strings.TrimSpace(in[i].SeedSelector),
+			Operation:       strings.TrimSpace(in[i].Operation),
+			Args:            mapCommandArgSpecs(in[i].Args),
+			DefaultBlocking: in[i].DefaultBlocking,
+		}
+	}
+	return out
+}
+
+func mapCommandArgSpecs(in []ghostCommandArgSpec) []seeds.CommandArgSpec {
+	if len(in) == 0 {
+		return []seeds.CommandArgSpec{}
+	}
+	out := make([]seeds.CommandArgSpec, len(in))
+	for i := range in {
+		out[i] = seeds.CommandArgSpec{
+			Key:          strings.TrimSpace(in[i].Key),
+			Prompt:       strings.TrimSpace(in[i].Prompt),
+			Required:     in[i].Required,
+			DefaultValue: strings.TrimSpace(in[i].DefaultValue),
+			Multiline:    in[i].Multiline,
+			Terminator:   strings.TrimSpace(in[i].Terminator),
+		}
+	}
+	return out
 }
 
 func (c *GhostControlClient) call(ctx context.Context, req ghostControlRequest, out any) error {

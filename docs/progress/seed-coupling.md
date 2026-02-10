@@ -134,10 +134,10 @@ sequenceDiagram
   - [x] Add Ghost service/admin catalog read method exposing metadata+operations+templates.
   - [x] Add admin action for full catalog; preserve existing `list_seeds` action temporarily.
   - [x] Add unit tests for deterministic ordering and payload completeness.
-- [ ] **Stage 3: Mirage Capability Aggregation**
-  - [ ] Add Mirage-side catalog snapshot structure aligned to Ghost output.
-  - [ ] Add/extend admin action to return aggregated seed template capabilities.
-  - [ ] Add tests for mixed connectivity and partial ghost availability.
+- [x] **Stage 3: Mirage Capability Aggregation**
+  - [x] Add Mirage-side catalog snapshot structure aligned to Ghost output.
+  - [x] Add/extend admin action to return aggregated seed template capabilities.
+  - [x] Add tests for mixed connectivity and partial ghost availability.
 - [ ] **Stage 4: Client Migration + Code Reduction**
   - [ ] Remove static ghost template catalog in `cmd/client-tm/cmd_ghost.go`.
   - [ ] Remove local `operationsForSeed` abstraction for Ghost command wizard filtering.
@@ -153,7 +153,7 @@ sequenceDiagram
 - [ ] Client Ghost command wizard renders from seed-provided templates only.
 - [ ] No static command template catalog remains in `cmd/client-tm`.
 - [x] Built-in seeds publish complete template descriptors with deterministic ordering.
-- [ ] Mirage can return aggregated capability data sufficient for intent-template filtering.
+- [x] Mirage can return aggregated capability data sufficient for intent-template filtering.
 - [ ] Existing `issue -> command -> seed.execute -> seed.result -> event -> report` flow remains unchanged.
 - [x] `go test ./...` passes.
 

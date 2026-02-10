@@ -4,7 +4,7 @@ Status: `Not Started`
 
 ### Tasks
 
-- [ ] Recover original Phase 9 definition and replace this placeholder with the canonical scope
+- [ ] Decide on Phase 9 definition when all previous progress plans are completed.
 - [ ] Define final MVP exit criteria and release validation matrix
 - [ ] Define operator handoff/runbook and rollback checklist across Mirage/Ghost boundaries
 

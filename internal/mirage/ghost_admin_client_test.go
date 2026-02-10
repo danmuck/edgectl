@@ -272,6 +272,88 @@ func TestGhostControlClientExecuteAdminCommandWithAuthToken(t *testing.T) {
 	<-done
 }
 
+func TestGhostControlClientListSeedCatalog(t *testing.T) {
+	testlog.Start(t)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		reader := bufio.NewReader(conn)
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			return
+		}
+		var req ghostControlRequest
+		if err := json.Unmarshal(line, &req); err != nil {
+			return
+		}
+		if req.Action != listSeedCatalogAction {
+			return
+		}
+		resp := ghostControlResponse{
+			OK: true,
+			Data: mustJSON(t, []map[string]any{
+				{
+					"metadata": map[string]any{
+						"id":          "seed.flow",
+						"name":        "Flow",
+						"description": "Deterministic control-flow seed",
+					},
+					"operations": []map[string]any{
+						{"name": "status", "description": "status", "idempotent": true},
+					},
+					"command_catalog": []map[string]any{
+						{
+							"id":            "seed.flow.status",
+							"label":         "Flow Status",
+							"description":   "Read deterministic flow status.",
+							"seed_selector": "seed.flow",
+							"operation":     "status",
+							"args": []map[string]any{
+								{"key": "name", "prompt": "name", "required": false},
+							},
+							"default_blocking": false,
+						},
+					},
+				},
+			}),
+		}
+		payload, _ := json.Marshal(resp)
+		payload = append(payload, '\n')
+		_, _ = conn.Write(payload)
+	}()
+
+	client := NewGhostControlClient(ln.Addr().String())
+	catalog, err := client.ListSeedCatalog(context.Background())
+	if err != nil {
+		t.Fatalf("list seed catalog: %v", err)
+	}
+	if len(catalog) != 1 {
+		t.Fatalf("unexpected catalog size: %d", len(catalog))
+	}
+	if catalog[0].Metadata.ID != "seed.flow" {
+		t.Fatalf("unexpected seed id: %+v", catalog[0].Metadata)
+	}
+	if len(catalog[0].Operations) != 1 || catalog[0].Operations[0].Name != "status" {
+		t.Fatalf("unexpected operations: %+v", catalog[0].Operations)
+	}
+	if len(catalog[0].CommandCatalog) != 1 || catalog[0].CommandCatalog[0].SeedSelector != "seed.flow" {
+		t.Fatalf("unexpected command catalog: %+v", catalog[0].CommandCatalog)
+	}
+	<-done
+}
+
 func mustJSON(t *testing.T, v any) json.RawMessage {
 	t.Helper()
 	out, err := json.Marshal(v)
