@@ -38,6 +38,7 @@ type ServiceConfig struct {
 	BuildlogSeedSelector     string
 	BuildlogKeyPrefix        string
 	RootGhostAdminAddr       string
+	GhostManifests           []GhostManifest
 	Session                  session.Config
 }
 

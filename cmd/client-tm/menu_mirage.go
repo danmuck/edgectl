@@ -462,8 +462,9 @@ func (a *App) runMirageGhostRoutingConsole(target MirageTarget) error {
 		fmt.Println("  1) Spawn local ghost (*)")
 		fmt.Println("  2) Connect ghost service (*)")
 		fmt.Println("  3) Show routing table")
-		fmt.Println("  4) Back")
-		choice, err := a.promptInt("Choose", 1, 4, true, true)
+		fmt.Println("  4) Deploy remote ghost (SSH)")
+		fmt.Println("  5) Back")
+		choice, err := a.promptInt("Choose", 1, 5, true, true)
 		if err != nil {
 			if errors.Is(err, ErrNavigateBack) {
 				return nil
@@ -485,6 +486,10 @@ func (a *App) runMirageGhostRoutingConsole(target MirageTarget) error {
 				logs.Errf("show routing table failed: %v", err)
 			}
 		case 4:
+			if err := a.deployRemoteGhost(target); err != nil {
+				logs.Errf("deploy remote ghost failed: %v", err)
+			}
+		case 5:
 			return nil
 		}
 	}
@@ -608,6 +613,79 @@ func (a *App) spawnMirageLocalGhost(target MirageTarget) error {
 	fmt.Printf("  target_name: %s\n", out.TargetName)
 	fmt.Printf("  ghost_id:    %s\n", out.GhostID)
 	fmt.Printf("  admin_addr:  %s\n", out.AdminAddr)
+	return nil
+}
+
+func (a *App) deployRemoteGhost(target MirageTarget) error {
+	fmt.Println()
+	fmt.Println("Deploy Remote Ghost (SSH)")
+	ghostID, err := a.promptLine("ghost_id (e.g. ghost.remote-1)")
+	if err != nil {
+		return err
+	}
+	host, err := a.promptLine("host (IP or hostname)")
+	if err != nil {
+		return err
+	}
+	userRaw, err := a.promptLine("ssh user (blank = deploy)")
+	if err != nil {
+		return err
+	}
+	user := strings.TrimSpace(userRaw)
+	if user == "" {
+		user = "deploy"
+	}
+	keyRaw, err := a.promptLine("ssh key path (blank = ~/.ssh/id_ed25519)")
+	if err != nil {
+		return err
+	}
+	seedsRaw, err := a.promptLine("seeds (comma-separated, blank = seed.flow,seed.host)")
+	if err != nil {
+		return err
+	}
+	seeds := []string{"seed.flow", "seed.host"}
+	if v := strings.TrimSpace(seedsRaw); v != "" {
+		seeds = strings.Split(v, ",")
+		for i := range seeds {
+			seeds[i] = strings.TrimSpace(seeds[i])
+		}
+	}
+	mirageAddrRaw, err := a.promptLine("mirage address for ghost to connect back (blank = skip)")
+	if err != nil {
+		return err
+	}
+	binaryRaw, err := a.promptLine("local ghostctl binary path (blank = local/bin/ghostctl)")
+	if err != nil {
+		return err
+	}
+
+	req := mirage.DeployGhostRequest{
+		Manifest: mirage.GhostManifest{
+			GhostID:       strings.TrimSpace(ghostID),
+			Host:          strings.TrimSpace(host),
+			User:          user,
+			SSHKeyFile:    strings.TrimSpace(keyRaw),
+			Seeds:         seeds,
+			AdminListen:   "0.0.0.0:7010",
+			MiragePolicy:  "auto",
+			MirageAddress: strings.TrimSpace(mirageAddrRaw),
+		},
+		BinaryPath: strings.TrimSpace(binaryRaw),
+	}
+	fmt.Printf("Deploying ghost_id=%s to %s@%s...\n", req.Manifest.GhostID, user, req.Manifest.Host)
+	result, err := target.Admin.DeployGhost(req)
+	if err != nil {
+		return err
+	}
+	fmt.Println()
+	fmt.Println("Deploy Remote Ghost Result")
+	fmt.Printf("  ghost_id:   %s\n", result.GhostID)
+	fmt.Printf("  host:       %s\n", result.Host)
+	fmt.Printf("  admin_addr: %s\n", result.AdminAddr)
+	fmt.Printf("  status:     %s\n", result.Status)
+	if result.Message != "" {
+		fmt.Printf("  message:    %s\n", result.Message)
+	}
 	return nil
 }
 

@@ -60,12 +60,13 @@ type AdminAttachGhostResponse struct {
 }
 
 type adminControlRequest struct {
-	Action         string            `json:"action"`
-	Limit          int               `json:"limit,omitempty"`
-	IntentID       string            `json:"intent_id,omitempty"`
-	Issue          AdminIssueRequest `json:"issue,omitempty"`
-	Spawn          SpawnGhostRequest `json:"spawn,omitempty"`
-	GhostAdminAddr string            `json:"ghost_admin_addr,omitempty"`
+	Action         string             `json:"action"`
+	Limit          int                `json:"limit,omitempty"`
+	IntentID       string             `json:"intent_id,omitempty"`
+	Issue          AdminIssueRequest  `json:"issue,omitempty"`
+	Spawn          SpawnGhostRequest  `json:"spawn,omitempty"`
+	Deploy         DeployGhostRequest `json:"deploy,omitempty"`
+	GhostAdminAddr string             `json:"ghost_admin_addr,omitempty"`
 }
 
 type adminControlResponse struct {
@@ -222,6 +223,39 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 		s.bindGhostAdmin(out.GhostID, out.AdminAddr)
 		logs.Warnf("mirage.admin spawned local ghost ghost_id=%q addr=%q", out.GhostID, out.AdminAddr)
 		return adminControlResponse{OK: true, Data: out}
+	case "deploy_ghost":
+		deployer := NewSSHDeployer()
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		result, err := deployer.Deploy(ctx, req.Deploy)
+		if err != nil {
+			return adminControlResponse{OK: false, Error: err.Error()}
+		}
+		// Auto-attach the newly deployed ghost via admin routing.
+		if result.AdminAddr != "" {
+			attachCtx, attachCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer attachCancel()
+			// Wait briefly for process startup before attempting attach.
+			select {
+			case <-attachCtx.Done():
+			case <-time.After(2 * time.Second):
+			}
+			out, attachErr := s.attachGhostAdmin(result.GhostID, result.AdminAddr)
+			if attachErr != nil {
+				logs.Warnf("mirage.admin deploy_ghost auto-attach failed ghost_id=%q addr=%q err=%v",
+					result.GhostID, result.AdminAddr, attachErr)
+				result.Message += "; auto-attach failed: " + attachErr.Error()
+			} else {
+				logs.Warnf("mirage.admin deploy_ghost attached ghost_id=%q addr=%q", out.GhostID, out.AdminAddr)
+				result.Status = "deployed_and_attached"
+			}
+		}
+		s.persistBuildlog("deploy_ghost", map[string]any{
+			"ghost_id": result.GhostID,
+			"host":     result.Host,
+			"status":   result.Status,
+		})
+		return adminControlResponse{OK: true, Data: result}
 	default:
 		return adminControlResponse{OK: false, Error: fmt.Sprintf("unknown action: %s", req.Action)}
 	}

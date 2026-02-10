@@ -26,6 +26,7 @@ type MirageAdmin interface {
 	RecentReports(limit int) ([]session.Report, error)
 	SpawnLocalGhost(req mirage.SpawnGhostRequest) (mirage.SpawnGhostResult, error)
 	AttachGhostAdmin(addr string) (MirageAttachGhostResponse, error)
+	DeployGhost(req mirage.DeployGhostRequest) (mirage.DeployGhostResult, error)
 	RegisteredGhosts() ([]mirage.RegisteredGhost, error)
 	RoutingTable() ([]MirageRoute, error)
 	AvailableServices() ([]MirageAvailableService, error)
@@ -120,6 +121,18 @@ func (c *RemoteMirageAdmin) AttachGhostAdmin(addr string) (MirageAttachGhostResp
 	}
 	if err := c.call(req, &out); err != nil {
 		return MirageAttachGhostResponse{}, err
+	}
+	return out, nil
+}
+
+func (c *RemoteMirageAdmin) DeployGhost(req mirage.DeployGhostRequest) (mirage.DeployGhostResult, error) {
+	var out mirage.DeployGhostResult
+	controlReq := mirageControlRequest{
+		Action: "deploy_ghost",
+		Deploy: req,
+	}
+	if err := c.call(controlReq, &out); err != nil {
+		return mirage.DeployGhostResult{}, err
 	}
 	return out, nil
 }

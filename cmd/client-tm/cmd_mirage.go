@@ -136,6 +136,96 @@ func mirageIntentTemplateCatalog() []MirageIntentTemplate {
 				return []MirageIssueStage{writeStage, indexStage}, nil
 			},
 		},
+		{
+			ID:                     "intent.docker.deploy",
+			Label:                  "Deploy Docker Container",
+			Description:            "Verify host reachability, check docker daemon, run container, then confirm it is running. Multi-stage with barriers.",
+			RequiresGhostSelection: true,
+			SeedDependencies:       []string{"seed.docker", "seed.host"},
+			Args: []CommandArgSpec{
+				{Key: "image", Prompt: "docker image name", Required: true},
+				{Key: "container", Prompt: "container name (optional)", Required: false},
+				{Key: "flags", Prompt: "extra docker run flags (optional, e.g. -p 8080:80)", Required: false},
+			},
+			Orchestrator: func(ctx MirageIntentContext) ([]MirageIssueStage, error) {
+				return []MirageIssueStage{
+					{
+						ID:      "host-check",
+						Barrier: true,
+						Commands: []MirageIssueCommand{{
+							GhostID: ctx.GhostID, SeedSelector: "seed.host", Operation: "status",
+						}},
+					},
+					{
+						ID:      "docker-check",
+						Barrier: true,
+						Commands: []MirageIssueCommand{{
+							GhostID: ctx.GhostID, SeedSelector: "seed.docker", Operation: "status",
+						}},
+					},
+					{
+						ID:      "docker-run",
+						Barrier: true,
+						Commands: []MirageIssueCommand{{
+							GhostID: ctx.GhostID, SeedSelector: "seed.docker", Operation: "run",
+							Args: ctx.Args, Blocking: true,
+						}},
+					},
+					{
+						ID:      "docker-verify",
+						Barrier: false,
+						Commands: []MirageIssueCommand{{
+							GhostID: ctx.GhostID, SeedSelector: "seed.docker", Operation: "ps",
+						}},
+					},
+				}, nil
+			},
+		},
+		{
+			ID:               "intent.fleet.inventory",
+			Label:            "Collect Fleet Inventory",
+			Description:      "Discover all connected ghosts, collect host status and listening ports from each, then store a summary in seed.kv.",
+			SeedDependencies: []string{"seed.host"},
+			Orchestrator: func(ctx MirageIntentContext) ([]MirageIssueStage, error) {
+				hostGhosts := connectedGhostCandidatesForSeed(ctx.Routes, ctx.Services, "seed.host")
+				if len(hostGhosts) == 0 {
+					return nil, fmt.Errorf("no connected ghosts provide seed.host")
+				}
+
+				// Stage 1: collect status from all ghosts.
+				statusStage := MirageIssueStage{ID: "host-status-fanout", Barrier: true}
+				for _, gid := range hostGhosts {
+					statusStage.Commands = append(statusStage.Commands, MirageIssueCommand{
+						GhostID: gid, SeedSelector: "seed.host", Operation: "status",
+					})
+				}
+
+				// Stage 2: collect ports from all ghosts.
+				portsStage := MirageIssueStage{ID: "host-ports-fanout", Barrier: true}
+				for _, gid := range hostGhosts {
+					portsStage.Commands = append(portsStage.Commands, MirageIssueCommand{
+						GhostID: gid, SeedSelector: "seed.host", Operation: "ports",
+					})
+				}
+
+				stages := []MirageIssueStage{statusStage, portsStage}
+
+				// Stage 3 (optional): store inventory count in seed.kv if available.
+				kvGhosts := connectedGhostCandidatesForSeed(ctx.Routes, ctx.Services, "seed.kv")
+				if len(kvGhosts) > 0 {
+					kvStage := MirageIssueStage{ID: "kv-inventory-index", Barrier: false}
+					summary := fmt.Sprintf("ghost_count=%d,intent=%s", len(hostGhosts), ctx.IntentID)
+					kvStage.Commands = append(kvStage.Commands, MirageIssueCommand{
+						GhostID: kvGhosts[0], SeedSelector: "seed.kv", Operation: "put",
+						Args:     map[string]string{"key": "fleet:inventory:latest", "value": summary},
+						Blocking: true,
+					})
+					stages = append(stages, kvStage)
+				}
+
+				return stages, nil
+			},
+		},
 	}
 }
 

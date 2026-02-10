@@ -4,7 +4,11 @@
 	test-override \
 	run-client \
 	run-mirage \
-	run-ghost
+	run-ghost \
+	build-ghost \
+	build-mirage \
+	build-client \
+	build-all
 
 CLEAR_CMD ?= clear
 
@@ -43,3 +47,18 @@ run-client:
 		*) echo "invalid mode '$$mode', expected ghost or mirage"; exit 1 ;; \
 	esac; \
 	go run ./cmd/client-tm -mode $$mode
+
+### BUILD
+build-ghost:
+	@mkdir -p local/bin
+	go build -o local/bin/ghostctl ./cmd/ghostctl
+
+build-mirage:
+	@mkdir -p local/bin
+	go build -o local/bin/miragectl ./cmd/miragectl
+
+build-client:
+	@mkdir -p local/bin
+	go build -o local/bin/client-tm ./cmd/client-tm
+
+build-all: build-ghost build-mirage build-client

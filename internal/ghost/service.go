@@ -54,6 +54,7 @@ type SeedInstallConfig struct {
 	Enabled       bool
 	WorkspaceRoot string
 	InstallRoot   string
+	BinRoot       string
 	Whitelist     []string
 	Specs         []seeds.InstallSpec
 }
@@ -562,6 +563,7 @@ func (s *Service) installSeedDependencies() error {
 	installer, err := seeds.NewInstaller(seeds.InstallerConfig{
 		WorkspaceRoot: cfg.WorkspaceRoot,
 		InstallRoot:   cfg.InstallRoot,
+		BinRoot:       cfg.BinRoot,
 		Whitelist:     cfg.Whitelist,
 	})
 	if err != nil {

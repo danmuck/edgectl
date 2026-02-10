@@ -182,6 +182,104 @@ func ghostCommandTemplateCatalog() []CommandTemplate {
 			},
 			DefaultBlocking: true,
 		},
+		// Docker
+		// ////////
+		{
+			ID:           "seed.docker.status",
+			Label:        "Docker Status",
+			Description:  "Check docker daemon health.",
+			SeedSelector: "seed.docker",
+			Operation:    "status",
+		},
+		{
+			ID:           "seed.docker.ps",
+			Label:        "Docker PS",
+			Description:  "List all containers.",
+			SeedSelector: "seed.docker",
+			Operation:    "ps",
+			Args: []CommandArgSpec{
+				{Key: "flags", Prompt: "extra flags (optional)", Required: false},
+			},
+		},
+		{
+			ID:              "seed.docker.run",
+			Label:           "Docker Run",
+			Description:     "Run a new container in detached mode.",
+			SeedSelector:    "seed.docker",
+			Operation:       "run",
+			DefaultBlocking: true,
+			Args: []CommandArgSpec{
+				{Key: "image", Prompt: "image name", Required: true},
+				{Key: "container", Prompt: "container name (optional)", Required: false},
+				{Key: "flags", Prompt: "extra flags (optional, e.g. -p 8080:80)", Required: false},
+			},
+		},
+		{
+			ID:              "seed.docker.stop",
+			Label:           "Docker Stop",
+			Description:     "Stop a running container.",
+			SeedSelector:    "seed.docker",
+			Operation:       "stop",
+			DefaultBlocking: true,
+			Args: []CommandArgSpec{
+				{Key: "container", Prompt: "container name or id", Required: true},
+			},
+		},
+		{
+			ID:              "seed.docker.rm",
+			Label:           "Docker Remove",
+			Description:     "Remove a container.",
+			SeedSelector:    "seed.docker",
+			Operation:       "rm",
+			DefaultBlocking: true,
+			Args: []CommandArgSpec{
+				{Key: "container", Prompt: "container name or id", Required: true},
+			},
+		},
+		{
+			ID:           "seed.docker.logs",
+			Label:        "Docker Logs",
+			Description:  "Fetch container logs.",
+			SeedSelector: "seed.docker",
+			Operation:    "logs",
+			Args: []CommandArgSpec{
+				{Key: "container", Prompt: "container name or id", Required: true},
+				{Key: "flags", Prompt: "extra flags (optional, e.g. --tail 50)", Required: false},
+			},
+		},
+		{
+			ID:           "seed.docker.inspect",
+			Label:        "Docker Inspect",
+			Description:  "Inspect a container.",
+			SeedSelector: "seed.docker",
+			Operation:    "inspect",
+			Args: []CommandArgSpec{
+				{Key: "container", Prompt: "container name or id", Required: true},
+			},
+		},
+		// Host
+		// ////////
+		{
+			ID:           "seed.host.status",
+			Label:        "Host Status",
+			Description:  "Read hostname, primary IP, OS, and architecture.",
+			SeedSelector: "seed.host",
+			Operation:    "status",
+		},
+		{
+			ID:           "seed.host.ports",
+			Label:        "Host Ports",
+			Description:  "List listening TCP/UDP ports.",
+			SeedSelector: "seed.host",
+			Operation:    "ports",
+		},
+		{
+			ID:           "seed.host.interfaces",
+			Label:        "Host Interfaces",
+			Description:  "List network interfaces with IP addresses.",
+			SeedSelector: "seed.host",
+			Operation:    "interfaces",
+		},
 	}
 }
 
