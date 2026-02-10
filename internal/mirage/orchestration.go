@@ -14,6 +14,7 @@ import (
 
 	"github.com/danmuck/edgectl/internal/protocol/frame"
 	"github.com/danmuck/edgectl/internal/protocol/session"
+	logs "github.com/danmuck/smplog"
 )
 
 var (
@@ -221,6 +222,12 @@ func (o *Orchestrator) SubmitIssue(issue IssueEnv) error {
 	stages := normalizeIssueToStages(issue)
 	commands := flattenStagesToPlannedCommands(issue.IntentID, stages)
 	issue.SeedDependencies = seedDependenciesForCommands(commands)
+	logs.Infof(
+		"ownership.transition from=user to=mirage intent_id=%s actor=%s target_scope=%s",
+		strings.TrimSpace(issue.IntentID),
+		strings.TrimSpace(issue.Actor),
+		strings.TrimSpace(issue.TargetScope),
+	)
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.desired[issue.IntentID] = DesiredIntent{
@@ -287,6 +294,14 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context, intentID string) (sess
 	if !hasPending {
 		report := latestReportOrSynthesizeComplete(desired, obs)
 		o.mu.Unlock()
+		logs.Infof(
+			"ownership.transition from=mirage to=user intent_id=%s phase=%s completion=%s command_id=%s event_id=%s",
+			key,
+			report.Phase,
+			report.CompletionState,
+			strings.TrimSpace(report.CommandID),
+			strings.TrimSpace(report.EventID),
+		)
 		return report, nil
 	}
 
@@ -298,6 +313,14 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context, intentID string) (sess
 				observed.Reports = append(observed.Reports, report)
 				observed.ObservedAt = time.Now()
 				o.mu.Unlock()
+				logs.Infof(
+					"ownership.transition from=mirage to=user intent_id=%s phase=%s completion=%s command_id=%s event_id=%s",
+					key,
+					report.Phase,
+					report.CompletionState,
+					strings.TrimSpace(report.CommandID),
+					strings.TrimSpace(report.EventID),
+				)
 				return report, nil
 			}
 		} else {
@@ -310,6 +333,14 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context, intentID string) (sess
 	if exec == nil {
 		return session.Report{}, fmt.Errorf("mirage: no executor registered for ghost_id=%q", next.Command.GhostID)
 	}
+	logs.Infof(
+		"ownership.transition from=mirage to=ghost intent_id=%s command_id=%s ghost_id=%s seed_id=%s operation=%s",
+		key,
+		next.Command.CommandID,
+		next.Command.GhostID,
+		next.Command.SeedSelector,
+		next.Command.Operation,
+	)
 
 	wireCommand, err := o.dispatchCommandEnvelope(next.Command)
 	if err != nil {
@@ -344,6 +375,22 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context, intentID string) (sess
 		delete(o.seedLocks, next.SeedKey)
 	}
 	o.mu.Unlock()
+	logs.Infof(
+		"ownership.transition from=ghost to=mirage intent_id=%s command_id=%s event_id=%s ghost_id=%s outcome=%s",
+		key,
+		ingestedEvent.CommandID,
+		ingestedEvent.EventID,
+		ingestedEvent.GhostID,
+		ingestedEvent.Outcome,
+	)
+	logs.Infof(
+		"ownership.transition from=mirage to=user intent_id=%s phase=%s completion=%s command_id=%s event_id=%s",
+		key,
+		report.Phase,
+		report.CompletionState,
+		strings.TrimSpace(report.CommandID),
+		strings.TrimSpace(report.EventID),
+	)
 	return report, nil
 }
 
@@ -361,9 +408,26 @@ func (o *Orchestrator) IngestObservedEvent(event session.Event) (session.Report,
 	if _, exists := observed.ByCommandID[event.CommandID]; exists {
 		if len(observed.Reports) == 0 {
 			report := latestReportOrSynthesizeComplete(desired, observed)
+			logs.Infof(
+				"ownership.transition from=mirage to=user intent_id=%s phase=%s completion=%s command_id=%s event_id=%s",
+				intentID,
+				report.Phase,
+				report.CompletionState,
+				strings.TrimSpace(report.CommandID),
+				strings.TrimSpace(report.EventID),
+			)
 			return report, true, nil
 		}
-		return observed.Reports[len(observed.Reports)-1], true, nil
+		report := observed.Reports[len(observed.Reports)-1]
+		logs.Infof(
+			"ownership.transition from=mirage to=user intent_id=%s phase=%s completion=%s command_id=%s event_id=%s",
+			intentID,
+			report.Phase,
+			report.CompletionState,
+			strings.TrimSpace(report.CommandID),
+			strings.TrimSpace(report.EventID),
+		)
+		return report, true, nil
 	}
 
 	report, ingestedEvent, err := o.ingestEventEnvelopeAndBuildReport(desired, observed, event)
@@ -377,6 +441,22 @@ func (o *Orchestrator) IngestObservedEvent(event session.Event) (session.Report,
 	if plan.Blocking {
 		delete(o.seedLocks, plan.SeedKey)
 	}
+	logs.Infof(
+		"ownership.transition from=ghost to=mirage intent_id=%s command_id=%s event_id=%s ghost_id=%s outcome=%s",
+		intentID,
+		ingestedEvent.CommandID,
+		ingestedEvent.EventID,
+		ingestedEvent.GhostID,
+		ingestedEvent.Outcome,
+	)
+	logs.Infof(
+		"ownership.transition from=mirage to=user intent_id=%s phase=%s completion=%s command_id=%s event_id=%s",
+		intentID,
+		report.Phase,
+		report.CompletionState,
+		strings.TrimSpace(report.CommandID),
+		strings.TrimSpace(report.EventID),
+	)
 	return report, true, nil
 }
 

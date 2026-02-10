@@ -287,6 +287,188 @@ func (e *fsGhostExecutor) ExecuteCommand(_ context.Context, cmd session.Command)
 	}, nil
 }
 
+// dockerHostExecutor simulates docker/host seed execution behavior for orchestration E2E tests.
+type dockerHostExecutor struct {
+	ghostID string
+}
+
+// ExecuteCommand returns success for known seed.docker/seed.host operations and error otherwise.
+func (e *dockerHostExecutor) ExecuteCommand(_ context.Context, cmd session.Command) (session.Event, error) {
+	outcome := OutcomeError
+	seedID := strings.TrimSpace(cmd.SeedSelector)
+	op := strings.TrimSpace(cmd.Operation)
+	switch seedID {
+	case "seed.host":
+		switch op {
+		case "status", "ports", "interfaces":
+			outcome = OutcomeSuccess
+		}
+	case "seed.docker":
+		switch op {
+		case "status", "ps", "run", "stop", "rm", "logs", "inspect":
+			outcome = OutcomeSuccess
+		}
+	}
+	return session.Event{
+		EventID:     fmt.Sprintf("evt.%s", cmd.CommandID),
+		CommandID:   cmd.CommandID,
+		IntentID:    cmd.IntentID,
+		GhostID:     e.ghostID,
+		SeedID:      seedID,
+		Outcome:     outcome,
+		TimestampMS: uint64(time.Now().UnixMilli()),
+	}, nil
+}
+
+func TestOrchestratorDockerHostCrossGhostIntent(t *testing.T) {
+	testlog.Start(t)
+
+	loop := NewOrchestrator()
+	for _, ghostID := range []string{"ghost.alpha", "ghost.beta"} {
+		if err := loop.RegisterExecutor(ghostID, &dockerHostExecutor{ghostID: ghostID}); err != nil {
+			t.Fatalf("register executor %s: %v", ghostID, err)
+		}
+	}
+
+	if err := loop.SubmitIssue(IssueEnv{
+		IntentID:    "intent.docker.host.cross.1",
+		Actor:       "user:dan",
+		TargetScope: "ghost:all",
+		Objective:   "inspect host inventory then list containers on each ghost",
+		Stages: []IssueStage{
+			{
+				ID:      "stage.host.status",
+				Barrier: true,
+				Commands: []IssueCommand{
+					{GhostID: "ghost.alpha", SeedSelector: "seed.host", Operation: "status", Blocking: true},
+					{GhostID: "ghost.beta", SeedSelector: "seed.host", Operation: "status", Blocking: true},
+				},
+			},
+			{
+				ID:      "stage.docker.ps",
+				Barrier: true,
+				Commands: []IssueCommand{
+					{GhostID: "ghost.alpha", SeedSelector: "seed.docker", Operation: "ps", Blocking: true},
+					{GhostID: "ghost.beta", SeedSelector: "seed.docker", Operation: "ps", Blocking: true},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("submit cross-ghost issue: %v", err)
+	}
+
+	expectedPhases := []string{
+		ReportPhaseInProgress,
+		ReportPhaseInProgress,
+		ReportPhaseInProgress,
+		ReportPhaseComplete,
+	}
+	for i, phase := range expectedPhases {
+		report, err := loop.ReconcileOnce(context.Background(), "intent.docker.host.cross.1")
+		if err != nil {
+			t.Fatalf("reconcile pass %d: %v", i+1, err)
+		}
+		if report.Phase != phase {
+			t.Fatalf("unexpected phase on pass %d: got=%q want=%q report=%+v", i+1, report.Phase, phase, report)
+		}
+		if i == len(expectedPhases)-1 && report.CompletionState != CompletionSatisfied {
+			t.Fatalf("expected satisfied terminal state, got %+v", report)
+		}
+	}
+
+	snap, ok := loop.SnapshotIntent("intent.docker.host.cross.1")
+	if !ok {
+		t.Fatalf("expected snapshot")
+	}
+	if snap.PendingCount != 0 {
+		t.Fatalf("expected no pending commands, got %d", snap.PendingCount)
+	}
+	if !snap.HasObserved {
+		t.Fatalf("expected observed state")
+	}
+	if len(snap.Observed.Events) != 4 {
+		t.Fatalf("expected 4 observed events, got %d", len(snap.Observed.Events))
+	}
+	deps := snap.Desired.Issue.SeedDependencies
+	if len(deps) != 2 || deps[0] != "seed.docker" || deps[1] != "seed.host" {
+		t.Fatalf("unexpected seed dependencies: %+v", deps)
+	}
+}
+
+func TestOrchestratorDockerFailureScenario(t *testing.T) {
+	testlog.Start(t)
+
+	loop := NewOrchestrator()
+	if err := loop.RegisterExecutor("ghost.alpha", &dockerHostExecutor{ghostID: "ghost.alpha"}); err != nil {
+		t.Fatalf("register executor: %v", err)
+	}
+
+	// First intent intentionally fails with an invalid seed.docker operation.
+	if err := loop.SubmitIssue(IssueEnv{
+		IntentID:    "intent.docker.fail.1",
+		Actor:       "user:dan",
+		TargetScope: "ghost:ghost.alpha",
+		Objective:   "validate failure path for invalid docker op",
+		Stages: []IssueStage{
+			{
+				ID:      "stage.fail",
+				Barrier: true,
+				Commands: []IssueCommand{
+					{GhostID: "ghost.alpha", SeedSelector: "seed.docker", Operation: "invalid_op", Blocking: true},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("submit failing issue: %v", err)
+	}
+
+	failReport, err := loop.ReconcileOnce(context.Background(), "intent.docker.fail.1")
+	if err != nil {
+		t.Fatalf("reconcile failing issue: %v", err)
+	}
+	if failReport.Phase != ReportPhaseComplete {
+		t.Fatalf("expected complete phase for failed command, got %+v", failReport)
+	}
+	if failReport.CompletionState != CompletionFailed {
+		t.Fatalf("expected failed completion state, got %+v", failReport)
+	}
+
+	failSnap, ok := loop.SnapshotIntent("intent.docker.fail.1")
+	if !ok {
+		t.Fatalf("expected failing intent snapshot")
+	}
+	if len(failSnap.Observed.Events) != 1 || failSnap.Observed.Events[0].Outcome != OutcomeError {
+		t.Fatalf("expected one error event for failing intent, got %+v", failSnap.Observed.Events)
+	}
+
+	// Corrective follow-up: valid docker operation succeeds on next intent.
+	if err := loop.SubmitIssue(IssueEnv{
+		IntentID:    "intent.docker.corrective.1",
+		Actor:       "user:dan",
+		TargetScope: "ghost:ghost.alpha",
+		Objective:   "correct invalid op and run valid docker ps",
+		Stages: []IssueStage{
+			{
+				ID:      "stage.corrective",
+				Barrier: true,
+				Commands: []IssueCommand{
+					{GhostID: "ghost.alpha", SeedSelector: "seed.docker", Operation: "ps", Blocking: true},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("submit corrective issue: %v", err)
+	}
+
+	okReport, err := loop.ReconcileOnce(context.Background(), "intent.docker.corrective.1")
+	if err != nil {
+		t.Fatalf("reconcile corrective issue: %v", err)
+	}
+	if okReport.Phase != ReportPhaseComplete || okReport.CompletionState != CompletionSatisfied {
+		t.Fatalf("expected satisfied corrective completion, got %+v", okReport)
+	}
+}
+
 func TestOrchestratorControlLoopE2EStoreAndCopyToAllSeedFSGhosts(t *testing.T) {
 	testlog.Start(t)
 
