@@ -4,13 +4,17 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"time"
 
 	"github.com/danmuck/edgectl/internal/ghost"
+	"github.com/danmuck/edgectl/internal/protocol/frame"
+	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/seeds"
 )
 
@@ -61,11 +65,63 @@ func (c *RemoteGhostAdmin) ListSeeds() ([]seeds.SeedMetadata, error) {
 }
 
 func (c *RemoteGhostAdmin) Execute(command GhostAdminCommand) (ghost.ExecutionState, ghost.EventEnv, error) {
-	var out executionResponse
-	if err := c.call(controlRequest{Action: "execute", Command: command}, &out); err != nil {
+	intentID := strings.TrimSpace(command.IntentID)
+	if intentID == "" {
+		intentID = fmt.Sprintf("intent.clienttm.%d", time.Now().UnixMilli())
+	}
+	commandID := fmt.Sprintf("cmd.clienttm.%d", time.Now().UnixNano())
+
+	ghostID := "ghost.local"
+	if status, err := c.Status(); err == nil {
+		if id := strings.TrimSpace(status.GhostID); id != "" {
+			ghostID = id
+		}
+	}
+
+	commandFrame, err := session.EncodeCommandFrame(1, session.Command{
+		CommandID:    commandID,
+		IntentID:     intentID,
+		GhostID:      ghostID,
+		SeedSelector: strings.TrimSpace(command.SeedSelector),
+		Operation:    strings.TrimSpace(command.Operation),
+		Args:         cloneArgs(command.Args),
+	})
+	if err != nil {
 		return ghost.ExecutionState{}, ghost.EventEnv{}, err
 	}
-	return out.Execution, out.Event, nil
+
+	var out executeEnvelopeResponse
+	if err := c.call(controlRequest{Action: "execute_envelope", CommandFrame: commandFrame}, &out); err != nil {
+		return ghost.ExecutionState{}, ghost.EventEnv{}, err
+	}
+	fr, err := frame.ReadFrame(bytes.NewReader(out.EventFrame), frame.DefaultLimits())
+	if err != nil {
+		return ghost.ExecutionState{}, ghost.EventEnv{}, err
+	}
+	event, err := session.DecodeEventFrame(fr)
+	if err != nil {
+		return ghost.ExecutionState{}, ghost.EventEnv{}, err
+	}
+
+	execState, found, err := c.ExecutionByCommandID(strings.TrimSpace(event.CommandID))
+	if err != nil {
+		return ghost.ExecutionState{}, ghost.EventEnv{}, err
+	}
+	if !found {
+		return ghost.ExecutionState{}, ghost.EventEnv{}, fmt.Errorf(
+			"ghostctl: execution state not found for command_id=%q",
+			strings.TrimSpace(event.CommandID),
+		)
+	}
+	return execState, ghost.EventEnv{
+		EventID:     event.EventID,
+		CommandID:   event.CommandID,
+		IntentID:    event.IntentID,
+		GhostID:     event.GhostID,
+		SeedID:      event.SeedID,
+		Outcome:     event.Outcome,
+		TimestampMS: event.TimestampMS,
+	}, nil
 }
 
 func (c *RemoteGhostAdmin) ExecutionByCommandID(commandID string) (ghost.ExecutionState, bool, error) {
@@ -180,4 +236,15 @@ func (c *RemoteGhostAdmin) Close() error {
 	c.conn = nil
 	c.r = nil
 	return err
+}
+
+func cloneArgs(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }

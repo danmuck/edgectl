@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -15,6 +17,11 @@ import (
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/seeds"
 	logs "github.com/danmuck/smplog"
+)
+
+var (
+	ErrAdminFrameAuthRequired = errors.New("ghost.admin: command_frame auth required")
+	ErrAdminFrameAuthInvalid  = errors.New("ghost.admin: command_frame auth invalid")
 )
 
 // AdminCommand is the external admin execution request payload.
@@ -51,7 +58,6 @@ type controlRequest struct {
 	Action       string            `json:"action"`
 	Limit        int               `json:"limit,omitempty"`
 	CommandID    string            `json:"command_id,omitempty"`
-	Command      AdminCommand      `json:"command,omitempty"`
 	CommandFrame []byte            `json:"command_frame,omitempty"`
 	Spawn        SpawnGhostRequest `json:"spawn,omitempty"`
 	MirageID     string            `json:"mirage_id,omitempty"`
@@ -225,18 +231,6 @@ func (s *Service) handleControlRequest(req controlRequest) controlResponse {
 		return controlResponse{OK: true, Data: s.server.Status()}
 	case "list_seeds":
 		return controlResponse{OK: true, Data: s.ListSeeds()}
-	case "execute":
-		state, event, err := s.ExecuteAdminCommand(req.Command)
-		if err != nil {
-			return controlResponse{OK: false, Error: err.Error()}
-		}
-		return controlResponse{
-			OK: true,
-			Data: map[string]any{
-				"execution": state,
-				"event":     event,
-			},
-		}
 	case "execute_envelope":
 		out, err := s.executeAdminCommandEnvelope(req.CommandFrame)
 		if err != nil {
@@ -283,6 +277,13 @@ func (s *Service) executeAdminCommandEnvelope(commandFrame []byte) (executeEnvel
 	if err != nil {
 		return executeEnvelopeResponse{}, err
 	}
+	validator := s.adminFrameAuthValidator
+	if validator == nil {
+		validator = defaultCommandFrameAuthValidator(strings.TrimSpace(s.cfg.AdminFrameAuthToken))
+	}
+	if err := validator(fr.Auth); err != nil {
+		return executeEnvelopeResponse{}, err
+	}
 	cmd, err := session.DecodeCommandFrame(fr)
 	if err != nil {
 		return executeEnvelopeResponse{}, err
@@ -310,6 +311,23 @@ func (s *Service) executeAdminCommandEnvelope(commandFrame []byte) (executeEnvel
 		return executeEnvelopeResponse{}, err
 	}
 	return executeEnvelopeResponse{EventFrame: eventFrame}, nil
+}
+
+func defaultCommandFrameAuthValidator(token string) CommandFrameAuthValidator {
+	expected := strings.TrimSpace(token)
+	if expected == "" {
+		return func(_ []byte) error { return nil }
+	}
+	expectedBytes := []byte(expected)
+	return func(auth []byte) error {
+		if len(auth) == 0 {
+			return ErrAdminFrameAuthRequired
+		}
+		if subtle.ConstantTimeCompare(auth, expectedBytes) != 1 {
+			return ErrAdminFrameAuthInvalid
+		}
+		return nil
+	}
 }
 
 func writeControlResponse(w io.Writer, resp controlResponse) error {

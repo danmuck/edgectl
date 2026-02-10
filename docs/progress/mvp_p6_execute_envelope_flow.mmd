@@ -1,0 +1,19 @@
+sequenceDiagram
+    participant U as User Boundary (client-tm)
+    participant M as Mirage
+    participant G as Ghost Admin Boundary
+    participant S as Seed Adapter
+
+    U->>M: issue(intent)
+    M->>G: execute_envelope(command_frame{command, optional_auth})
+    G->>G: decode frame + validate optional auth block
+    G->>S: seed.execute(operation,args)
+    S-->>G: seed.result(status,stdout,stderr,exit_code)
+    G-->>M: event_frame(event)
+    M-->>U: report(intent phase/completion)
+
+    alt auth missing or invalid when token required
+        G-->>M: error(invalid command_frame auth)
+        M-->>U: report(completion=failed)
+    end
+

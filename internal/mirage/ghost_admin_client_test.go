@@ -194,6 +194,84 @@ func TestGhostAdminCommandExecutor(t *testing.T) {
 	<-done
 }
 
+func TestGhostControlClientExecuteAdminCommandWithAuthToken(t *testing.T) {
+	testlog.Start(t)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		reader := bufio.NewReader(conn)
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			return
+		}
+		var req ghostControlRequest
+		if err := json.Unmarshal(line, &req); err != nil {
+			return
+		}
+		if req.Action != executeEnvelopeAction {
+			return
+		}
+
+		fr, err := frame.ReadFrame(bytes.NewReader(req.CommandFrame), frame.DefaultLimits())
+		if err != nil {
+			return
+		}
+		if string(fr.Auth) != "phase6-token" {
+			return
+		}
+		cmd, err := session.DecodeCommandFrame(fr)
+		if err != nil {
+			return
+		}
+		eventFrame, err := session.EncodeEventFrame(fr.Header.MessageID, session.Event{
+			EventID:     "evt." + cmd.CommandID,
+			CommandID:   cmd.CommandID,
+			IntentID:    cmd.IntentID,
+			GhostID:     cmd.GhostID,
+			SeedID:      cmd.SeedSelector,
+			Outcome:     "success",
+			TimestampMS: uint64(time.Now().UnixMilli()),
+		})
+		if err != nil {
+			return
+		}
+		resp := ghostControlResponse{
+			OK:   true,
+			Data: mustJSON(t, ghostExecuteEnvelopeResponse{EventFrame: eventFrame}),
+		}
+		payload, _ := json.Marshal(resp)
+		payload = append(payload, '\n')
+		_, _ = conn.Write(payload)
+	}()
+
+	client := NewGhostControlClient(ln.Addr().String()).WithCommandFrameAuthToken("phase6-token")
+	event, err := client.ExecuteAdminCommand(context.Background(), ghostAdminCommand{
+		CommandID:    "cmd.intent.auth.1",
+		IntentID:     "intent.auth.1",
+		SeedSelector: "seed.flow",
+		Operation:    "status",
+	})
+	if err != nil {
+		t.Fatalf("execute command: %v", err)
+	}
+	if event.CommandID != "cmd.intent.auth.1" || event.Outcome != "success" {
+		t.Fatalf("unexpected event: %+v", event)
+	}
+	<-done
+}
+
 func mustJSON(t *testing.T, v any) json.RawMessage {
 	t.Helper()
 	out, err := json.Marshal(v)

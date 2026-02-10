@@ -72,6 +72,11 @@ func (r Report) Validate() error {
 
 // Session encoder for command envelope into framed protocol message bytes.
 func EncodeCommandFrame(messageID uint64, command Command) ([]byte, error) {
+	return EncodeCommandFrameWithAuth(messageID, command, nil)
+}
+
+// EncodeCommandFrameWithAuth encodes one command envelope with an optional auth block.
+func EncodeCommandFrameWithAuth(messageID uint64, command Command, auth []byte) ([]byte, error) {
 	if err := command.Validate(); err != nil {
 		return nil, err
 	}
@@ -89,7 +94,7 @@ func EncodeCommandFrame(messageID uint64, command Command) ([]byte, error) {
 		}
 		fields = append(fields, tlv.Field{ID: schema.FieldArgs, Type: tlv.TypeBytes, Value: argsPayload})
 	}
-	return encodeFrameForMessage(messageID, schema.MsgCommand, 0, fields)
+	return encodeFrameForMessageWithAuth(messageID, schema.MsgCommand, 0, auth, fields)
 }
 
 // Session decoder for one command frame payload with schema validation.

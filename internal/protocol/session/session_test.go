@@ -135,6 +135,35 @@ func TestEncodeDecodeEventFrame(t *testing.T) {
 	}
 }
 
+func TestEncodeDecodeCommandFrameWithAuth(t *testing.T) {
+	testlog.Start(t)
+	payload, err := EncodeCommandFrameWithAuth(77, Command{
+		CommandID:    "cmd.77",
+		IntentID:     "intent.77",
+		GhostID:      "ghost.alpha",
+		SeedSelector: "seed.flow",
+		Operation:    "status",
+	}, []byte("token-77"))
+	if err != nil {
+		t.Fatalf("encode command frame: %v", err)
+	}
+
+	fr, err := frame.ReadFrame(bytes.NewReader(payload), frame.DefaultLimits())
+	if err != nil {
+		t.Fatalf("read frame: %v", err)
+	}
+	if string(fr.Auth) != "token-77" {
+		t.Fatalf("unexpected auth block: %q", string(fr.Auth))
+	}
+	got, err := DecodeCommandFrame(fr)
+	if err != nil {
+		t.Fatalf("decode command: %v", err)
+	}
+	if got.CommandID != "cmd.77" || got.IntentID != "intent.77" || got.GhostID != "ghost.alpha" {
+		t.Fatalf("unexpected command: %+v", got)
+	}
+}
+
 func TestEncodeDecodeEventAckFrame(t *testing.T) {
 	testlog.Start(t)
 	payload, err := EncodeEventAckFrame(99, EventAck{

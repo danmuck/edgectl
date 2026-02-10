@@ -26,34 +26,36 @@ import (
 
 // Mirage session endpoint configuration.
 type ServiceConfig struct {
-	ListenAddr             string
-	RequireIdentityBinding bool
-	MirageID               string
-	AdminListenAddr        string
-	LocalGhostID           string
-	LocalGhostAdminAddr    string
-	PreloadGhostAdmins     []GhostAdminTarget
-	BuildlogPersistEnabled bool
-	BuildlogSeedSelector   string
-	BuildlogKeyPrefix      string
-	RootGhostAdminAddr     string
-	Session                session.Config
+	ListenAddr               string
+	RequireIdentityBinding   bool
+	MirageID                 string
+	AdminListenAddr          string
+	LocalGhostID             string
+	LocalGhostAdminAddr      string
+	GhostAdminFrameAuthToken string
+	PreloadGhostAdmins       []GhostAdminTarget
+	BuildlogPersistEnabled   bool
+	BuildlogSeedSelector     string
+	BuildlogKeyPrefix        string
+	RootGhostAdminAddr       string
+	Session                  session.Config
 }
 
 // Mirage service defaults for session endpoint configuration.
 func DefaultServiceConfig() ServiceConfig {
 	return ServiceConfig{
-		ListenAddr:             ":9000",
-		RequireIdentityBinding: true,
-		MirageID:               "mirage.local",
-		AdminListenAddr:        "",
-		LocalGhostID:           "ghost.local",
-		LocalGhostAdminAddr:    "127.0.0.1:7010",
-		BuildlogPersistEnabled: false,
-		BuildlogSeedSelector:   "seed.fs",
-		BuildlogKeyPrefix:      "local/buildlogs/",
-		RootGhostAdminAddr:     "",
-		Session:                session.DefaultConfig(),
+		ListenAddr:               ":9000",
+		RequireIdentityBinding:   true,
+		MirageID:                 "mirage.local",
+		AdminListenAddr:          "",
+		LocalGhostID:             "ghost.local",
+		LocalGhostAdminAddr:      "127.0.0.1:7010",
+		GhostAdminFrameAuthToken: "",
+		BuildlogPersistEnabled:   false,
+		BuildlogSeedSelector:     "seed.fs",
+		BuildlogKeyPrefix:        "local/buildlogs/",
+		RootGhostAdminAddr:       "",
+		Session:                  session.DefaultConfig(),
 	}
 }
 
@@ -134,7 +136,7 @@ func NewServiceWithConfig(cfg ServiceConfig) *Service {
 		localAdminAddr = strings.TrimSpace(cfg.RootGhostAdminAddr)
 	}
 	if localAdminAddr != "" {
-		svc.controlClient = NewGhostControlClient(localAdminAddr)
+		svc.controlClient = svc.newGhostControlClient(localAdminAddr)
 		svc.server.SetGhostSpawner(NewGhostAdminSpawner(localAdminAddr))
 		localGhostID := strings.TrimSpace(cfg.LocalGhostID)
 		if localGhostID != "" {
@@ -266,7 +268,7 @@ func (s *Service) SnapshotConnectedGhosts() []RegisteredGhost {
 	bound := s.snapshotGhostAdmins()
 	now := time.Now()
 	for ghostID, adminAddr := range bound {
-		client := NewGhostControlClient(adminAddr)
+		client := s.newGhostControlClient(adminAddr)
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		status, err := client.Status(ctx)
 		cancel()
@@ -401,7 +403,7 @@ func (s *Service) bindGhostToMirage(ghostID string, adminAddr string) error {
 	if id == "" || addr == "" {
 		return fmt.Errorf("mirage: ghost bind requires ghost_id and admin_addr")
 	}
-	client := NewGhostControlClient(addr)
+	client := s.newGhostControlClient(addr)
 	var lastErr error
 	for attempt := 1; attempt <= 5; attempt++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -654,6 +656,10 @@ func peerIdentityFromCert(cert *x509.Certificate) string {
 		}
 	}
 	return ""
+}
+
+func (s *Service) newGhostControlClient(adminAddr string) *GhostControlClient {
+	return NewGhostControlClient(adminAddr).WithCommandFrameAuthToken(strings.TrimSpace(s.cfg.GhostAdminFrameAuthToken))
 }
 
 // Mirage TLS server-config builder for listener transport enforcement.

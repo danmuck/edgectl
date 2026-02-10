@@ -46,11 +46,11 @@ type GhostAdminCommand struct {
 
 // controlRequest is one line-delimited control request payload.
 type controlRequest struct {
-	Action    string                  `json:"action"`
-	Limit     int                     `json:"limit,omitempty"`
-	CommandID string                  `json:"command_id,omitempty"`
-	Command   GhostAdminCommand       `json:"command,omitempty"`
-	Spawn     ghost.SpawnGhostRequest `json:"spawn,omitempty"`
+	Action       string                  `json:"action"`
+	Limit        int                     `json:"limit,omitempty"`
+	CommandID    string                  `json:"command_id,omitempty"`
+	CommandFrame []byte                  `json:"command_frame,omitempty"`
+	Spawn        ghost.SpawnGhostRequest `json:"spawn,omitempty"`
 }
 
 // controlResponse is one line-delimited control response payload.
@@ -171,10 +171,9 @@ type mirageReconcileAllResponse struct {
 	Reports []session.Report `json:"reports"`
 }
 
-// Holds execute action output.
-type executionResponse struct {
-	Execution ghost.ExecutionState `json:"execution"`
-	Event     ghost.EventEnv       `json:"event"`
+// Holds execute_envelope action output.
+type executeEnvelopeResponse struct {
+	EventFrame []byte `json:"event_frame"`
 }
 
 // Holds execution lookup output.

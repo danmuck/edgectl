@@ -234,7 +234,7 @@ func (s *Service) attachGhostAdmin(expectedGhostID string, adminAddr string) (Ad
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	client := NewGhostControlClient(addr)
+	client := s.newGhostControlClient(addr)
 	status, err := client.Status(ctx)
 	if err != nil {
 		return AdminAttachGhostResponse{}, err
