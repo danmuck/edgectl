@@ -19,6 +19,11 @@
 - [x] Fix progress-bar redraw behavior in `cmd/testctl` to fully clear trailing characters when successive status text shrinks.
 - [x] Expand `cmd/testctl` protocol-output readability by mapping `message_type` ids to descriptive envelope labels and add unit tests for the formatter.
 
+## 2026-02-10 Pass
+
+- [x] Trace seed capability ownership path (`internal/seeds` -> `internal/ghost` -> `internal/mirage` -> `cmd/client-tm`) and document command-template catalog coupling for refactor planning.
+- [x] Add initial implementation tracker doc `docs/progress/seed-coupling.md` with architecture/message-flow artifacts, staged checklist, and acceptance gates.
+
 ## Guardrails
 
 - No changes to canonical architecture contracts or models.
