@@ -11,6 +11,13 @@
 - [x] Deduplicate TLV frame encoding flow in `internal/protocol/session` with one shared helper (`wire_encode.go`).
 - [x] Validate compatibility with protocol contracts in `docs/architecture/definitions/protocol.toml` and `docs/architecture/definitions/tlv.toml`.
 - [x] Run full repository tests (`go test ./...`).
+- [x] Align new test debug output to repository logging convention (`smplog`) for protocol/session/frame and orchestration test additions.
+- [x] Add demonstration-focused high-level test module at `testutil/demo` for protocol message flow, orchestrator control flow, and live Mirage↔Ghost e2e flow; use `logs.Debug` for demo output.
+- [x] Update `cmd/testctl` interactive UX so `q` is universal back/exit control, remove explicit Back/Exit menu options, and default pacing to paused mode.
+- [x] Add visible progress bars in `cmd/testctl` during background pre-run discovery (test collection/inventory build) so users can track setup progress before execution.
+- [x] Restore log-level coloring in `cmd/testctl` output rendering for rewritten lines (`DEBUG` green, `DEV` magenta) so display matches expected smplog semantics.
+- [x] Fix progress-bar redraw behavior in `cmd/testctl` to fully clear trailing characters when successive status text shrinks.
+- [x] Expand `cmd/testctl` protocol-output readability by mapping `message_type` ids to descriptive envelope labels and add unit tests for the formatter.
 
 ## Guardrails
 

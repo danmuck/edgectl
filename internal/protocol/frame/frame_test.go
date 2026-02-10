@@ -7,6 +7,7 @@ import (
 
 	"github.com/danmuck/edgectl/internal/protocol/tlv"
 	"github.com/danmuck/edgectl/internal/testutil/testlog"
+	logs "github.com/danmuck/smplog"
 )
 
 func TestReadWriteFrameRoundTrip(t *testing.T) {
@@ -120,5 +121,73 @@ func TestDecodeHeaderRejectsUnsupportedFlags(t *testing.T) {
 	_, err := DecodeHeader(EncodeHeader(h))
 	if !errors.Is(err, ErrUnsupportedFlags) {
 		t.Fatalf("expected ErrUnsupportedFlags, got %v", err)
+	}
+}
+
+// TestWriteFrameRejectsAuthBytesBeyondLimits verifies auth byte upper-bound enforcement.
+func TestWriteFrameRejectsAuthBytesBeyondLimits(t *testing.T) {
+	testlog.Start(t)
+
+	limits := Limits{
+		MaxAuthBytes:    2,
+		MaxPayloadBytes: 64,
+	}
+	in := Frame{
+		Header: Header{Magic: ProtocolMagic, Version: ProtocolVersion, MessageID: 44, MessageType: 2},
+		Auth:   []byte("abc"),
+	}
+	logs.Infof("test writing frame message_id=%d auth_len=%d limits=%+v", in.Header.MessageID, len(in.Auth), limits)
+
+	var buf bytes.Buffer
+	err := WriteFrame(&buf, in, limits)
+	if !errors.Is(err, ErrAuthTooLarge) {
+		t.Fatalf("expected ErrAuthTooLarge, got %v", err)
+	}
+}
+
+// TestWriteFrameRejectsPayloadBeyondLimits verifies payload byte upper-bound enforcement.
+func TestWriteFrameRejectsPayloadBytesBeyondLimits(t *testing.T) {
+	testlog.Start(t)
+
+	limits := Limits{
+		MaxAuthBytes:    64,
+		MaxPayloadBytes: 2,
+	}
+	in := Frame{
+		Header:  Header{Magic: ProtocolMagic, Version: ProtocolVersion, MessageID: 45, MessageType: 2},
+		Payload: []byte("abc"),
+	}
+	logs.Infof("test writing frame message_id=%d payload_len=%d limits=%+v", in.Header.MessageID, len(in.Payload), limits)
+
+	var buf bytes.Buffer
+	err := WriteFrame(&buf, in, limits)
+	if !errors.Is(err, ErrPayloadTooLarge) {
+		t.Fatalf("expected ErrPayloadTooLarge, got %v", err)
+	}
+}
+
+// TestWriteFrameClearsAuthFlagWhenAuthEmpty verifies flag normalization for empty auth blocks.
+func TestWriteFrameClearsAuthFlagWhenAuthEmpty(t *testing.T) {
+	testlog.Start(t)
+
+	in := Frame{
+		Header:  Header{Magic: ProtocolMagic, Version: ProtocolVersion, MessageID: 46, MessageType: 2, Flags: FlagHasAuth},
+		Payload: []byte("ok"),
+	}
+	var buf bytes.Buffer
+	if err := WriteFrame(&buf, in, DefaultLimits()); err != nil {
+		t.Fatalf("write frame: %v", err)
+	}
+	out, err := ReadFrame(&buf, DefaultLimits())
+	if err != nil {
+		t.Fatalf("read frame: %v", err)
+	}
+	logs.Infof("test round trip header flags=0x%08X auth_len=%d", out.Header.Flags, len(out.Auth))
+
+	if out.Header.Flags&FlagHasAuth != 0 {
+		t.Fatalf("expected auth flag cleared, got flags=0x%08X", out.Header.Flags)
+	}
+	if len(out.Auth) != 0 {
+		t.Fatalf("expected empty auth bytes, got=%d", len(out.Auth))
 	}
 }

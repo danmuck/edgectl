@@ -14,6 +14,7 @@ import (
 	seedfs "github.com/danmuck/edgectl/internal/seeds/fs"
 	seedkv "github.com/danmuck/edgectl/internal/seeds/kv"
 	"github.com/danmuck/edgectl/internal/testutil/testlog"
+	logs "github.com/danmuck/smplog"
 )
 
 type fakeExecutor struct {
@@ -81,6 +82,77 @@ func TestOrchestratorMultiCommandProgressAndComplete(t *testing.T) {
 	}
 	if repB.CompletionState != CompletionSatisfied {
 		t.Fatalf("expected satisfied completion, got %q", repB.CompletionState)
+	}
+}
+
+// TestOrchestratorControlFlowDemoWithDebugTrace demonstrates the common issue->reconcile->event/report flow.
+func TestOrchestratorControlFlowDemoWithDebugTrace(t *testing.T) {
+	testlog.Start(t)
+
+	loop := NewOrchestrator()
+	exec := &fakeExecutor{}
+	if err := loop.RegisterExecutor("ghost.alpha", exec); err != nil {
+		t.Fatalf("register executor: %v", err)
+	}
+
+	issue := IssueEnv{
+		IntentID:    "intent.demo.flow.1",
+		Actor:       "user:dan",
+		TargetScope: "ghost:ghost.alpha",
+		Objective:   "demonstrate reconcile progression",
+		Stages: []IssueStage{
+			{
+				ID:      "stage.1",
+				Barrier: true,
+				Commands: []IssueCommand{
+					{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status"},
+					{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status"},
+				},
+			},
+			{
+				ID:      "stage.2",
+				Barrier: true,
+				Commands: []IssueCommand{
+					{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status"},
+				},
+			},
+		},
+	}
+	if err := loop.SubmitIssue(issue); err != nil {
+		t.Fatalf("submit issue: %v", err)
+	}
+	logs.Infof("test submitted issue intent_id=%s stages=%d", issue.IntentID, len(issue.Stages))
+
+	// Reconcile incrementally and log each observed report to show deterministic control-loop progression.
+	var final session.Report
+	for i := 1; i <= 5; i++ {
+		report, err := loop.ReconcileOnce(context.Background(), issue.IntentID)
+		if err != nil {
+			t.Fatalf("reconcile cycle %d: %v", i, err)
+		}
+		logs.Infof(
+			"cycle=%d phase=%s completion=%s summary=%q command_id=%s event_id=%s",
+			i,
+			report.Phase,
+			report.CompletionState,
+			report.Summary,
+			report.CommandID,
+			report.EventID,
+		)
+		final = report
+		if report.Phase == ReportPhaseComplete {
+			break
+		}
+	}
+
+	if final.Phase != ReportPhaseComplete {
+		t.Fatalf("expected complete phase, got=%s", final.Phase)
+	}
+	if final.CompletionState != CompletionSatisfied {
+		t.Fatalf("expected satisfied completion, got=%s", final.CompletionState)
+	}
+	if exec.count != 3 {
+		t.Fatalf("expected three command executions, got=%d", exec.count)
 	}
 }
 
