@@ -126,14 +126,14 @@ sequenceDiagram
 
 ## Implementation Stages
 
-- [ ] **Stage 1: Seed Contract Extension**
+- [x] **Stage 1: Seed Contract Extension**
   - [x] Define seed-level template descriptor types in `internal/seeds`.
   - [x] Extend seed interface to return template descriptors.
   - [x] Implement template descriptors for built-in seeds (`flow`, `mongod`, `fs`, `kv`, `docker`, `host`).
-- [ ] **Stage 2: Ghost Capability Publication**
-  - [ ] Add Ghost service/admin catalog read method exposing metadata+operations+templates.
-  - [ ] Add admin action for full catalog; preserve existing `list_seeds` action temporarily.
-  - [ ] Add unit tests for deterministic ordering and payload completeness.
+- [x] **Stage 2: Ghost Capability Publication**
+  - [x] Add Ghost service/admin catalog read method exposing metadata+operations+templates.
+  - [x] Add admin action for full catalog; preserve existing `list_seeds` action temporarily.
+  - [x] Add unit tests for deterministic ordering and payload completeness.
 - [ ] **Stage 3: Mirage Capability Aggregation**
   - [ ] Add Mirage-side catalog snapshot structure aligned to Ghost output.
   - [ ] Add/extend admin action to return aggregated seed template capabilities.

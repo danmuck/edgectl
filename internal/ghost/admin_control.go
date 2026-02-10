@@ -132,6 +132,11 @@ func (s *Service) ListSeeds() []seeds.SeedMetadata {
 	return s.server.SeedMetadata()
 }
 
+// SeedCatalog returns full seed capabilities including operations and command templates.
+func (s *Service) SeedCatalog() []SeedCapability {
+	return s.server.SeedCatalog()
+}
+
 // ExecutionByCommandID proxies execution lookup by command id.
 func (s *Service) ExecutionByCommandID(commandID string) (ExecutionState, bool) {
 	return s.server.ExecutionByCommandID(commandID)
@@ -231,6 +236,8 @@ func (s *Service) handleControlRequest(req controlRequest) controlResponse {
 		return controlResponse{OK: true, Data: s.server.Status()}
 	case "list_seeds":
 		return controlResponse{OK: true, Data: s.ListSeeds()}
+	case "list_seed_catalog":
+		return controlResponse{OK: true, Data: s.SeedCatalog()}
 	case "execute_envelope":
 		out, err := s.executeAdminCommandEnvelope(req.CommandFrame)
 		if err != nil {

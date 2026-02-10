@@ -150,3 +150,42 @@ func TestHandleControlRequestExecuteEnvelopeAuthAccepted(t *testing.T) {
 		t.Fatalf("execute_envelope with auth failed: %s", resp.Error)
 	}
 }
+
+func TestHandleControlRequestListSeedCatalog(t *testing.T) {
+	testlog.Start(t)
+
+	svc := NewServiceWithConfig(DefaultServiceConfig())
+	svc.server = newRadiatingServer(t, "ghost.alpha")
+
+	resp := svc.handleControlRequest(controlRequest{Action: "list_seed_catalog"})
+	if !resp.OK {
+		t.Fatalf("list_seed_catalog failed: %s", resp.Error)
+	}
+
+	raw, err := json.Marshal(resp.Data)
+	if err != nil {
+		t.Fatalf("marshal seed catalog response: %v", err)
+	}
+	var catalog []SeedCapability
+	if err := json.Unmarshal(raw, &catalog); err != nil {
+		t.Fatalf("decode seed catalog response: %v", err)
+	}
+	if len(catalog) != 1 {
+		t.Fatalf("unexpected seed catalog size: %d", len(catalog))
+	}
+	entry := catalog[0]
+	if entry.Metadata.ID != "seed.flow" {
+		t.Fatalf("unexpected seed id: %q", entry.Metadata.ID)
+	}
+	if len(entry.Operations) == 0 {
+		t.Fatalf("expected operations in seed capability")
+	}
+	if len(entry.CommandCatalog) == 0 {
+		t.Fatalf("expected command catalog entries in seed capability")
+	}
+	for i := range entry.CommandCatalog {
+		if entry.CommandCatalog[i].SeedSelector != entry.Metadata.ID {
+			t.Fatalf("template seed selector mismatch: %+v", entry.CommandCatalog[i])
+		}
+	}
+}
