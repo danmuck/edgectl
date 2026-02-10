@@ -26,14 +26,14 @@ func (r *fakeRunner) Run(name string, args ...string) ([]byte, []byte, int32, er
 }
 
 type fakeResolver struct {
-	hostname   string
+	hostname    string
 	hostnameErr error
-	ifaces     []net.Interface
-	ifacesErr  error
-	addrs      map[string][]net.Addr
+	ifaces      []net.Interface
+	ifacesErr   error
+	addrs       map[string][]net.Addr
 }
 
-func (r *fakeResolver) Hostname() (string, error) { return r.hostname, r.hostnameErr }
+func (r *fakeResolver) Hostname() (string, error)            { return r.hostname, r.hostnameErr }
 func (r *fakeResolver) Interfaces() ([]net.Interface, error) { return r.ifaces, r.ifacesErr }
 func (r *fakeResolver) InterfaceAddrs(iface net.Interface) ([]net.Addr, error) {
 	addrs, ok := r.addrs[iface.Name]
@@ -148,5 +148,17 @@ func TestSeedUnknownAction(t *testing.T) {
 	}
 	if res.Status != "error" {
 		t.Fatalf("expected error status: %+v", res)
+	}
+}
+
+func TestSeedCommandCatalog(t *testing.T) {
+	testlog.Start(t)
+	seed := NewSeedWithDeps(&fakeRunner{}, &fakeResolver{hostname: "test"})
+	catalog := seed.CommandCatalog()
+	if len(catalog) != 3 {
+		t.Fatalf("unexpected catalog size: %d", len(catalog))
+	}
+	if catalog[0].SeedSelector != "seed.host" || catalog[0].Operation != "status" {
+		t.Fatalf("unexpected first catalog entry: %+v", catalog[0])
 	}
 }

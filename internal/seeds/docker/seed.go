@@ -56,6 +56,86 @@ func (s Seed) Operations() []seeds.OperationSpec {
 	}
 }
 
+// CommandCatalog returns guided operator-facing command templates for this seed.
+func (s Seed) CommandCatalog() []seeds.CommandTemplate {
+	seedID := s.Metadata().ID
+	return []seeds.CommandTemplate{
+		{
+			ID:           seedID + ".status",
+			Label:        "Docker Status",
+			Description:  "Check docker daemon health.",
+			SeedSelector: seedID,
+			Operation:    "status",
+		},
+		{
+			ID:           seedID + ".ps",
+			Label:        "Docker PS",
+			Description:  "List all containers.",
+			SeedSelector: seedID,
+			Operation:    "ps",
+			Args: []seeds.CommandArgSpec{
+				{Key: "flags", Prompt: "extra flags (optional)", Required: false},
+			},
+		},
+		{
+			ID:              seedID + ".run",
+			Label:           "Docker Run",
+			Description:     "Run a new container in detached mode.",
+			SeedSelector:    seedID,
+			Operation:       "run",
+			DefaultBlocking: true,
+			Args: []seeds.CommandArgSpec{
+				{Key: "image", Prompt: "image name", Required: true},
+				{Key: "container", Prompt: "container name (optional)", Required: false},
+				{Key: "flags", Prompt: "extra flags (optional, e.g. -p 8080:80)", Required: false},
+			},
+		},
+		{
+			ID:              seedID + ".stop",
+			Label:           "Docker Stop",
+			Description:     "Stop a running container.",
+			SeedSelector:    seedID,
+			Operation:       "stop",
+			DefaultBlocking: true,
+			Args: []seeds.CommandArgSpec{
+				{Key: "container", Prompt: "container name or id", Required: true},
+			},
+		},
+		{
+			ID:              seedID + ".rm",
+			Label:           "Docker Remove",
+			Description:     "Remove a container.",
+			SeedSelector:    seedID,
+			Operation:       "rm",
+			DefaultBlocking: true,
+			Args: []seeds.CommandArgSpec{
+				{Key: "container", Prompt: "container name or id", Required: true},
+			},
+		},
+		{
+			ID:           seedID + ".logs",
+			Label:        "Docker Logs",
+			Description:  "Fetch container logs.",
+			SeedSelector: seedID,
+			Operation:    "logs",
+			Args: []seeds.CommandArgSpec{
+				{Key: "container", Prompt: "container name or id", Required: true},
+				{Key: "flags", Prompt: "extra flags (optional, e.g. --tail 50)", Required: false},
+			},
+		},
+		{
+			ID:           seedID + ".inspect",
+			Label:        "Docker Inspect",
+			Description:  "Inspect a container.",
+			SeedSelector: seedID,
+			Operation:    "inspect",
+			Args: []seeds.CommandArgSpec{
+				{Key: "container", Prompt: "container name or id", Required: true},
+			},
+		},
+	}
+}
+
 // Execute dispatches docker operations to CLI commands.
 func (s Seed) Execute(action string, args map[string]string) (seeds.SeedResult, error) {
 	act := strings.TrimSpace(action)

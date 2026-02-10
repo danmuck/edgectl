@@ -46,6 +46,58 @@ func (s *Seed) Operations() []seeds.OperationSpec {
 	}
 }
 
+// CommandCatalog returns guided operator-facing command templates for this seed.
+func (s *Seed) CommandCatalog() []seeds.CommandTemplate {
+	seedID := s.Metadata().ID
+	return []seeds.CommandTemplate{
+		{
+			ID:           seedID + ".put",
+			Label:        "KV Put",
+			Description:  "Upsert key/value in seed.kv.",
+			SeedSelector: seedID,
+			Operation:    "put",
+			Args: []seeds.CommandArgSpec{
+				{Key: "key", Prompt: "key", Required: true},
+				{Key: "value", Prompt: "value", Required: true},
+			},
+			DefaultBlocking: true,
+		},
+		{
+			ID:           seedID + ".get",
+			Label:        "KV Get",
+			Description:  "Read value by key from seed.kv.",
+			SeedSelector: seedID,
+			Operation:    "get",
+			Args: []seeds.CommandArgSpec{
+				{Key: "key", Prompt: "key", Required: true},
+			},
+			DefaultBlocking: true,
+		},
+		{
+			ID:           seedID + ".list",
+			Label:        "KV List",
+			Description:  "List keys from seed.kv.",
+			SeedSelector: seedID,
+			Operation:    "list",
+			Args: []seeds.CommandArgSpec{
+				{Key: "prefix", Prompt: "key prefix (optional)", Required: false},
+			},
+			DefaultBlocking: true,
+		},
+		{
+			ID:           seedID + ".delete",
+			Label:        "KV Delete",
+			Description:  "Delete key from seed.kv.",
+			SeedSelector: seedID,
+			Operation:    "delete",
+			Args: []seeds.CommandArgSpec{
+				{Key: "key", Prompt: "key", Required: true},
+			},
+			DefaultBlocking: true,
+		},
+	}
+}
+
 // Execute applies one key-value operation.
 func (s *Seed) Execute(action string, args map[string]string) (seeds.SeedResult, error) {
 	switch strings.TrimSpace(action) {

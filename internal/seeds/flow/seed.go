@@ -40,6 +40,40 @@ func (s Seed) Operations() []seeds.OperationSpec {
 	}
 }
 
+// CommandCatalog returns guided operator-facing command templates for this seed.
+func (s Seed) CommandCatalog() []seeds.CommandTemplate {
+	seedID := s.Metadata().ID
+	return []seeds.CommandTemplate{
+		{
+			ID:           seedID + ".status",
+			Label:        "Flow Status",
+			Description:  "Read deterministic flow status.",
+			SeedSelector: seedID,
+			Operation:    "status",
+		},
+		{
+			ID:           seedID + ".step",
+			Label:        "Flow Step",
+			Description:  "Run deterministic flow step transition.",
+			SeedSelector: seedID,
+			Operation:    "step",
+			Args: []seeds.CommandArgSpec{
+				{Key: "name", Prompt: "step name (init|plan|apply)", Required: true},
+			},
+		},
+		{
+			ID:           seedID + ".echo",
+			Label:        "Flow Echo",
+			Description:  "Echo one key/value pair through seed.flow.",
+			SeedSelector: seedID,
+			Operation:    "echo",
+			Args: []seeds.CommandArgSpec{
+				{Key: "message", Prompt: "message", Required: true},
+			},
+		},
+	}
+}
+
 // Execute dispatches deterministic flow operations.
 func (s Seed) Execute(action string, args map[string]string) (seeds.SeedResult, error) {
 	logs.Debugf("seeds.flow.Seed.Execute action=%q args=%d", action, len(args))

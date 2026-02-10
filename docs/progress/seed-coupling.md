@@ -127,9 +127,9 @@ sequenceDiagram
 ## Implementation Stages
 
 - [ ] **Stage 1: Seed Contract Extension**
-  - [ ] Define seed-level template descriptor types in `internal/seeds`.
-  - [ ] Extend seed interface to return template descriptors.
-  - [ ] Implement template descriptors for built-in seeds (`flow`, `mongod`, `fs`, `kv`, `docker`, `host`).
+  - [x] Define seed-level template descriptor types in `internal/seeds`.
+  - [x] Extend seed interface to return template descriptors.
+  - [x] Implement template descriptors for built-in seeds (`flow`, `mongod`, `fs`, `kv`, `docker`, `host`).
 - [ ] **Stage 2: Ghost Capability Publication**
   - [ ] Add Ghost service/admin catalog read method exposing metadata+operations+templates.
   - [ ] Add admin action for full catalog; preserve existing `list_seeds` action temporarily.
@@ -152,14 +152,13 @@ sequenceDiagram
 
 - [ ] Client Ghost command wizard renders from seed-provided templates only.
 - [ ] No static command template catalog remains in `cmd/client-tm`.
-- [ ] Built-in seeds publish complete template descriptors with deterministic ordering.
+- [x] Built-in seeds publish complete template descriptors with deterministic ordering.
 - [ ] Mirage can return aggregated capability data sufficient for intent-template filtering.
 - [ ] Existing `issue -> command -> seed.execute -> seed.result -> event -> report` flow remains unchanged.
-- [ ] `go test ./...` passes.
+- [x] `go test ./...` passes.
 
 ## Code Reduction Targets
 
 - [ ] Remove static template catalog maintenance in `cmd/client-tm/cmd_ghost.go`.
 - [ ] Remove local seed operation inference switch in `cmd/client-tm/util.go`.
 - [ ] Eliminate duplicated operation/template filtering logic in client path.
-

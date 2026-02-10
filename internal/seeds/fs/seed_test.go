@@ -44,3 +44,17 @@ func TestSeedWriteReadListDelete(t *testing.T) {
 	}
 }
 
+func TestSeedCommandCatalog(t *testing.T) {
+	testlog.Start(t)
+	seed := NewSeedWithRoot(filepath.Join(t.TempDir(), "local", "dir"))
+	catalog := seed.CommandCatalog()
+	if len(catalog) != 4 {
+		t.Fatalf("unexpected catalog size: %d", len(catalog))
+	}
+	if catalog[0].SeedSelector != SeedID || catalog[0].Operation != "write" {
+		t.Fatalf("unexpected first catalog entry: %+v", catalog[0])
+	}
+	if !catalog[0].DefaultBlocking {
+		t.Fatalf("expected write command default blocking")
+	}
+}

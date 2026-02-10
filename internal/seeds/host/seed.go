@@ -28,7 +28,7 @@ type HostResolver interface {
 // defaultResolver delegates to os and net stdlib.
 type defaultResolver struct{}
 
-func (defaultResolver) Hostname() (string, error) { return os.Hostname() }
+func (defaultResolver) Hostname() (string, error)            { return os.Hostname() }
 func (defaultResolver) Interfaces() ([]net.Interface, error) { return net.Interfaces() }
 func (defaultResolver) InterfaceAddrs(iface net.Interface) ([]net.Addr, error) {
 	return iface.Addrs()
@@ -72,6 +72,34 @@ func (s Seed) Operations() []seeds.OperationSpec {
 		{Name: "status", Description: "hostname, primary ip, os", Idempotent: true},
 		{Name: "ports", Description: "listening tcp/udp ports", Idempotent: true},
 		{Name: "interfaces", Description: "network interfaces with ips", Idempotent: true},
+	}
+}
+
+// CommandCatalog returns guided operator-facing command templates for this seed.
+func (s Seed) CommandCatalog() []seeds.CommandTemplate {
+	seedID := s.Metadata().ID
+	return []seeds.CommandTemplate{
+		{
+			ID:           seedID + ".status",
+			Label:        "Host Status",
+			Description:  "Read hostname, primary IP, OS, and architecture.",
+			SeedSelector: seedID,
+			Operation:    "status",
+		},
+		{
+			ID:           seedID + ".ports",
+			Label:        "Host Ports",
+			Description:  "List listening TCP/UDP ports.",
+			SeedSelector: seedID,
+			Operation:    "ports",
+		},
+		{
+			ID:           seedID + ".interfaces",
+			Label:        "Host Interfaces",
+			Description:  "List network interfaces with IP addresses.",
+			SeedSelector: seedID,
+			Operation:    "interfaces",
+		},
 	}
 }
 

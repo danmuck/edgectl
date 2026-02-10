@@ -63,6 +63,55 @@ func (s Seed) Operations() []seeds.OperationSpec {
 	}
 }
 
+// CommandCatalog returns guided operator-facing command templates for this seed.
+func (s Seed) CommandCatalog() []seeds.CommandTemplate {
+	seedID := s.Metadata().ID
+	unitArg := []seeds.CommandArgSpec{
+		{Key: "unit", Prompt: "systemd unit", Required: false, DefaultValue: "mongod"},
+	}
+	return []seeds.CommandTemplate{
+		{
+			ID:           seedID + ".status",
+			Label:        "MongoDB Status",
+			Description:  "Read mongod service status.",
+			SeedSelector: seedID,
+			Operation:    "status",
+			Args:         unitArg,
+		},
+		{
+			ID:           seedID + ".start",
+			Label:        "MongoDB Start",
+			Description:  "Start mongod service.",
+			SeedSelector: seedID,
+			Operation:    "start",
+			Args:         unitArg,
+		},
+		{
+			ID:           seedID + ".stop",
+			Label:        "MongoDB Stop",
+			Description:  "Stop mongod service.",
+			SeedSelector: seedID,
+			Operation:    "stop",
+			Args:         unitArg,
+		},
+		{
+			ID:           seedID + ".restart",
+			Label:        "MongoDB Restart",
+			Description:  "Restart mongod service.",
+			SeedSelector: seedID,
+			Operation:    "restart",
+			Args:         unitArg,
+		},
+		{
+			ID:           seedID + ".version",
+			Label:        "MongoDB Version",
+			Description:  "Read mongod binary version.",
+			SeedSelector: seedID,
+			Operation:    "version",
+		},
+	}
+}
+
 // Execute dispatches mongod operations to system commands.
 func (s Seed) Execute(action string, args map[string]string) (seeds.SeedResult, error) {
 	act := strings.TrimSpace(action)

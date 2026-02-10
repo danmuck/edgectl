@@ -157,3 +157,18 @@ func TestSeedUnknownAction(t *testing.T) {
 		t.Fatalf("expected error status: %+v", res)
 	}
 }
+
+func TestSeedCommandCatalog(t *testing.T) {
+	testlog.Start(t)
+	seed := NewSeedWithRunner(&fakeRunner{})
+	catalog := seed.CommandCatalog()
+	if len(catalog) != 7 {
+		t.Fatalf("unexpected catalog size: %d", len(catalog))
+	}
+	if catalog[0].SeedSelector != "seed.docker" || catalog[0].Operation != "status" {
+		t.Fatalf("unexpected first catalog entry: %+v", catalog[0])
+	}
+	if !catalog[2].DefaultBlocking || catalog[2].Operation != "run" {
+		t.Fatalf("expected run command to default blocking: %+v", catalog[2])
+	}
+}

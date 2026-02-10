@@ -20,6 +20,18 @@ func (f fakeSeed) Operations() []OperationSpec {
 	return []OperationSpec{{Name: "status", Description: "fake status", Idempotent: true}}
 }
 
+func (f fakeSeed) CommandCatalog() []CommandTemplate {
+	return []CommandTemplate{
+		{
+			ID:           f.meta.ID + ".status",
+			Label:        "Status",
+			Description:  "fake status",
+			SeedSelector: f.meta.ID,
+			Operation:    "status",
+		},
+	}
+}
+
 func (f fakeSeed) Execute(action string, args map[string]string) (SeedResult, error) {
 	return SeedResult{Status: "ok", ExitCode: 0}, nil
 }
