@@ -229,7 +229,7 @@ func parseFlags() options {
 // testctl interactive selector UI for choosing test scope.
 func runInteractive(opts options) (int, error) {
 	reader := bufio.NewReader(os.Stdin)
-	cfg := defaultRunConfig()
+	cfg := defaultInteractiveRunConfig()
 	cachedInventory := (*inventory)(nil)
 	loadInventory := func() (*inventory, error) {
 		if cachedInventory != nil {
@@ -492,13 +492,21 @@ func buildInventory(patterns []string) (inventory, error) {
 
 // testctl execution path for `go test -json` with streamed summaries.
 func runTests(opts options) (int, error) {
-	return runTestsWithConfig(opts, defaultRunConfig())
+	return runTestsWithConfig(opts, defaultRunModeConfig())
 }
 
-func defaultRunConfig() runConfig {
+// defaultInteractiveRunConfig keeps interactive runs in paused pacing.
+func defaultInteractiveRunConfig() runConfig {
 	return runConfig{
 		pacing:     pacingPause,
 		pauseDelay: 150 * time.Millisecond,
+	}
+}
+
+// defaultRunModeConfig keeps non-interactive runs in free pacing for full-suite execution.
+func defaultRunModeConfig() runConfig {
+	return runConfig{
+		pacing: pacingFree,
 	}
 }
 

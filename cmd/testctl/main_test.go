@@ -5,6 +5,28 @@ import (
 	"testing"
 )
 
+// TestDefaultInteractiveRunConfig verifies interactive mode keeps paused pacing.
+func TestDefaultInteractiveRunConfig(t *testing.T) {
+	cfg := defaultInteractiveRunConfig()
+	if cfg.pacing != pacingPause {
+		t.Fatalf("expected pacing %q, got %q", pacingPause, cfg.pacing)
+	}
+	if cfg.pauseDelay <= 0 {
+		t.Fatalf("expected positive pauseDelay, got %v", cfg.pauseDelay)
+	}
+}
+
+// TestDefaultRunModeConfig verifies non-interactive run mode uses free pacing.
+func TestDefaultRunModeConfig(t *testing.T) {
+	cfg := defaultRunModeConfig()
+	if cfg.pacing != pacingFree {
+		t.Fatalf("expected pacing %q, got %q", pacingFree, cfg.pacing)
+	}
+	if cfg.pauseDelay != 0 {
+		t.Fatalf("expected zero pauseDelay in free mode, got %v", cfg.pauseDelay)
+	}
+}
+
 // TestFormatMessageTypeLineSchemaValidate verifies message_type ids are rendered with envelope labels.
 func TestFormatMessageTypeLineSchemaValidate(t *testing.T) {
 	in := "INFO schema.Validate ok message_type=5"
