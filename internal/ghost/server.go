@@ -318,6 +318,16 @@ func (s *Server) SeedMetadata() []seeds.SeedMetadata {
 	return out
 }
 
+// ResolveSeed looks up a seed by id in the registry.
+func (s *Server) ResolveSeed(seedID string) (seeds.Seed, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.registry == nil {
+		return nil, false
+	}
+	return s.registry.Resolve(seedID)
+}
+
 // Ghost lifecycle helper for stable transition mismatch errors.
 func transitionError(current LifecyclePhase, expected LifecyclePhase) error {
 	return fmt.Errorf("%w: have=%s want=%s", ErrLifecycleOrder, current, expected)

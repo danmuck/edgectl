@@ -1,0 +1,18 @@
+flowchart LR
+    U["User / Client"]
+    A["api/v1 Boundary (Mirage northbound)"]
+    O["Mirage Orchestrator (desired/observed authority)"]
+    P["Mirage<->Ghost Internal Protocol (frame + TLV)"]
+    G["Ghost Execution Boundary"]
+    S["Seed Interface"]
+
+    U -->|"HTTP JSON intent/reconcile/read"| A
+    A -->|"issue + reconcile actions"| O
+    O -->|"command envelope"| P
+    P -->|"deliver command"| G
+    G -->|"seed.execute"| S
+    S -->|"seed.result"| G
+    G -->|"event envelope"| P
+    P -->|"event + event.ack"| O
+    O -->|"report/read models"| A
+    A -->|"status/reports/snapshots"| U

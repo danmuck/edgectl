@@ -15,8 +15,10 @@ import (
 
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/seeds"
+	seeddocker "github.com/danmuck/edgectl/internal/seeds/docker"
 	seedflow "github.com/danmuck/edgectl/internal/seeds/flow"
 	seedfs "github.com/danmuck/edgectl/internal/seeds/fs"
+	seedhost "github.com/danmuck/edgectl/internal/seeds/host"
 	seedkv "github.com/danmuck/edgectl/internal/seeds/kv"
 	seedmongod "github.com/danmuck/edgectl/internal/seeds/mongod"
 	"github.com/danmuck/edgectl/internal/tools"
@@ -220,8 +222,9 @@ func (s *Service) serve(ctx context.Context) error {
 			mirageConnected := s.IsMirageConnected()
 			mirageLink := s.MirageLinkMode()
 			managedChildren := s.ManagedGhostCount()
+			hostSummary := s.fetchHostSummary()
 			logs.Infof(
-				"ghost.Service.heartbeat ghost_id=%q phase=%s seeds=%d mirage_connected=%v mirage_link=%q admin_clients=%d managed_children=%d",
+				"ghost.Service.heartbeat ghost_id=%q phase=%s seeds=%d mirage_connected=%v mirage_link=%q admin_clients=%d managed_children=%d host=%q",
 				status.GhostID,
 				status.Phase,
 				status.SeedCount,
@@ -229,6 +232,7 @@ func (s *Service) serve(ctx context.Context) error {
 				mirageLink,
 				adminClients,
 				managedChildren,
+				hostSummary,
 			)
 		}
 	}
@@ -288,11 +292,27 @@ func (s *Service) runMirageSessionLoop(ctx context.Context) error {
 
 // Ghost Mirage client dial/register wrapper using runtime seed metadata.
 func (s *Service) connectMirageSession(ctx context.Context) (*MirageSession, error) {
+	seedList := SeedInfoFromMetadata(s.server.SeedMetadata())
+	// Enrich seed.host description with live host summary if available.
+	hostSummary := s.fetchHostSummary()
+	if hostSummary != "" {
+		for i := range seedList {
+			if seedList[i].ID == "seed.host" {
+				desc := strings.TrimSpace(seedList[i].Description)
+				if desc == "" {
+					desc = hostSummary
+				} else {
+					desc = desc + "; " + hostSummary
+				}
+				seedList[i].Description = desc
+			}
+		}
+	}
 	clientCfg := MirageClientConfig{
 		Address:            strings.TrimSpace(s.cfg.Mirage.Address),
 		GhostID:            strings.TrimSpace(s.cfg.GhostID),
 		PeerIdentity:       strings.TrimSpace(s.cfg.Mirage.PeerIdentity),
-		SeedList:           SeedInfoFromMetadata(s.server.SeedMetadata()),
+		SeedList:           seedList,
 		Session:            s.cfg.Mirage.SessionConfig,
 		MaxConnectAttempts: s.cfg.Mirage.MaxConnectAttempts,
 	}
@@ -499,6 +519,14 @@ func buildBuiltinRegistry(seedIDs []string, ghostID string) (*seeds.Registry, er
 			if err := reg.Register(seedfs.NewSeedWithRoot(root)); err != nil {
 				return nil, err
 			}
+		case "seed.docker", "docker":
+			if err := reg.Register(seeddocker.NewSeed()); err != nil {
+				return nil, err
+			}
+		case "seed.host", "host":
+			if err := reg.Register(seedhost.NewSeed()); err != nil {
+				return nil, err
+			}
 		default:
 			return nil, fmt.Errorf("%w: %s", ErrUnknownBuiltinSeed, id)
 		}
@@ -526,6 +554,28 @@ func (s *Service) installSeedDependencies() error {
 		return err
 	}
 	return nil
+}
+
+// fetchHostSummary queries seed.host status if registered and returns a compact summary string.
+func (s *Service) fetchHostSummary() string {
+	seed, ok := s.server.ResolveSeed("seed.host")
+	if !ok {
+		return ""
+	}
+	result, err := seed.Execute("status", nil)
+	if err != nil || result.Status != "ok" {
+		return ""
+	}
+	// Compact multi-line output into semicolon-separated fields.
+	lines := strings.Split(strings.TrimSpace(string(result.Stdout)), "\n")
+	var parts []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			parts = append(parts, line)
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 // Ghost bootstrap hook that refreshes root project refs before seed install.

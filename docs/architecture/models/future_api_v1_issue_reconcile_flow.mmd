@@ -1,0 +1,22 @@
+sequenceDiagram
+    autonumber
+    participant User
+    participant API as api/v1
+    participant Mirage as Mirage Orchestrator
+    participant Ghost
+    participant Seed
+
+    User->>API: POST /api/v1/intents (intent_id, stages, request_id)
+    API->>Mirage: submit_issue(issue envelope)
+    Mirage-->>API: accepted (intent persisted)
+    API-->>User: 202 Accepted (request_id, trace_id)
+
+    User->>API: POST /api/v1/intents/{intent_id}/reconcile
+    API->>Mirage: reconcile_intent(intent_id)
+    Mirage->>Ghost: command envelope
+    Ghost->>Seed: seed.execute
+    Seed-->>Ghost: seed.result
+    Ghost-->>Mirage: event envelope
+    Mirage-->>Ghost: event.ack(accepted|rejected)
+    Mirage-->>API: report(intent_id, phase, completion_state)
+    API-->>User: 200 OK (report + correlation ids)

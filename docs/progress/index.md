@@ -21,6 +21,7 @@ The canonical high-level MVP phase schedule is [`mvp_buildplan.md`](mvp_buildpla
 - [x] Documentation cleanup tracker and completion notes: [`docs_cleanup.md`](docs_cleanup.md)
 - [x] P4 conformance verification report: [`p4_conformance_report.md`](p4_conformance_report.md)
 - [x] Build logs (initial prompt + follow-up appends) and template: [`buildlog/README.md`](buildlog/README.md)
+- [x] Future API v1 proposal tracker: [`future_api_v1.md`](future_api_v1.md)
 
 ## Intended Read Order
 
@@ -40,3 +41,4 @@ The canonical high-level MVP phase schedule is [`mvp_buildplan.md`](mvp_buildpla
 14. [`docs_cleanup.md`](docs_cleanup.md)
 15. [`p4_conformance_report.md`](p4_conformance_report.md)
 16. [`buildlog/README.md`](buildlog/README.md)
+17. [`future_api_v1.md`](future_api_v1.md)
