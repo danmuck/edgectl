@@ -29,6 +29,7 @@
 - [x] Complete Seed Coupling Stage 4 client migration pass: drive Ghost command wizard and operation listing from remote `list_seed_catalog` payloads, remove static client catalog/inference helpers, and keep the existing `CommandTemplate` UI shape.
 - [x] Set `cmd/testctl` run-mode default pacing to `free` so `make test-override` executes the full suite non-interactively while preserving paused pacing in interactive mode.
 - [x] Make Ghost Mirage connect/register retries switch to resolved `bind_mirage` session addresses in-flight using a concurrency-safe client dial target update, and cover with client/service reroute tests.
+- [x] Fix Mirage buildlog persistence command conformance by generating required `command_id` values before `seed.fs`/`seed.kv` execute calls, and add regression tests that decode command envelopes to assert non-empty command IDs.
 
 ## Guardrails
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/danmuck/edgectl/internal/protocol/frame"
@@ -397,6 +398,8 @@ func (e *GhostAdminCommandExecutor) ExecuteCommand(ctx context.Context, cmd sess
 type GhostSeedBuildlogStore struct {
 	client       *GhostControlClient
 	seedSelector string
+	// commandSeq provides per-process uniqueness for buildlog command IDs.
+	commandSeq atomic.Uint64
 }
 
 // NewGhostSeedBuildlogStore constructs a buildlog persistence sink using seed.kv/seed.fs.
@@ -420,6 +423,7 @@ func (s *GhostSeedBuildlogStore) Persist(ctx context.Context, key string, value 
 	switch selector {
 	case "seed.kv":
 		_, err := s.client.ExecuteAdminCommand(ctx, ghostAdminCommand{
+			CommandID:    s.nextBuildlogCommandID(),
 			IntentID:     "intent.mirage.buildlog",
 			SeedSelector: selector,
 			Operation:    "put",
@@ -435,6 +439,7 @@ func (s *GhostSeedBuildlogStore) Persist(ctx context.Context, key string, value 
 			return fmt.Errorf("mirage: buildlog key/path required")
 		}
 		_, err := s.client.ExecuteAdminCommand(ctx, ghostAdminCommand{
+			CommandID:    s.nextBuildlogCommandID(),
 			IntentID:     "intent.mirage.buildlog",
 			SeedSelector: selector,
 			Operation:    "write",
@@ -447,4 +452,11 @@ func (s *GhostSeedBuildlogStore) Persist(ctx context.Context, key string, value 
 	default:
 		return fmt.Errorf("mirage: unsupported buildlog seed selector %q", selector)
 	}
+}
+
+// nextBuildlogCommandID returns a unique command_id for buildlog seed writes.
+// Boundary: IDs satisfy the protocol required command_id field and are local-process unique.
+func (s *GhostSeedBuildlogStore) nextBuildlogCommandID() string {
+	seq := s.commandSeq.Add(1)
+	return fmt.Sprintf("cmd.intent.mirage.buildlog.%d.%d", time.Now().UnixNano(), seq)
 }

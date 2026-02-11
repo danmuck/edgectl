@@ -79,5 +79,5 @@ update-pi:
 	rsync -avz --delete \
 	  --filter='P cmd/ghostctl/*.tls.config.toml' \
 	  --filter='P cmd/ghostctl/*.config.toml' \
-	  cmd internal pkg .air.toml .env Makefile \
+	  cmd internal pkg certs .air.toml .env Makefile \
 	  "${PI_USER}@${PI_HOST}:${PI_PATH}/"

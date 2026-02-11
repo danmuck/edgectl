@@ -21,12 +21,10 @@ These instructions govern how agents should make changes in this repository.
 ## Build Log Policy
 
 - Build logs live under `local/buildlogs/`.
-- Agents MUST create one build log file for the initial prompt using `docs/progress/buildlog/template.toml`.
-- Agents MUST append follow-up prompts to the same build log when prompts are short, concise, single-target clarifications within the same workstream.
-- Agents MUST create a new build log when prompt scope changes or when a prompt initiates a larger problem space.
+- Agents MUST create one new build log file for every user prompt using `docs/progress/buildlog/template.toml`.
+- Agents MUST NOT append follow-up prompts to an existing build log file.
 - Build log entries MUST include:
   - initial user prompt
-  - follow-up prompts
   - files changed and summaries
   - justification for each change
   - any progress checklist tasks completed in that pass
