@@ -217,6 +217,10 @@ func (s *Service) Run() error {
 			controlErr <- s.serveAdminControl(ctx, strings.TrimSpace(s.cfg.AdminListenAddr))
 		}()
 	}
+	ghostHeartbeatErr := make(chan error, 1)
+	go func() {
+		ghostHeartbeatErr <- s.runGhostHeartbeatLoop(ctx)
+	}()
 	serveErr := make(chan error, 1)
 	go func() {
 		serveErr <- s.Serve(ctx, ln)
@@ -225,6 +229,11 @@ func (s *Service) Run() error {
 	case err := <-serveErr:
 		return err
 	case err := <-controlErr:
+		if err != nil {
+			return err
+		}
+		return <-serveErr
+	case err := <-ghostHeartbeatErr:
 		if err != nil {
 			return err
 		}
@@ -498,6 +507,83 @@ func (s *Service) preloadGhostAdmins() {
 				strings.TrimSpace(target.AdminAddr),
 				err,
 			)
+		}
+	}
+}
+
+// Mirage background loop that periodically probes all configured ghost admin endpoints.
+// Retries attach for ghosts that failed during preload, and logs health transitions.
+func (s *Service) runGhostHeartbeatLoop(ctx context.Context) error {
+	const probeInterval = 10 * time.Second
+	const probeTimeout = 2 * time.Second
+
+	// Build initial pending set: preload targets + manifest targets not yet bound.
+	type ghostTarget struct {
+		ghostID   string
+		adminAddr string
+	}
+	pending := make(map[string]ghostTarget)
+	for _, t := range s.cfg.PreloadGhostAdmins {
+		id := strings.TrimSpace(t.GhostID)
+		addr := strings.TrimSpace(t.AdminAddr)
+		if id != "" && addr != "" {
+			pending[addr] = ghostTarget{ghostID: id, adminAddr: addr}
+		}
+	}
+	for _, m := range s.cfg.GhostManifests {
+		addr := strings.TrimSpace(m.AdminListen)
+		id := strings.TrimSpace(m.GhostID)
+		if addr != "" && id != "" {
+			pending[addr] = ghostTarget{ghostID: id, adminAddr: addr}
+		}
+	}
+	// Remove targets already bound at startup.
+	bound := s.snapshotGhostAdmins()
+	for _, addr := range bound {
+		delete(pending, addr)
+	}
+
+	// Track last-known health state for transition logging.
+	ghostUp := make(map[string]bool)
+	for id := range bound {
+		ghostUp[id] = true
+	}
+
+	ticker := time.NewTicker(probeInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+
+		// Probe bound ghosts for health.
+		currentBound := s.snapshotGhostAdmins()
+		for ghostID, adminAddr := range currentBound {
+			client := s.newGhostControlClient(adminAddr)
+			probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+			_, err := client.Status(probeCtx)
+			cancel()
+
+			wasUp := ghostUp[ghostID]
+			nowUp := err == nil
+			if wasUp && !nowUp {
+				logs.Warnf("mirage.ghostHeartbeat ghost down ghost_id=%q addr=%q err=%v", ghostID, adminAddr, err)
+			} else if !wasUp && nowUp {
+				logs.Warnf("mirage.ghostHeartbeat ghost up ghost_id=%q addr=%q", ghostID, adminAddr)
+			}
+			ghostUp[ghostID] = nowUp
+		}
+
+		// Retry pending (unattached) ghosts.
+		for addr, target := range pending {
+			if _, err := s.attachGhostAdmin(target.ghostID, target.adminAddr); err == nil {
+				logs.Warnf("mirage.ghostHeartbeat attached pending ghost ghost_id=%q addr=%q", target.ghostID, addr)
+				ghostUp[target.ghostID] = true
+				delete(pending, addr)
+			}
 		}
 	}
 }

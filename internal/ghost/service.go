@@ -282,6 +282,28 @@ func (s *Service) runMirageSessionLoop(ctx context.Context) error {
 				return err
 			}
 			attempt++
+
+			// Slow-wait mode: conserve energy when mirage has never been reachable.
+			const slowWaitThreshold = 10
+			const slowWaitInterval = 30 * time.Second
+			if !connectedOnce && attempt >= slowWaitThreshold {
+				if attempt == slowWaitThreshold {
+					logs.Warnf("ghost.Service.runMirageSessionLoop entering slow-wait mode policy=%q", s.cfg.Mirage.Policy)
+				}
+				// Log every 6th attempt (~3 min at 30s interval) to reduce noise.
+				if attempt%6 == 0 {
+					logs.Warnf("ghost.Service.runMirageSessionLoop slow-wait attempt=%d policy=%q", attempt, s.cfg.Mirage.Policy)
+				}
+				slowTimer := time.NewTimer(slowWaitInterval)
+				select {
+				case <-ctx.Done():
+					slowTimer.Stop()
+					return ctx.Err()
+				case <-slowTimer.C:
+				}
+				continue
+			}
+
 			logs.Warnf(
 				"ghost.Service.runMirageSessionLoop connect failed attempt=%d policy=%q err=%v",
 				attempt,
