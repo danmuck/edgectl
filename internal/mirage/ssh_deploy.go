@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"github.com/danmuck/edgectl/internal/tools"
 	logs "github.com/danmuck/smplog"
 )
@@ -81,7 +83,10 @@ func (d *SSHDeployer) Deploy(ctx context.Context, req DeployGhostRequest) (Deplo
 	}
 
 	// Step 4: Generate and upload config.
-	configContent := d.generateConfig(m, adminListen)
+	configContent, err := d.generateConfig(req, adminListen)
+	if err != nil {
+		return DeployGhostResult{Status: "error", GhostID: m.GhostID, Host: m.Host}, err
+	}
 	configTmpFile, err := os.CreateTemp("", "ghostctl-config-*.toml")
 	if err != nil {
 		return DeployGhostResult{Status: "error", GhostID: m.GhostID, Host: m.Host}, err
@@ -105,7 +110,7 @@ func (d *SSHDeployer) Deploy(ctx context.Context, req DeployGhostRequest) (Deplo
 	}
 
 	// Step 6: Start ghostctl remotely via nohup.
-	startCmd := "nohup ~/.edgectl/bin/ghostctl -config ~/.edgectl/config.toml > ~/.edgectl/ghostctl.log 2>&1 &"
+	startCmd := "nohup env PATH=\"$HOME/.edgectl/local/bin:$PATH\" ~/.edgectl/bin/ghostctl -config ~/.edgectl/config.toml > ~/.edgectl/ghostctl.log 2>&1 &"
 	if err := d.sshExec(sshBase, remoteTarget, startCmd); err != nil {
 		return DeployGhostResult{Status: "error", GhostID: m.GhostID, Host: m.Host,
 			Message: fmt.Sprintf("start failed: %v", err)}, err
@@ -169,7 +174,8 @@ func (d *SSHDeployer) scpFile(baseArgs []string, localPath string, target string
 }
 
 // generateConfig produces a minimal ghostctl config.toml for the remote host.
-func (d *SSHDeployer) generateConfig(m GhostManifest, adminListen string) string {
+func (d *SSHDeployer) generateConfig(req DeployGhostRequest, adminListen string) (string, error) {
+	m := req.Manifest
 	seeds := m.Seeds
 	if len(seeds) == 0 {
 		seeds = []string{"seed.flow", "seed.host"}
@@ -180,6 +186,14 @@ func (d *SSHDeployer) generateConfig(m GhostManifest, adminListen string) string
 		policy = "auto"
 	}
 
+	templatePath := strings.TrimSpace(m.ConfigTemplatePath)
+	if templatePath == "" {
+		templatePath = strings.TrimSpace(req.ConfigTemplatePath)
+	}
+	if templatePath != "" {
+		return d.generateConfigFromTemplate(templatePath, m, seeds, adminListen, policy)
+	}
+
 	var b strings.Builder
 	fmt.Fprintf(&b, "id = %q\n", m.GhostID)
 	fmt.Fprintf(&b, "admin_listen = %q\n", adminListen)
@@ -188,8 +202,64 @@ func (d *SSHDeployer) generateConfig(m GhostManifest, adminListen string) string
 	if addr := strings.TrimSpace(m.MirageAddress); addr != "" {
 		fmt.Fprintf(&b, "mirage_address = %q\n", addr)
 	}
+	if m.SeedInstallEnabled {
+		installRoot := strings.TrimSpace(m.SeedInstallRoot)
+		if installRoot == "" {
+			installRoot = "local/seeds"
+		}
+		binRoot := strings.TrimSpace(m.SeedInstallBinRoot)
+		if binRoot == "" {
+			binRoot = "local/bin"
+		}
+		whitelist := normalizeSeedInstallWhitelist(m.SeedInstallWhitelist)
+		if len(whitelist) == 0 && m.SeedInstallAllowInternalDefaults {
+			whitelist = internalSeedInstallDefaults()
+		}
+		fmt.Fprintf(&b, "seed_install_enabled = true\n")
+		fmt.Fprintf(&b, "seed_install_root = %q\n", installRoot)
+		fmt.Fprintf(&b, "seed_install_bin_root = %q\n", binRoot)
+		fmt.Fprintf(&b, "seed_install_whitelist = [%s]\n", quotedList(whitelist))
+		for i := range m.SeedInstall {
+			spec := m.SeedInstall[i]
+			fmt.Fprintf(&b, "\n[[seed_install]]\n")
+			fmt.Fprintf(&b, "seed_id = %q\n", strings.TrimSpace(spec.SeedID))
+			fmt.Fprintf(&b, "method = %q\n", strings.TrimSpace(spec.Method))
+			if v := strings.TrimSpace(spec.Repo); v != "" {
+				fmt.Fprintf(&b, "repo = %q\n", v)
+			}
+			if v := strings.TrimSpace(spec.Branch); v != "" {
+				fmt.Fprintf(&b, "branch = %q\n", v)
+			}
+			if v := strings.TrimSpace(spec.Ref); v != "" {
+				fmt.Fprintf(&b, "ref = %q\n", v)
+			}
+			if v := strings.TrimSpace(spec.Source); v != "" {
+				fmt.Fprintf(&b, "source = %q\n", v)
+			}
+			if v := strings.TrimSpace(spec.Destination); v != "" {
+				fmt.Fprintf(&b, "destination = %q\n", v)
+			}
+			if v := strings.TrimSpace(spec.Package); v != "" {
+				fmt.Fprintf(&b, "package = %q\n", v)
+			}
+			if v := strings.TrimSpace(spec.Tap); v != "" {
+				fmt.Fprintf(&b, "tap = %q\n", v)
+			}
+			if spec.BootstrapIfMissing {
+				fmt.Fprintf(&b, "bootstrap_if_missing = true\n")
+			}
+			if len(spec.BootstrapCmd) > 0 {
+				fmt.Fprintf(&b, "bootstrap_cmd = [%s]\n", quotedList(spec.BootstrapCmd))
+			}
+			if spec.InstallToBin {
+				fmt.Fprintf(&b, "install_to_bin = true\n")
+			}
+		}
+	} else {
+		fmt.Fprintf(&b, "seed_install_enabled = false\n")
+	}
 	fmt.Fprintf(&b, "project_fetch_on_boot = false\n")
-	return b.String()
+	return b.String(), nil
 }
 
 // quotedList formats a string slice as quoted TOML array entries.
@@ -199,6 +269,133 @@ func quotedList(items []string) string {
 		parts[i] = fmt.Sprintf("%q", strings.TrimSpace(item))
 	}
 	return strings.Join(parts, ", ")
+}
+
+func normalizeSeedInstallWhitelist(in []string) []string {
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for i := range in {
+		id := strings.TrimSpace(in[i])
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func internalSeedInstallDefaults() []string {
+	return []string{
+		"seed.docker",
+		"seed.flow",
+		"seed.fs",
+		"seed.host",
+		"seed.kv",
+		"seed.mongod",
+	}
+}
+
+func (d *SSHDeployer) generateConfigFromTemplate(
+	templatePath string,
+	m GhostManifest,
+	seeds []string,
+	adminListen string,
+	policy string,
+) (string, error) {
+	var cfg map[string]any
+	if _, err := toml.DecodeFile(templatePath, &cfg); err != nil {
+		return "", fmt.Errorf("ssh_deploy: load config template %q: %w", templatePath, err)
+	}
+	if cfg == nil {
+		cfg = make(map[string]any)
+	}
+	cfg["id"] = m.GhostID
+	cfg["admin_listen"] = adminListen
+	cfg["seeds"] = seeds
+	cfg["mirage_policy"] = policy
+	cfg["mirage_peer_identity"] = m.GhostID
+	if addr := strings.TrimSpace(m.MirageAddress); addr != "" {
+		cfg["mirage_address"] = addr
+	}
+	applySeedInstallTemplateOverrides(cfg, m)
+	var out strings.Builder
+	if err := toml.NewEncoder(&out).Encode(cfg); err != nil {
+		return "", fmt.Errorf("ssh_deploy: encode config template %q: %w", templatePath, err)
+	}
+	return out.String(), nil
+}
+
+func applySeedInstallTemplateOverrides(cfg map[string]any, m GhostManifest) {
+	if !m.SeedInstallEnabled {
+		cfg["seed_install_enabled"] = false
+		return
+	}
+	installRoot := strings.TrimSpace(m.SeedInstallRoot)
+	if installRoot == "" {
+		installRoot = "local/seeds"
+	}
+	binRoot := strings.TrimSpace(m.SeedInstallBinRoot)
+	if binRoot == "" {
+		binRoot = "local/bin"
+	}
+	whitelist := normalizeSeedInstallWhitelist(m.SeedInstallWhitelist)
+	if len(whitelist) == 0 && m.SeedInstallAllowInternalDefaults {
+		whitelist = internalSeedInstallDefaults()
+	}
+	cfg["seed_install_enabled"] = true
+	cfg["seed_install_root"] = installRoot
+	cfg["seed_install_bin_root"] = binRoot
+	cfg["seed_install_whitelist"] = whitelist
+	seedInstall := make([]map[string]any, 0, len(m.SeedInstall))
+	for i := range m.SeedInstall {
+		spec := m.SeedInstall[i]
+		seedID := strings.TrimSpace(spec.SeedID)
+		method := strings.TrimSpace(spec.Method)
+		if seedID == "" || method == "" {
+			continue
+		}
+		row := map[string]any{
+			"seed_id": seedID,
+			"method":  method,
+		}
+		if v := strings.TrimSpace(spec.Repo); v != "" {
+			row["repo"] = v
+		}
+		if v := strings.TrimSpace(spec.Branch); v != "" {
+			row["branch"] = v
+		}
+		if v := strings.TrimSpace(spec.Ref); v != "" {
+			row["ref"] = v
+		}
+		if v := strings.TrimSpace(spec.Source); v != "" {
+			row["source"] = v
+		}
+		if v := strings.TrimSpace(spec.Destination); v != "" {
+			row["destination"] = v
+		}
+		if v := strings.TrimSpace(spec.Package); v != "" {
+			row["package"] = v
+		}
+		if v := strings.TrimSpace(spec.Tap); v != "" {
+			row["tap"] = v
+		}
+		if spec.BootstrapIfMissing {
+			row["bootstrap_if_missing"] = true
+		}
+		if len(spec.BootstrapCmd) > 0 {
+			row["bootstrap_cmd"] = spec.BootstrapCmd
+		}
+		if spec.InstallToBin {
+			row["install_to_bin"] = true
+		}
+		seedInstall = append(seedInstall, row)
+	}
+	cfg["seed_install"] = seedInstall
 }
 
 // extractPort returns the port portion of a host:port address.

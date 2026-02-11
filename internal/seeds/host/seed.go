@@ -72,6 +72,7 @@ func (s Seed) Operations() []seeds.OperationSpec {
 		{Name: "status", Description: "hostname, primary ip, os", Idempotent: true},
 		{Name: "ports", Description: "listening tcp/udp ports", Idempotent: true},
 		{Name: "interfaces", Description: "network interfaces with ips", Idempotent: true},
+		{Name: "brew_version", Description: "homebrew version", Idempotent: true},
 	}
 }
 
@@ -100,6 +101,13 @@ func (s Seed) CommandCatalog() []seeds.CommandTemplate {
 			SeedSelector: seedID,
 			Operation:    "interfaces",
 		},
+		{
+			ID:           seedID + ".brew_version",
+			Label:        "Brew Version",
+			Description:  "Read Homebrew version.",
+			SeedSelector: seedID,
+			Operation:    "brew_version",
+		},
 	}
 }
 
@@ -113,6 +121,8 @@ func (s Seed) Execute(action string, args map[string]string) (seeds.SeedResult, 
 		return s.portsOp()
 	case "interfaces":
 		return s.interfacesOp()
+	case "brew_version":
+		return s.brewVersionOp()
 	default:
 		errMsg := fmt.Sprintf("unknown action: %s", act)
 		return seeds.SeedResult{Status: "error", Stderr: []byte(errMsg + "\n"), ExitCode: 64}, ErrUnknownAction
@@ -180,6 +190,23 @@ func (s Seed) interfacesOp() (seeds.SeedResult, error) {
 		fmt.Fprintf(&b, "%s flags=%s addrs=%s\n", iface.Name, iface.Flags.String(), strings.Join(addrStrs, ","))
 	}
 	return seeds.SeedResult{Status: "ok", Stdout: []byte(b.String()), ExitCode: 0}, nil
+}
+
+// brewVersionOp returns the current Homebrew version through the local brew CLI.
+func (s Seed) brewVersionOp() (seeds.SeedResult, error) {
+	stdout, stderr, exitCode, err := s.runner.Run("brew", "--version")
+	if err != nil {
+		if len(stderr) == 0 {
+			stderr = []byte(err.Error() + "\n")
+		}
+		if exitCode == 0 {
+			exitCode = 1
+		}
+		return seeds.SeedResult{
+			Status: "error", Stdout: stdout, Stderr: stderr, ExitCode: exitCode,
+		}, fmt.Errorf("%w: %v", ErrCommandFailed, err)
+	}
+	return seeds.SeedResult{Status: "ok", Stdout: stdout, Stderr: stderr, ExitCode: 0}, nil
 }
 
 // primaryIPFromInterfaces returns the first non-loopback IPv4 address found.

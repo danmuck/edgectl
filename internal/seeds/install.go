@@ -120,7 +120,7 @@ func NewInstaller(cfg InstallerConfig) (*Installer, error) {
 
 	runner := cfg.Runner
 	if runner == nil {
-		runner = tools.ExecRunner{}
+		runner = tools.EnvRunner{ExtraPaths: []string{binRoot}}
 	}
 
 	return &Installer{

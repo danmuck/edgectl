@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/danmuck/edgectl/internal/tools"
 )
 
 type installFakeRunner struct {
@@ -245,5 +247,21 @@ func TestInstallBrewBootstrapsAndInstalls(t *testing.T) {
 	}
 	if got := strings.Join(runner.commands[4], " "); got != "brew install mongodb-community@7.0" {
 		t.Fatalf("unexpected install command: %q", got)
+	}
+}
+
+func TestNewInstallerDefaultRunnerUsesEnvRunner(t *testing.T) {
+	workspace := t.TempDir()
+	installer, err := NewInstaller(InstallerConfig{
+		WorkspaceRoot: workspace,
+		InstallRoot:   "local/seeds",
+		BinRoot:       "local/bin",
+		Whitelist:     []string{"seed.flow"},
+	})
+	if err != nil {
+		t.Fatalf("new installer: %v", err)
+	}
+	if _, ok := installer.runner.(tools.EnvRunner); !ok {
+		t.Fatalf("expected default runner type tools.EnvRunner, got %T", installer.runner)
 	}
 }

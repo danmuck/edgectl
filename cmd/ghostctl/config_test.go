@@ -163,3 +163,19 @@ func TestParseSeedInstallSpecsMissingSeedID(t *testing.T) {
 		t.Fatalf("expected parse error")
 	}
 }
+
+func TestResolveWorkspaceRootFallsBackToConfigDir(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(cfgPath, []byte("id = \"ghost.test\"\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	got := resolveWorkspaceRoot(cfgPath)
+	want, err := filepath.Abs(dir)
+	if err != nil {
+		t.Fatalf("abs dir: %v", err)
+	}
+	if got != want {
+		t.Fatalf("unexpected workspace root fallback: got=%q want=%q", got, want)
+	}
+}

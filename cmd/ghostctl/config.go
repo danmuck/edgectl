@@ -251,7 +251,7 @@ func resolveWorkspaceRoot(configPath string) string {
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return dir
+			return start
 		}
 		dir = parent
 	}

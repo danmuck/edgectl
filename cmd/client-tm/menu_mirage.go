@@ -654,23 +654,41 @@ func (a *App) deployRemoteGhost(target MirageTarget) error {
 	if err != nil {
 		return err
 	}
+	adminListenRaw, err := a.promptLine("ghost admin listen addr (blank = 0.0.0.0:7010)")
+	if err != nil {
+		return err
+	}
 	binaryRaw, err := a.promptLine("local ghostctl binary path (blank = local/bin/ghostctl)")
 	if err != nil {
 		return err
 	}
+	templateRaw, err := a.promptLine("ghost config template path (blank = cmd/ghostctl/pi.tls.config.toml)")
+	if err != nil {
+		return err
+	}
+	adminListen := strings.TrimSpace(adminListenRaw)
+	if adminListen == "" {
+		adminListen = "0.0.0.0:7010"
+	}
+	templatePath := strings.TrimSpace(templateRaw)
+	if templatePath == "" {
+		templatePath = "cmd/ghostctl/pi.tls.config.toml"
+	}
 
 	req := mirage.DeployGhostRequest{
 		Manifest: mirage.GhostManifest{
-			GhostID:       strings.TrimSpace(ghostID),
-			Host:          strings.TrimSpace(host),
-			User:          user,
-			SSHKeyFile:    strings.TrimSpace(keyRaw),
-			Seeds:         seeds,
-			AdminListen:   "0.0.0.0:7010",
-			MiragePolicy:  "auto",
-			MirageAddress: strings.TrimSpace(mirageAddrRaw),
+			GhostID:            strings.TrimSpace(ghostID),
+			Host:               strings.TrimSpace(host),
+			User:               user,
+			SSHKeyFile:         strings.TrimSpace(keyRaw),
+			Seeds:              seeds,
+			AdminListen:        adminListen,
+			MiragePolicy:       "auto",
+			MirageAddress:      strings.TrimSpace(mirageAddrRaw),
+			ConfigTemplatePath: templatePath,
 		},
-		BinaryPath: strings.TrimSpace(binaryRaw),
+		BinaryPath:         strings.TrimSpace(binaryRaw),
+		ConfigTemplatePath: templatePath,
 	}
 	fmt.Printf("Deploying ghost_id=%s to %s@%s...\n", req.Manifest.GhostID, user, req.Manifest.Host)
 	result, err := target.Admin.DeployGhost(req)

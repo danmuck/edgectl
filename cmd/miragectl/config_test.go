@@ -164,3 +164,66 @@ admin_addr = "127.0.0.1:7012"
 		t.Fatalf("expected preload ghost validation error")
 	}
 }
+
+func TestLoadServiceConfigGhostManifestSeedInstallPolicy(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	content := `
+[[ghost_manifests]]
+ghost_id = "ghost.pi"
+host = "pi.local"
+seed_install_enabled = true
+seed_install_root = "local/seeds"
+seed_install_bin_root = "local/bin"
+seed_install_allow_internal_defaults = true
+seed_install_whitelist = ["seed.host", "seed.mongod", "seed.host"]
+config_template_path = "cmd/ghostctl/pi.tls.config.toml"
+
+[[ghost_manifests.seed_install]]
+seed_id = "seed.mongod.pkg"
+method = "brew"
+package = "mongodb-community@7.0"
+tap = "mongodb/brew"
+bootstrap_if_missing = true
+bootstrap_cmd = ["/bin/bash", "-c", "echo bootstrap"]
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := loadServiceConfig(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if len(cfg.GhostManifests) != 1 {
+		t.Fatalf("unexpected ghost manifest count: %d", len(cfg.GhostManifests))
+	}
+	m := cfg.GhostManifests[0]
+	if !m.SeedInstallEnabled {
+		t.Fatalf("expected seed_install_enabled")
+	}
+	if m.SeedInstallRoot != "local/seeds" {
+		t.Fatalf("unexpected seed install root: %q", m.SeedInstallRoot)
+	}
+	if m.SeedInstallBinRoot != "local/bin" {
+		t.Fatalf("unexpected seed install bin root: %q", m.SeedInstallBinRoot)
+	}
+	if !m.SeedInstallAllowInternalDefaults {
+		t.Fatalf("expected seed_install_allow_internal_defaults")
+	}
+	if len(m.SeedInstallWhitelist) != 3 || m.SeedInstallWhitelist[0] != "seed.host" || m.SeedInstallWhitelist[1] != "seed.mongod" || m.SeedInstallWhitelist[2] != "seed.host" {
+		t.Fatalf("unexpected seed install whitelist: %+v", m.SeedInstallWhitelist)
+	}
+	if len(m.SeedInstall) != 1 {
+		t.Fatalf("unexpected seed install spec count: %d", len(m.SeedInstall))
+	}
+	if m.SeedInstall[0].SeedID != "seed.mongod.pkg" || m.SeedInstall[0].Method != "brew" {
+		t.Fatalf("unexpected seed install spec: %+v", m.SeedInstall[0])
+	}
+	if len(m.SeedInstall[0].BootstrapCmd) != 3 {
+		t.Fatalf("unexpected bootstrap cmd: %+v", m.SeedInstall[0].BootstrapCmd)
+	}
+	if m.ConfigTemplatePath != "cmd/ghostctl/pi.tls.config.toml" {
+		t.Fatalf("unexpected config template path: %q", m.ConfigTemplatePath)
+	}
+}

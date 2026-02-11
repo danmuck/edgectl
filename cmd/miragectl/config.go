@@ -40,15 +40,22 @@ type fileConfig struct {
 
 // ghostManifestFile maps one ghost_manifests TOML table row for remote deploy targets.
 type ghostManifestFile struct {
-	GhostID       string   `toml:"ghost_id"`
-	Host          string   `toml:"host"`
-	User          string   `toml:"user"`
-	SSHKey        string   `toml:"ssh_key"`
-	SSHPort       int      `toml:"ssh_port"`
-	Seeds         []string `toml:"seeds"`
-	AdminListen   string   `toml:"admin_listen"`
-	MiragePolicy  string   `toml:"mirage_policy"`
-	MirageAddress string   `toml:"mirage_address"`
+	GhostID                         string                        `toml:"ghost_id"`
+	Host                            string                        `toml:"host"`
+	User                            string                        `toml:"user"`
+	SSHKey                          string                        `toml:"ssh_key"`
+	SSHPort                         int                           `toml:"ssh_port"`
+	Seeds                           []string                      `toml:"seeds"`
+	AdminListen                     string                        `toml:"admin_listen"`
+	MiragePolicy                    string                        `toml:"mirage_policy"`
+	MirageAddress                   string                        `toml:"mirage_address"`
+	SeedInstallEnabled              bool                          `toml:"seed_install_enabled"`
+	SeedInstallRoot                 string                        `toml:"seed_install_root"`
+	SeedInstallBinRoot              string                        `toml:"seed_install_bin_root"`
+	SeedInstallAllowInternalDefault bool                          `toml:"seed_install_allow_internal_defaults"`
+	SeedInstallWhitelist            []string                      `toml:"seed_install_whitelist"`
+	SeedInstall                     []mirage.GhostSeedInstallSpec `toml:"seed_install"`
+	ConfigTemplatePath              string                        `toml:"config_template_path"`
 }
 
 // preloadGhostAdmin maps one preload_ghost_admins TOML table row.
@@ -241,16 +248,50 @@ func normalizeGhostManifests(raw []ghostManifestFile) []mirage.GhostManifest {
 			continue
 		}
 		out = append(out, mirage.GhostManifest{
-			GhostID:       id,
-			Host:          host,
-			User:          strings.TrimSpace(r.User),
-			SSHKeyFile:    strings.TrimSpace(r.SSHKey),
-			SSHPort:       r.SSHPort,
-			Seeds:         normalizeList(r.Seeds),
-			AdminListen:   strings.TrimSpace(r.AdminListen),
-			MiragePolicy:  strings.TrimSpace(r.MiragePolicy),
-			MirageAddress: strings.TrimSpace(r.MirageAddress),
+			GhostID:                          id,
+			Host:                             host,
+			User:                             strings.TrimSpace(r.User),
+			SSHKeyFile:                       strings.TrimSpace(r.SSHKey),
+			SSHPort:                          r.SSHPort,
+			Seeds:                            normalizeList(r.Seeds),
+			AdminListen:                      strings.TrimSpace(r.AdminListen),
+			MiragePolicy:                     strings.TrimSpace(r.MiragePolicy),
+			MirageAddress:                    strings.TrimSpace(r.MirageAddress),
+			SeedInstallEnabled:               r.SeedInstallEnabled,
+			SeedInstallRoot:                  strings.TrimSpace(r.SeedInstallRoot),
+			SeedInstallBinRoot:               strings.TrimSpace(r.SeedInstallBinRoot),
+			SeedInstallAllowInternalDefaults: r.SeedInstallAllowInternalDefault,
+			SeedInstallWhitelist:             normalizeList(r.SeedInstallWhitelist),
+			SeedInstall:                      normalizeSeedInstallSpecs(r.SeedInstall),
+			ConfigTemplatePath:               strings.TrimSpace(r.ConfigTemplatePath),
 		})
+	}
+	return out
+}
+
+func normalizeSeedInstallSpecs(in []mirage.GhostSeedInstallSpec) []mirage.GhostSeedInstallSpec {
+	if len(in) == 0 {
+		return []mirage.GhostSeedInstallSpec{}
+	}
+	out := make([]mirage.GhostSeedInstallSpec, 0, len(in))
+	for i := range in {
+		spec := in[i]
+		seedID := strings.TrimSpace(spec.SeedID)
+		method := strings.TrimSpace(spec.Method)
+		if seedID == "" || method == "" {
+			continue
+		}
+		spec.SeedID = seedID
+		spec.Method = method
+		spec.Repo = strings.TrimSpace(spec.Repo)
+		spec.Branch = strings.TrimSpace(spec.Branch)
+		spec.Ref = strings.TrimSpace(spec.Ref)
+		spec.Source = strings.TrimSpace(spec.Source)
+		spec.Destination = strings.TrimSpace(spec.Destination)
+		spec.Package = strings.TrimSpace(spec.Package)
+		spec.Tap = strings.TrimSpace(spec.Tap)
+		spec.BootstrapCmd = normalizeList(spec.BootstrapCmd)
+		out = append(out, spec)
 	}
 	return out
 }

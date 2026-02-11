@@ -151,11 +151,43 @@ func TestSeedUnknownAction(t *testing.T) {
 	}
 }
 
+func TestSeedBrewVersion(t *testing.T) {
+	testlog.Start(t)
+	r := &fakeRunner{stdout: []byte("Homebrew 4.4.0\n")}
+	seed := NewSeedWithDeps(r, &fakeResolver{hostname: "test"})
+	res, err := seed.Execute("brew_version", nil)
+	if err != nil {
+		t.Fatalf("brew_version execute failed: %v", err)
+	}
+	if res.Status != "ok" || res.ExitCode != 0 {
+		t.Fatalf("unexpected brew_version result: %+v", res)
+	}
+	if r.name != "brew" || len(r.args) != 1 || r.args[0] != "--version" {
+		t.Fatalf("unexpected brew command invocation: name=%q args=%v", r.name, r.args)
+	}
+	if !strings.Contains(string(res.Stdout), "Homebrew") {
+		t.Fatalf("expected brew version output, got %q", string(res.Stdout))
+	}
+}
+
+func TestSeedBrewVersionError(t *testing.T) {
+	testlog.Start(t)
+	r := &fakeRunner{exitCode: 127, err: errors.New("not found")}
+	seed := NewSeedWithDeps(r, &fakeResolver{hostname: "test"})
+	res, err := seed.Execute("brew_version", nil)
+	if !errors.Is(err, ErrCommandFailed) {
+		t.Fatalf("expected ErrCommandFailed, got %v", err)
+	}
+	if res.Status != "error" || res.ExitCode != 127 {
+		t.Fatalf("unexpected brew_version failure result: %+v", res)
+	}
+}
+
 func TestSeedCommandCatalog(t *testing.T) {
 	testlog.Start(t)
 	seed := NewSeedWithDeps(&fakeRunner{}, &fakeResolver{hostname: "test"})
 	catalog := seed.CommandCatalog()
-	if len(catalog) != 3 {
+	if len(catalog) != 4 {
 		t.Fatalf("unexpected catalog size: %d", len(catalog))
 	}
 	if catalog[0].SeedSelector != "seed.host" || catalog[0].Operation != "status" {
