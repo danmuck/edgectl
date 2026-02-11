@@ -103,6 +103,7 @@ type Service struct {
 
 	mirageAdminBound    atomic.Bool
 	mirageResolvedAddr  atomic.Value // string: resolved mirage session address from bind_mirage
+	mirageBindNotify    chan struct{} // signaled when bind_mirage resolves the session address
 
 	adminMu                 sync.Mutex
 	adminSeq                atomic.Uint64
@@ -134,6 +135,7 @@ func NewServiceWithConfig(cfg ServiceConfig) *Service {
 		verificationEvents:      make([]VerificationRecord, 0),
 		adminFrameAuthValidator: defaultCommandFrameAuthValidator(strings.TrimSpace(cfg.AdminFrameAuthToken)),
 		cluster:                 newClusterHost(),
+		mirageBindNotify:        make(chan struct{}, 1),
 	}
 }
 
@@ -299,6 +301,9 @@ func (s *Service) runMirageSessionLoop(ctx context.Context) error {
 				case <-ctx.Done():
 					slowTimer.Stop()
 					return ctx.Err()
+				case <-s.mirageBindNotify:
+					slowTimer.Stop()
+					logs.Warnf("ghost.Service.runMirageSessionLoop bind_mirage received, waking from slow-wait")
 				case <-slowTimer.C:
 				}
 				continue
@@ -474,6 +479,11 @@ func (s *Service) BindMirageAdminRoute(mirageID string, remoteAddr string, sessi
 		if err == nil && host != "" {
 			resolved := net.JoinHostPort(host, port)
 			s.mirageResolvedAddr.Store(resolved)
+			// Wake the session loop so it retries with the resolved address immediately.
+			select {
+			case s.mirageBindNotify <- struct{}{}:
+			default:
+			}
 			logs.Warnf("ghost.admin mirage route bound mirage_id=%q resolved_session_addr=%q", id, resolved)
 			return
 		}
@@ -518,6 +528,7 @@ func (s *Service) sessionProbeEvent() EventEnv {
 }
 
 // Ghost reconnect backoff wait helper with deterministic delay.
+// Wakes early if bind_mirage delivers a resolved address.
 func (s *Service) waitReconnectBackoff(ctx context.Context, attempt int) error {
 	backoffCfg := s.cfg.Mirage.SessionConfig.Backoff
 	backoffCfg.Jitter = false
@@ -527,6 +538,9 @@ func (s *Service) waitReconnectBackoff(ctx context.Context, attempt int) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
+	case <-s.mirageBindNotify:
+		logs.Warnf("ghost.Service.waitReconnectBackoff bind_mirage received, retrying immediately")
+		return nil
 	case <-timer.C:
 		return nil
 	}
