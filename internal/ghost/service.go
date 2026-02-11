@@ -323,10 +323,11 @@ func (s *Service) runMirageSessionLoop(ctx context.Context) error {
 		attempt = 0
 		connectedOnce = true
 		s.setMirageSession(sessionConn)
+		resolvedAddr, _ := s.mirageResolvedAddr.Load().(string)
 		logs.Warnf(
 			"ghost.Service.runMirageSessionLoop connected policy=%q address=%q",
 			s.cfg.Mirage.Policy,
-			s.cfg.Mirage.Address,
+			resolvedAddr,
 		)
 
 		err = s.monitorMirageSession(ctx, sessionConn)
@@ -378,6 +379,8 @@ func (s *Service) connectMirageSession(ctx context.Context) (*MirageSession, err
 	if err != nil {
 		return nil, err
 	}
+	// Lock in the working address so all future reconnects use it.
+	s.mirageResolvedAddr.Store(mirageAddr)
 	return sessionConn, nil
 }
 
