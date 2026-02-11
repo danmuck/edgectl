@@ -101,9 +101,11 @@ type Service struct {
 	mirage *MirageSession
 	seq    atomic.Uint64
 
-	mirageAdminBound    atomic.Bool
-	mirageResolvedAddr  atomic.Value // string: resolved mirage session address from bind_mirage
-	mirageBindNotify    chan struct{} // signaled when bind_mirage resolves the session address
+	mirageAdminBound   atomic.Bool
+	mirageResolvedAddr atomic.Value  // string: resolved mirage session address from bind_mirage
+	mirageBindNotify   chan struct{} // signaled when bind_mirage resolves the session address
+	mirageClientMu     sync.RWMutex
+	mirageActiveClient *MirageClient // current connect/register client for live bind_mirage address updates
 
 	adminMu                 sync.Mutex
 	adminSeq                atomic.Uint64
@@ -374,14 +376,41 @@ func (s *Service) connectMirageSession(ctx context.Context) (*MirageSession, err
 	if err != nil {
 		return nil, err
 	}
+	// Allow bind_mirage to update an in-flight connect/register client.
+	s.setActiveMirageClient(client)
+	defer s.clearActiveMirageClientIf(client)
 
 	sessionConn, err := client.ConnectAndRegister(ctx)
 	if err != nil {
 		return nil, err
 	}
 	// Lock in the working address so all future reconnects use it.
-	s.mirageResolvedAddr.Store(mirageAddr)
+	s.mirageResolvedAddr.Store(client.CurrentAddress())
 	return sessionConn, nil
+}
+
+// setActiveMirageClient records the current connect/register client for live address updates.
+func (s *Service) setActiveMirageClient(client *MirageClient) {
+	s.mirageClientMu.Lock()
+	defer s.mirageClientMu.Unlock()
+	s.mirageActiveClient = client
+}
+
+// clearActiveMirageClientIf clears the active client only when pointer identity matches.
+func (s *Service) clearActiveMirageClientIf(client *MirageClient) {
+	s.mirageClientMu.Lock()
+	defer s.mirageClientMu.Unlock()
+	if s.mirageActiveClient != client {
+		return
+	}
+	s.mirageActiveClient = nil
+}
+
+// activeMirageClient returns the current connect/register client, if one is in flight.
+func (s *Service) activeMirageClient() *MirageClient {
+	s.mirageClientMu.RLock()
+	defer s.mirageClientMu.RUnlock()
+	return s.mirageActiveClient
 }
 
 // Ghost session health probe loop using heartbeat events.
@@ -482,6 +511,12 @@ func (s *Service) BindMirageAdminRoute(mirageID string, remoteAddr string, sessi
 		if err == nil && host != "" {
 			resolved := net.JoinHostPort(host, port)
 			s.mirageResolvedAddr.Store(resolved)
+			// Update any in-flight connect/register client immediately.
+			if client := s.activeMirageClient(); client != nil {
+				if err := client.UpdateAddress(resolved); err != nil {
+					logs.Warnf("ghost.admin mirage route update ignored mirage_id=%q err=%v", id, err)
+				}
+			}
 			// Wake the session loop so it retries with the resolved address immediately.
 			select {
 			case s.mirageBindNotify <- struct{}{}:

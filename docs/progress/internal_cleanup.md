@@ -28,6 +28,7 @@
 - [x] Complete Seed Coupling Stage 3 Mirage aggregation pass: aggregate Ghost `seed_catalog` snapshots in Mirage, expose via Mirage admin action, and add mixed-connectivity/partial-availability tests.
 - [x] Complete Seed Coupling Stage 4 client migration pass: drive Ghost command wizard and operation listing from remote `list_seed_catalog` payloads, remove static client catalog/inference helpers, and keep the existing `CommandTemplate` UI shape.
 - [x] Set `cmd/testctl` run-mode default pacing to `free` so `make test-override` executes the full suite non-interactively while preserving paused pacing in interactive mode.
+- [x] Make Ghost Mirage connect/register retries switch to resolved `bind_mirage` session addresses in-flight using a concurrency-safe client dial target update, and cover with client/service reroute tests.
 
 ## Guardrails
 

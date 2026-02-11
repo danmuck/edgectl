@@ -49,8 +49,9 @@ func DefaultMirageClientConfig() MirageClientConfig {
 
 // Ghost-side Mirage client with connect/register retry behavior.
 type MirageClient struct {
-	cfg MirageClientConfig
-	rng *rand.Rand
+	cfg     MirageClientConfig
+	rng     *rand.Rand
+	address atomic.Value // string: active dial target for connect/register retries
 }
 
 // Ghost Mirage client constructor with transport/session validation.
@@ -58,6 +59,7 @@ func NewMirageClient(cfg MirageClientConfig) (*MirageClient, error) {
 	if strings.TrimSpace(cfg.Address) == "" {
 		return nil, ErrMirageAddressRequired
 	}
+	cfg.Address = strings.TrimSpace(cfg.Address)
 	if strings.TrimSpace(cfg.GhostID) == "" {
 		return nil, ErrGhostIDRequired
 	}
@@ -65,10 +67,30 @@ func NewMirageClient(cfg MirageClientConfig) (*MirageClient, error) {
 		cfg.PeerIdentity = cfg.GhostID
 	}
 	cfg.Session = cfg.Session.WithDefaults()
-	return &MirageClient{
+	client := &MirageClient{
 		cfg: cfg,
 		rng: rand.New(rand.NewSource(time.Now().UnixNano())),
-	}, nil
+	}
+	client.address.Store(cfg.Address)
+	return client, nil
+}
+
+// CurrentAddress returns the active Mirage dial target used by connect retries.
+func (c *MirageClient) CurrentAddress() string {
+	if addr, ok := c.address.Load().(string); ok {
+		return strings.TrimSpace(addr)
+	}
+	return strings.TrimSpace(c.cfg.Address)
+}
+
+// UpdateAddress updates the active Mirage dial target for in-flight retries.
+func (c *MirageClient) UpdateAddress(addr string) error {
+	next := strings.TrimSpace(addr)
+	if next == "" {
+		return ErrMirageAddressRequired
+	}
+	c.address.Store(next)
+	return nil
 }
 
 // Ghost connect/register flow that returns a live Mirage session.
@@ -78,7 +100,7 @@ func (c *MirageClient) ConnectAndRegister(ctx context.Context) (*MirageSession, 
 		attempt++
 		conn, err := c.dial(ctx)
 		if err != nil {
-			logs.Warnf("ghost.MirageClient.ConnectAndRegister dial attempt=%d addr=%q err=%v", attempt, c.cfg.Address, err)
+			logs.Warnf("ghost.MirageClient.ConnectAndRegister dial attempt=%d addr=%q err=%v", attempt, c.CurrentAddress(), err)
 			if !c.shouldRetry(attempt) {
 				return nil, err
 			}
@@ -109,7 +131,8 @@ func (c *MirageClient) dial(ctx context.Context) (net.Conn, error) {
 	}
 
 	dialer := net.Dialer{Timeout: c.cfg.Session.ConnectTimeout}
-	rawConn, err := dialer.DialContext(ctx, "tcp", c.cfg.Address)
+	addr := c.CurrentAddress()
+	rawConn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +164,7 @@ func (c *MirageClient) clientTLSConfig() (*tls.Config, error) {
 
 	serverName := strings.TrimSpace(c.cfg.Session.TLS.ServerName)
 	if serverName == "" {
-		host, _, err := net.SplitHostPort(c.cfg.Address)
+		host, _, err := net.SplitHostPort(c.CurrentAddress())
 		if err != nil {
 			return nil, err
 		}

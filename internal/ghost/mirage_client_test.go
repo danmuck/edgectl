@@ -112,6 +112,91 @@ func TestMirageClientProductionRequiresTLS(t *testing.T) {
 	}
 }
 
+// Ensures an in-flight connect/register loop can switch to a newly resolved Mirage address.
+func TestMirageClientUpdateAddressDuringRetry(t *testing.T) {
+	testlog.Start(t)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- serveNoAckEndpoint(ln)
+	}()
+
+	cfg := session.DefaultConfig()
+	cfg.ConnectTimeout = 80 * time.Millisecond
+	cfg.HandshakeTimeout = 500 * time.Millisecond
+	cfg.Backoff.InitialDelay = 20 * time.Millisecond
+	cfg.Backoff.MaxDelay = 40 * time.Millisecond
+	cfg.Backoff.Jitter = false
+
+	client, err := NewMirageClient(MirageClientConfig{
+		Address:            "127.0.0.1:1",
+		GhostID:            "ghost.alpha",
+		PeerIdentity:       "ghost.alpha",
+		SeedList:           []session.SeedInfo{{ID: "seed.flow", Name: "Flow", Description: "Deterministic control-flow seed"}},
+		Session:            cfg,
+		MaxConnectAttempts: 0,
+	})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	connectDone := make(chan struct {
+		session *MirageSession
+		err     error
+	}, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	go func() {
+		gs, err := client.ConnectAndRegister(ctx)
+		connectDone <- struct {
+			session *MirageSession
+			err     error
+		}{session: gs, err: err}
+	}()
+
+	time.Sleep(160 * time.Millisecond)
+	if err := client.UpdateAddress(ln.Addr().String()); err != nil {
+		_ = ln.Close()
+		_ = <-done
+		t.Fatalf("update address: %v", err)
+	}
+
+	var out struct {
+		session *MirageSession
+		err     error
+	}
+	select {
+	case out = <-connectDone:
+	case <-ctx.Done():
+		_ = ln.Close()
+		_ = <-done
+		t.Fatalf("connect timeout waiting for retry update")
+	}
+	if out.err != nil {
+		_ = ln.Close()
+		_ = <-done
+		t.Fatalf("connect and register: %v", out.err)
+	}
+	if out.session == nil {
+		_ = ln.Close()
+		_ = <-done
+		t.Fatalf("expected non-nil session")
+	}
+	if err := out.session.Close(); err != nil {
+		_ = ln.Close()
+		_ = <-done
+		t.Fatalf("close session: %v", err)
+	}
+	_ = ln.Close()
+	if err := <-done; err != nil {
+		t.Fatalf("endpoint exit err: %v", err)
+	}
+}
+
 func TestMirageSessionSendEventWithAckDisconnect(t *testing.T) {
 	testlog.Start(t)
 

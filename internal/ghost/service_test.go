@@ -503,6 +503,100 @@ func TestServiceServeAutoReconnectsAfterMirageRestart(t *testing.T) {
 	}
 }
 
+// Ensures bind_mirage reroutes an in-flight connect attempt to the resolved session address.
+func TestServiceConnectMirageSessionBindMirageUpdatesInflightClient(t *testing.T) {
+	testlog.Start(t)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := ln.Addr().String()
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+
+	mcfg := mirage.DefaultServiceConfig()
+	mcfg.RequireIdentityBinding = true
+	mcfg.Session.HandshakeTimeout = 500 * time.Millisecond
+	msvc := mirage.NewServiceWithConfig(mcfg)
+	mctx, mcancel := context.WithCancel(context.Background())
+	defer mcancel()
+	mdone := make(chan error, 1)
+	go func() {
+		mdone <- msvc.Serve(mctx, ln)
+	}()
+	defer func() {
+		mcancel()
+		_ = <-mdone
+	}()
+
+	scfg := DefaultServiceConfig()
+	scfg.GhostID = "ghost.alpha"
+	scfg.BuiltinSeedIDs = []string{"seed.flow"}
+	scfg.HeartbeatInterval = 20 * time.Millisecond
+	scfg.Mirage.Policy = MiragePolicyAuto
+	scfg.Mirage.Address = "127.0.0.1:1"
+	scfg.Mirage.PeerIdentity = "ghost.alpha"
+	scfg.Mirage.SessionConfig.ConnectTimeout = 80 * time.Millisecond
+	scfg.Mirage.SessionConfig.HandshakeTimeout = 500 * time.Millisecond
+	scfg.Mirage.SessionConfig.Backoff.InitialDelay = 20 * time.Millisecond
+	scfg.Mirage.SessionConfig.Backoff.MaxDelay = 40 * time.Millisecond
+	scfg.Mirage.SessionConfig.Backoff.Jitter = false
+	svc := NewServiceWithConfig(scfg)
+	if err := svc.bootstrap(); err != nil {
+		t.Fatalf("bootstrap failed: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	connectDone := make(chan struct {
+		session *MirageSession
+		err     error
+	}, 1)
+	go func() {
+		gs, err := svc.connectMirageSession(ctx)
+		connectDone <- struct {
+			session *MirageSession
+			err     error
+		}{session: gs, err: err}
+	}()
+
+	time.Sleep(160 * time.Millisecond)
+	svc.BindMirageAdminRoute("mirage.local", net.JoinHostPort(host, "65000"), port)
+
+	var out struct {
+		session *MirageSession
+		err     error
+	}
+	select {
+	case out = <-connectDone:
+	case <-ctx.Done():
+		t.Fatalf("connect timeout waiting for bind_mirage reroute")
+	}
+	if out.err != nil {
+		t.Fatalf("connect mirage session: %v", out.err)
+	}
+	if out.session == nil {
+		t.Fatalf("expected non-nil session")
+	}
+	if err := out.session.Close(); err != nil {
+		t.Fatalf("close session: %v", err)
+	}
+
+	if !waitForCondition(2*time.Second, 20*time.Millisecond, func() bool {
+		return len(msvc.SnapshotRegisteredGhosts()) == 1
+	}) {
+		t.Fatalf("ghost did not register with mirage after bind_mirage reroute")
+	}
+
+	resolved, _ := svc.mirageResolvedAddr.Load().(string)
+	if resolved != addr {
+		t.Fatalf("expected resolved addr %q, got %q", addr, resolved)
+	}
+}
+
 func TestServiceSpawnManagedGhost(t *testing.T) {
 	testlog.Start(t)
 
