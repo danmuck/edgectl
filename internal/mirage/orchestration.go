@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/danmuck/edgectl/internal/protocol/frame"
 	"github.com/danmuck/edgectl/internal/protocol/session"
+	logs "github.com/danmuck/smplog"
 )
 
 var (
@@ -56,6 +58,13 @@ func (c IssueCommand) Validate() error {
 	return nil
 }
 
+// Stages of a multi-stage issue
+type IssueStage struct {
+	ID       string
+	Commands []IssueCommand
+	Barrier  bool
+}
+
 // IssueEnv is Mirage desired-state ingress from the user boundary.
 type IssueEnv struct {
 	IntentID         string
@@ -64,14 +73,7 @@ type IssueEnv struct {
 	Objective        string
 	SeedDependencies []string
 	TimestampMS      uint64
-
-	// CommandPlan is optional; when present it defines all single-command loops.
-	CommandPlan []IssueCommand
-
-	// Legacy single-command fields used when CommandPlan is empty.
-	SeedSelector string
-	Operation    string
-	Args         map[string]string
+	Stages           []IssueStage
 }
 
 // Validate enforces required issue fields for desired-state ingestion.
@@ -88,15 +90,24 @@ func (i IssueEnv) Validate() error {
 	if strings.TrimSpace(i.Objective) == "" {
 		return fmt.Errorf("%w: missing objective", ErrInvalidIssue)
 	}
-	for idx := range i.CommandPlan {
-		if err := i.CommandPlan[idx].Validate(); err != nil {
-			return fmt.Errorf("%w: command_plan[%d]: %v", ErrInvalidIssue, idx, err)
+	if len(i.Stages) == 0 {
+		return fmt.Errorf("%w: at least one stage required", ErrInvalidIssue)
+	}
+	for si := range i.Stages {
+		stage := i.Stages[si]
+		if len(stage.Commands) == 0 {
+			return fmt.Errorf("%w: stages[%d]: no commands", ErrInvalidIssue, si)
+		}
+		for ci := range stage.Commands {
+			if err := stage.Commands[ci].Validate(); err != nil {
+				return fmt.Errorf("%w: stages[%d].commands[%d]: %v", ErrInvalidIssue, si, ci, err)
+			}
 		}
 	}
 	return nil
 }
 
-// DesiredIntent stores one normalized command plan derived from an issue.
+// DesiredIntent stores normalized planned commands derived from issue stages.
 type DesiredIntent struct {
 	Issue      IssueEnv
 	Commands   []PlannedCommand
@@ -208,11 +219,15 @@ func (o *Orchestrator) SubmitIssue(issue IssueEnv) error {
 	if issue.TimestampMS == 0 {
 		issue.TimestampMS = uint64(now.UnixMilli())
 	}
-	commands, err := normalizeIssueToCommands(issue)
-	if err != nil {
-		return err
-	}
+	stages := normalizeIssueToStages(issue)
+	commands := flattenStagesToPlannedCommands(issue.IntentID, stages)
 	issue.SeedDependencies = seedDependenciesForCommands(commands)
+	logs.Infof(
+		"ownership.transition from=user to=mirage intent_id=%s actor=%s target_scope=%s",
+		strings.TrimSpace(issue.IntentID),
+		strings.TrimSpace(issue.Actor),
+		strings.TrimSpace(issue.TargetScope),
+	)
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.desired[issue.IntentID] = DesiredIntent{
@@ -279,6 +294,14 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context, intentID string) (sess
 	if !hasPending {
 		report := latestReportOrSynthesizeComplete(desired, obs)
 		o.mu.Unlock()
+		logs.Infof(
+			"ownership.transition from=mirage to=user intent_id=%s phase=%s completion=%s command_id=%s event_id=%s",
+			key,
+			report.Phase,
+			report.CompletionState,
+			strings.TrimSpace(report.CommandID),
+			strings.TrimSpace(report.EventID),
+		)
 		return report, nil
 	}
 
@@ -290,6 +313,14 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context, intentID string) (sess
 				observed.Reports = append(observed.Reports, report)
 				observed.ObservedAt = time.Now()
 				o.mu.Unlock()
+				logs.Infof(
+					"ownership.transition from=mirage to=user intent_id=%s phase=%s completion=%s command_id=%s event_id=%s",
+					key,
+					report.Phase,
+					report.CompletionState,
+					strings.TrimSpace(report.CommandID),
+					strings.TrimSpace(report.EventID),
+				)
 				return report, nil
 			}
 		} else {
@@ -302,6 +333,14 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context, intentID string) (sess
 	if exec == nil {
 		return session.Report{}, fmt.Errorf("mirage: no executor registered for ghost_id=%q", next.Command.GhostID)
 	}
+	logs.Infof(
+		"ownership.transition from=mirage to=ghost intent_id=%s command_id=%s ghost_id=%s seed_id=%s operation=%s",
+		key,
+		next.Command.CommandID,
+		next.Command.GhostID,
+		next.Command.SeedSelector,
+		next.Command.Operation,
+	)
 
 	wireCommand, err := o.dispatchCommandEnvelope(next.Command)
 	if err != nil {
@@ -336,6 +375,22 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context, intentID string) (sess
 		delete(o.seedLocks, next.SeedKey)
 	}
 	o.mu.Unlock()
+	logs.Infof(
+		"ownership.transition from=ghost to=mirage intent_id=%s command_id=%s event_id=%s ghost_id=%s outcome=%s",
+		key,
+		ingestedEvent.CommandID,
+		ingestedEvent.EventID,
+		ingestedEvent.GhostID,
+		ingestedEvent.Outcome,
+	)
+	logs.Infof(
+		"ownership.transition from=mirage to=user intent_id=%s phase=%s completion=%s command_id=%s event_id=%s",
+		key,
+		report.Phase,
+		report.CompletionState,
+		strings.TrimSpace(report.CommandID),
+		strings.TrimSpace(report.EventID),
+	)
 	return report, nil
 }
 
@@ -353,9 +408,26 @@ func (o *Orchestrator) IngestObservedEvent(event session.Event) (session.Report,
 	if _, exists := observed.ByCommandID[event.CommandID]; exists {
 		if len(observed.Reports) == 0 {
 			report := latestReportOrSynthesizeComplete(desired, observed)
+			logs.Infof(
+				"ownership.transition from=mirage to=user intent_id=%s phase=%s completion=%s command_id=%s event_id=%s",
+				intentID,
+				report.Phase,
+				report.CompletionState,
+				strings.TrimSpace(report.CommandID),
+				strings.TrimSpace(report.EventID),
+			)
 			return report, true, nil
 		}
-		return observed.Reports[len(observed.Reports)-1], true, nil
+		report := observed.Reports[len(observed.Reports)-1]
+		logs.Infof(
+			"ownership.transition from=mirage to=user intent_id=%s phase=%s completion=%s command_id=%s event_id=%s",
+			intentID,
+			report.Phase,
+			report.CompletionState,
+			strings.TrimSpace(report.CommandID),
+			strings.TrimSpace(report.EventID),
+		)
+		return report, true, nil
 	}
 
 	report, ingestedEvent, err := o.ingestEventEnvelopeAndBuildReport(desired, observed, event)
@@ -369,6 +441,22 @@ func (o *Orchestrator) IngestObservedEvent(event session.Event) (session.Report,
 	if plan.Blocking {
 		delete(o.seedLocks, plan.SeedKey)
 	}
+	logs.Infof(
+		"ownership.transition from=ghost to=mirage intent_id=%s command_id=%s event_id=%s ghost_id=%s outcome=%s",
+		intentID,
+		ingestedEvent.CommandID,
+		ingestedEvent.EventID,
+		ingestedEvent.GhostID,
+		ingestedEvent.Outcome,
+	)
+	logs.Infof(
+		"ownership.transition from=mirage to=user intent_id=%s phase=%s completion=%s command_id=%s event_id=%s",
+		intentID,
+		report.Phase,
+		report.CompletionState,
+		strings.TrimSpace(report.CommandID),
+		strings.TrimSpace(report.EventID),
+	)
 	return report, true, nil
 }
 
@@ -420,64 +508,50 @@ func (o *Orchestrator) ingestEventEnvelopeAndBuildReport(
 	return wireReport, ingestedEvent, nil
 }
 
-// normalizeIssueToCommands maps issue text or explicit command_plan to command steps.
-func normalizeIssueToCommands(issue IssueEnv) ([]PlannedCommand, error) {
-	if len(issue.CommandPlan) > 0 {
-		return planCommandsFromIssue(issue)
+// normalizeIssueToStages assigns default IDs to issue stages.
+func normalizeIssueToStages(issue IssueEnv) []IssueStage {
+	out := make([]IssueStage, 0, len(issue.Stages))
+	for i := range issue.Stages {
+		stage := issue.Stages[i]
+		if strings.TrimSpace(stage.ID) == "" {
+			stage.ID = fmt.Sprintf("stage.%d", i+1)
+		}
+		out = append(out, stage)
 	}
-	ghostID := normalizeGhostID(issue.TargetScope)
-	if ghostID == "" {
-		return nil, fmt.Errorf("%w: target_scope=%q", ErrTargetGhostRequired, issue.TargetScope)
-	}
-	seedSelector := strings.TrimSpace(issue.SeedSelector)
-	if seedSelector == "" {
-		seedSelector = "seed.flow"
-	}
-	operation := strings.TrimSpace(issue.Operation)
-	if operation == "" {
-		operation = strings.TrimSpace(issue.Objective)
-	}
-	if operation == "" {
-		return nil, fmt.Errorf("%w: missing operation", ErrInvalidIssue)
-	}
-	cmd := session.Command{
-		CommandID:    fmt.Sprintf("cmd.%s.1", sanitizeID(issue.IntentID)),
-		IntentID:     issue.IntentID,
-		GhostID:      ghostID,
-		SeedSelector: seedSelector,
-		Operation:    operation,
-		Args:         copyArgs(issue.Args),
-	}
-	return []PlannedCommand{{
-		Command:  cmd,
-		Blocking: false,
-		SeedKey:  seedLockKey(cmd.GhostID, cmd.SeedSelector),
-	}}, nil
+	return out
 }
 
-// planCommandsFromIssue converts explicit command_plan entries into wire commands.
-func planCommandsFromIssue(issue IssueEnv) ([]PlannedCommand, error) {
-	out := make([]PlannedCommand, 0, len(issue.CommandPlan))
-	for i := range issue.CommandPlan {
-		step := issue.CommandPlan[i]
-		if err := step.Validate(); err != nil {
-			return nil, err
+func flattenStagesToPlannedCommands(
+	intentID string,
+	stages []IssueStage,
+) []PlannedCommand {
+	var out []PlannedCommand
+	seq := 0
+
+	for si := range stages {
+		stage := stages[si]
+		for ci := range stage.Commands {
+			seq++
+			step := stage.Commands[ci]
+
+			cmd := session.Command{
+				CommandID:    fmt.Sprintf("cmd.%s.%d", sanitizeID(intentID), seq),
+				IntentID:     intentID,
+				GhostID:      strings.TrimSpace(step.GhostID),
+				SeedSelector: strings.TrimSpace(step.SeedSelector),
+				Operation:    strings.TrimSpace(step.Operation),
+				Args:         copyArgs(step.Args),
+			}
+
+			out = append(out, PlannedCommand{
+				Command:  cmd,
+				Blocking: step.Blocking || stage.Barrier,
+				SeedKey:  seedLockKey(cmd.GhostID, cmd.SeedSelector),
+			})
 		}
-		cmd := session.Command{
-			CommandID:    fmt.Sprintf("cmd.%s.%d", sanitizeID(issue.IntentID), i+1),
-			IntentID:     issue.IntentID,
-			GhostID:      strings.TrimSpace(step.GhostID),
-			SeedSelector: strings.TrimSpace(step.SeedSelector),
-			Operation:    strings.TrimSpace(step.Operation),
-			Args:         copyArgs(step.Args),
-		}
-		out = append(out, PlannedCommand{
-			Command:  cmd,
-			Blocking: step.Blocking,
-			SeedKey:  seedLockKey(cmd.GhostID, cmd.SeedSelector),
-		})
 	}
-	return out, nil
+
+	return out
 }
 
 // buildReportFromObserved converts one observed event into a report update.
@@ -522,7 +596,7 @@ func latestReportOrSynthesizeComplete(desired DesiredIntent, obs *ObservedIntent
 	return session.Report{
 		IntentID:        desired.Issue.IntentID,
 		Phase:           ReportPhaseComplete,
-		Summary:         fmt.Sprintf("intent %s has no command plan", desired.Issue.IntentID),
+		Summary:         fmt.Sprintf("intent %s has no planned commands", desired.Issue.IntentID),
 		CompletionState: CompletionSatisfied,
 		TimestampMS:     uint64(time.Now().UnixMilli()),
 	}
@@ -567,17 +641,8 @@ func cloneObserved(in ObservedIntent) ObservedIntent {
 		ObservedAt:  in.ObservedAt,
 		ByCommandID: make(map[string]session.Event, len(in.ByCommandID)),
 	}
-	for k, v := range in.ByCommandID {
-		out.ByCommandID[k] = v
-	}
+	maps.Copy(out.ByCommandID, in.ByCommandID)
 	return out
-}
-
-// normalizeGhostID resolves single-ghost target identifiers from target_scope text.
-func normalizeGhostID(targetScope string) string {
-	out := strings.TrimSpace(targetScope)
-	out = strings.TrimPrefix(out, "ghost:")
-	return strings.TrimSpace(out)
 }
 
 // sanitizeID converts ids into command-safe dot-separated text.
@@ -594,9 +659,7 @@ func copyArgs(in map[string]string) map[string]string {
 		return map[string]string{}
 	}
 	out := make(map[string]string, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
+	maps.Copy(out, in)
 	return out
 }
 
@@ -654,4 +717,59 @@ func (o *Orchestrator) releaseSeedLock(seedKey, intentID, commandID string) {
 	if lock.IntentID == intentID && lock.CommandID == commandID {
 		delete(o.seedLocks, seedKey)
 	}
+}
+
+// unused: connectedGhostsForSeed returns ghost IDs that are:
+//  1. currently connected (per routing table)
+//  2. advertising the given seed
+//
+// This is a pure planning helper used by intent planners.
+// It must not mutate state or perform I/O.
+func connectedGhostsForSeed(
+	routes []GhostRoute,
+	services []AvailableService,
+	seedID string,
+) []string {
+	seedID = strings.TrimSpace(seedID)
+	if seedID == "" {
+		return nil
+	}
+
+	// Build set of connected ghosts
+	connected := make(map[string]struct{}, len(routes))
+	for i := range routes {
+		r := routes[i]
+		if r.Connected {
+			id := strings.TrimSpace(r.GhostID)
+			if id != "" {
+				connected[id] = struct{}{}
+			}
+		}
+	}
+
+	// Intersect with seed advertisers
+	out := make(map[string]struct{})
+	for i := range services {
+		svc := services[i]
+		if strings.TrimSpace(svc.SeedID) != seedID {
+			continue
+		}
+		for _, ghostID := range svc.GhostIDs {
+			g := strings.TrimSpace(ghostID)
+			if g == "" {
+				continue
+			}
+			if _, ok := connected[g]; ok {
+				out[g] = struct{}{}
+			}
+		}
+	}
+
+	// Stable ordering
+	result := make([]string, 0, len(out))
+	for g := range out {
+		result = append(result, g)
+	}
+	sort.Strings(result)
+	return result
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -15,8 +16,10 @@ import (
 
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/seeds"
+	seeddocker "github.com/danmuck/edgectl/internal/seeds/docker"
 	seedflow "github.com/danmuck/edgectl/internal/seeds/flow"
 	seedfs "github.com/danmuck/edgectl/internal/seeds/fs"
+	seedhost "github.com/danmuck/edgectl/internal/seeds/host"
 	seedkv "github.com/danmuck/edgectl/internal/seeds/kv"
 	seedmongod "github.com/danmuck/edgectl/internal/seeds/mongod"
 	"github.com/danmuck/edgectl/internal/tools"
@@ -52,34 +55,37 @@ type SeedInstallConfig struct {
 	Enabled       bool
 	WorkspaceRoot string
 	InstallRoot   string
+	BinRoot       string
 	Whitelist     []string
 	Specs         []seeds.InstallSpec
 }
 
 // ServiceConfig configures Ghost standalone runtime defaults.
 type ServiceConfig struct {
-	GhostID            string
-	ProjectRoot        string
-	ProjectFetchOnBoot bool
-	BuiltinSeedIDs     []string
-	SeedInstall        SeedInstallConfig
-	HeartbeatInterval  time.Duration
-	AdminListenAddr    string
-	EnableClusterHost  bool
-	Mirage             MirageSessionConfig
+	GhostID             string
+	ProjectRoot         string
+	ProjectFetchOnBoot  bool
+	BuiltinSeedIDs      []string
+	SeedInstall         SeedInstallConfig
+	HeartbeatInterval   time.Duration
+	AdminListenAddr     string
+	AdminFrameAuthToken string
+	EnableClusterHost   bool
+	Mirage              MirageSessionConfig
 }
 
 // Ghost service defaults for standalone runtime configuration.
 func DefaultServiceConfig() ServiceConfig {
 	return ServiceConfig{
-		GhostID:            "ghost.local",
-		ProjectRoot:        "",
-		ProjectFetchOnBoot: true,
-		BuiltinSeedIDs:     []string{"seed.flow"},
-		SeedInstall:        SeedInstallConfig{Enabled: false, InstallRoot: filepath.Join("local", "seeds")},
-		HeartbeatInterval:  5 * time.Second,
-		AdminListenAddr:    "",
-		EnableClusterHost:  true,
+		GhostID:             "ghost.local",
+		ProjectRoot:         "",
+		ProjectFetchOnBoot:  true,
+		BuiltinSeedIDs:      []string{"seed.flow"},
+		SeedInstall:         SeedInstallConfig{Enabled: false, InstallRoot: filepath.Join("local", "seeds")},
+		HeartbeatInterval:   5 * time.Second,
+		AdminListenAddr:     "",
+		AdminFrameAuthToken: "",
+		EnableClusterHost:   true,
 		Mirage: MirageSessionConfig{
 			Policy:        MiragePolicyHeadless,
 			SessionConfig: session.DefaultConfig(),
@@ -95,15 +101,23 @@ type Service struct {
 	mirage *MirageSession
 	seq    atomic.Uint64
 
-	mirageAdminBound atomic.Bool
+	mirageAdminBound   atomic.Bool
+	mirageResolvedAddr atomic.Value  // string: resolved mirage session address from bind_mirage
+	mirageBindNotify   chan struct{} // signaled when bind_mirage resolves the session address
+	mirageClientMu     sync.RWMutex
+	mirageActiveClient *MirageClient // current connect/register client for live bind_mirage address updates
 
-	adminMu            sync.Mutex
-	adminSeq           atomic.Uint64
-	adminEvents        []EventEnv
-	verificationEvents []VerificationRecord
-	adminClientCount   atomic.Int64
-	cluster            clusterHost
+	adminMu                 sync.Mutex
+	adminSeq                atomic.Uint64
+	adminEvents             []EventEnv
+	verificationEvents      []VerificationRecord
+	adminFrameAuthValidator CommandFrameAuthValidator
+	adminClientCount        atomic.Int64
+	cluster                 clusterHost
 }
+
+// CommandFrameAuthValidator validates optional command-frame auth bytes for admin execute_envelope RPCs.
+type CommandFrameAuthValidator func(auth []byte) error
 
 // Ghost service constructor using default standalone config.
 func NewService() *Service {
@@ -117,12 +131,24 @@ func NewServiceWithConfig(cfg ServiceConfig) *Service {
 		cfg.Mirage.Policy = MiragePolicyHeadless
 	}
 	return &Service{
-		server:             NewServer(),
-		cfg:                cfg,
-		adminEvents:        make([]EventEnv, 0),
-		verificationEvents: make([]VerificationRecord, 0),
-		cluster:            newClusterHost(),
+		server:                  NewServer(),
+		cfg:                     cfg,
+		adminEvents:             make([]EventEnv, 0),
+		verificationEvents:      make([]VerificationRecord, 0),
+		adminFrameAuthValidator: defaultCommandFrameAuthValidator(strings.TrimSpace(cfg.AdminFrameAuthToken)),
+		cluster:                 newClusterHost(),
+		mirageBindNotify:        make(chan struct{}, 1),
 	}
+}
+
+// SetAdminCommandFrameAuthValidator overrides admin execute_envelope auth validation behavior.
+func (s *Service) SetAdminCommandFrameAuthValidator(validator CommandFrameAuthValidator) {
+	if validator == nil {
+		validator = defaultCommandFrameAuthValidator(strings.TrimSpace(s.cfg.AdminFrameAuthToken))
+	}
+	s.adminMu.Lock()
+	defer s.adminMu.Unlock()
+	s.adminFrameAuthValidator = validator
 }
 
 // Ghost runtime entrypoint that blocks until process signal shutdown.
@@ -220,8 +246,9 @@ func (s *Service) serve(ctx context.Context) error {
 			mirageConnected := s.IsMirageConnected()
 			mirageLink := s.MirageLinkMode()
 			managedChildren := s.ManagedGhostCount()
+			hostSummary := s.fetchHostSummary()
 			logs.Infof(
-				"ghost.Service.heartbeat ghost_id=%q phase=%s seeds=%d mirage_connected=%v mirage_link=%q admin_clients=%d managed_children=%d",
+				"ghost.Service.heartbeat ghost_id=%q phase=%s seeds=%d mirage_connected=%v mirage_link=%q admin_clients=%d managed_children=%d host=%q",
 				status.GhostID,
 				status.Phase,
 				status.SeedCount,
@@ -229,6 +256,7 @@ func (s *Service) serve(ctx context.Context) error {
 				mirageLink,
 				adminClients,
 				managedChildren,
+				hostSummary,
 			)
 		}
 	}
@@ -258,6 +286,31 @@ func (s *Service) runMirageSessionLoop(ctx context.Context) error {
 				return err
 			}
 			attempt++
+
+			// Slow-wait mode: conserve energy when mirage has never been reachable.
+			const slowWaitThreshold = 10
+			const slowWaitInterval = 30 * time.Second
+			if !connectedOnce && attempt >= slowWaitThreshold {
+				if attempt == slowWaitThreshold {
+					logs.Warnf("ghost.Service.runMirageSessionLoop entering slow-wait mode policy=%q", s.cfg.Mirage.Policy)
+				}
+				// Log every 6th attempt (~3 min at 30s interval) to reduce noise.
+				if attempt%6 == 0 {
+					logs.Warnf("ghost.Service.runMirageSessionLoop slow-wait attempt=%d policy=%q", attempt, s.cfg.Mirage.Policy)
+				}
+				slowTimer := time.NewTimer(slowWaitInterval)
+				select {
+				case <-ctx.Done():
+					slowTimer.Stop()
+					return ctx.Err()
+				case <-s.mirageBindNotify:
+					slowTimer.Stop()
+					logs.Warnf("ghost.Service.runMirageSessionLoop bind_mirage received, waking from slow-wait")
+				case <-slowTimer.C:
+				}
+				continue
+			}
+
 			logs.Warnf(
 				"ghost.Service.runMirageSessionLoop connect failed attempt=%d policy=%q err=%v",
 				attempt,
@@ -272,10 +325,11 @@ func (s *Service) runMirageSessionLoop(ctx context.Context) error {
 		attempt = 0
 		connectedOnce = true
 		s.setMirageSession(sessionConn)
+		resolvedAddr, _ := s.mirageResolvedAddr.Load().(string)
 		logs.Warnf(
 			"ghost.Service.runMirageSessionLoop connected policy=%q address=%q",
 			s.cfg.Mirage.Policy,
-			s.cfg.Mirage.Address,
+			resolvedAddr,
 		)
 
 		err = s.monitorMirageSession(ctx, sessionConn)
@@ -288,11 +342,32 @@ func (s *Service) runMirageSessionLoop(ctx context.Context) error {
 
 // Ghost Mirage client dial/register wrapper using runtime seed metadata.
 func (s *Service) connectMirageSession(ctx context.Context) (*MirageSession, error) {
+	seedList := SeedInfoFromMetadata(s.server.SeedMetadata())
+	// Enrich seed.host description with live host summary if available.
+	hostSummary := s.fetchHostSummary()
+	if hostSummary != "" {
+		for i := range seedList {
+			if seedList[i].ID == "seed.host" {
+				desc := strings.TrimSpace(seedList[i].Description)
+				if desc == "" {
+					desc = hostSummary
+				} else {
+					desc = desc + "; " + hostSummary
+				}
+				seedList[i].Description = desc
+			}
+		}
+	}
+	// Prefer resolved mirage session address from bind_mirage over configured hostname.
+	mirageAddr := strings.TrimSpace(s.cfg.Mirage.Address)
+	if resolved, ok := s.mirageResolvedAddr.Load().(string); ok && resolved != "" {
+		mirageAddr = resolved
+	}
 	clientCfg := MirageClientConfig{
-		Address:            strings.TrimSpace(s.cfg.Mirage.Address),
+		Address:            mirageAddr,
 		GhostID:            strings.TrimSpace(s.cfg.GhostID),
 		PeerIdentity:       strings.TrimSpace(s.cfg.Mirage.PeerIdentity),
-		SeedList:           SeedInfoFromMetadata(s.server.SeedMetadata()),
+		SeedList:           seedList,
 		Session:            s.cfg.Mirage.SessionConfig,
 		MaxConnectAttempts: s.cfg.Mirage.MaxConnectAttempts,
 	}
@@ -301,12 +376,41 @@ func (s *Service) connectMirageSession(ctx context.Context) (*MirageSession, err
 	if err != nil {
 		return nil, err
 	}
+	// Allow bind_mirage to update an in-flight connect/register client.
+	s.setActiveMirageClient(client)
+	defer s.clearActiveMirageClientIf(client)
 
 	sessionConn, err := client.ConnectAndRegister(ctx)
 	if err != nil {
 		return nil, err
 	}
+	// Lock in the working address so all future reconnects use it.
+	s.mirageResolvedAddr.Store(client.CurrentAddress())
 	return sessionConn, nil
+}
+
+// setActiveMirageClient records the current connect/register client for live address updates.
+func (s *Service) setActiveMirageClient(client *MirageClient) {
+	s.mirageClientMu.Lock()
+	defer s.mirageClientMu.Unlock()
+	s.mirageActiveClient = client
+}
+
+// clearActiveMirageClientIf clears the active client only when pointer identity matches.
+func (s *Service) clearActiveMirageClientIf(client *MirageClient) {
+	s.mirageClientMu.Lock()
+	defer s.mirageClientMu.Unlock()
+	if s.mirageActiveClient != client {
+		return
+	}
+	s.mirageActiveClient = nil
+}
+
+// activeMirageClient returns the current connect/register client, if one is in flight.
+func (s *Service) activeMirageClient() *MirageClient {
+	s.mirageClientMu.RLock()
+	defer s.mirageClientMu.RUnlock()
+	return s.mirageActiveClient
 }
 
 // Ghost session health probe loop using heartbeat events.
@@ -394,9 +498,34 @@ func (s *Service) MirageLinkMode() string {
 }
 
 // BindMirageAdminRoute marks this Ghost as connected to Mirage via admin routing.
-func (s *Service) BindMirageAdminRoute(mirageID string) {
+// If remoteAddr and sessionPort are provided, ghost resolves the mirage session dial target
+// by extracting the IP from the admin connection and combining it with the session port.
+func (s *Service) BindMirageAdminRoute(mirageID string, remoteAddr string, sessionPort string) {
 	id := strings.TrimSpace(mirageID)
 	s.mirageAdminBound.Store(true)
+
+	port := strings.TrimSpace(sessionPort)
+	remote := strings.TrimSpace(remoteAddr)
+	if port != "" && remote != "" {
+		host, _, err := net.SplitHostPort(remote)
+		if err == nil && host != "" {
+			resolved := net.JoinHostPort(host, port)
+			s.mirageResolvedAddr.Store(resolved)
+			// Update any in-flight connect/register client immediately.
+			if client := s.activeMirageClient(); client != nil {
+				if err := client.UpdateAddress(resolved); err != nil {
+					logs.Warnf("ghost.admin mirage route update ignored mirage_id=%q err=%v", id, err)
+				}
+			}
+			// Wake the session loop so it retries with the resolved address immediately.
+			select {
+			case s.mirageBindNotify <- struct{}{}:
+			default:
+			}
+			logs.Warnf("ghost.admin mirage route bound mirage_id=%q resolved_session_addr=%q", id, resolved)
+			return
+		}
+	}
 	logs.Warnf("ghost.admin mirage route bound mirage_id=%q", id)
 }
 
@@ -437,6 +566,7 @@ func (s *Service) sessionProbeEvent() EventEnv {
 }
 
 // Ghost reconnect backoff wait helper with deterministic delay.
+// Wakes early if bind_mirage delivers a resolved address.
 func (s *Service) waitReconnectBackoff(ctx context.Context, attempt int) error {
 	backoffCfg := s.cfg.Mirage.SessionConfig.Backoff
 	backoffCfg.Jitter = false
@@ -446,6 +576,9 @@ func (s *Service) waitReconnectBackoff(ctx context.Context, attempt int) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
+	case <-s.mirageBindNotify:
+		logs.Warnf("ghost.Service.waitReconnectBackoff bind_mirage received, retrying immediately")
+		return nil
 	case <-timer.C:
 		return nil
 	}
@@ -499,6 +632,14 @@ func buildBuiltinRegistry(seedIDs []string, ghostID string) (*seeds.Registry, er
 			if err := reg.Register(seedfs.NewSeedWithRoot(root)); err != nil {
 				return nil, err
 			}
+		case "seed.docker", "docker":
+			if err := reg.Register(seeddocker.NewSeed()); err != nil {
+				return nil, err
+			}
+		case "seed.host", "host":
+			if err := reg.Register(seedhost.NewSeed()); err != nil {
+				return nil, err
+			}
 		default:
 			return nil, fmt.Errorf("%w: %s", ErrUnknownBuiltinSeed, id)
 		}
@@ -517,6 +658,7 @@ func (s *Service) installSeedDependencies() error {
 	installer, err := seeds.NewInstaller(seeds.InstallerConfig{
 		WorkspaceRoot: cfg.WorkspaceRoot,
 		InstallRoot:   cfg.InstallRoot,
+		BinRoot:       cfg.BinRoot,
 		Whitelist:     cfg.Whitelist,
 	})
 	if err != nil {
@@ -526,6 +668,28 @@ func (s *Service) installSeedDependencies() error {
 		return err
 	}
 	return nil
+}
+
+// fetchHostSummary queries seed.host status if registered and returns a compact summary string.
+func (s *Service) fetchHostSummary() string {
+	seed, ok := s.server.ResolveSeed("seed.host")
+	if !ok {
+		return ""
+	}
+	result, err := seed.Execute("status", nil)
+	if err != nil || result.Status != "ok" {
+		return ""
+	}
+	// Compact multi-line output into semicolon-separated fields.
+	lines := strings.Split(strings.TrimSpace(string(result.Stdout)), "\n")
+	var parts []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			parts = append(parts, line)
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 // Ghost bootstrap hook that refreshes root project refs before seed install.

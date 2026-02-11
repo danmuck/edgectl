@@ -63,3 +63,18 @@ func TestSeedCommandFailure(t *testing.T) {
 		t.Fatalf("unexpected failure result: %+v", res)
 	}
 }
+
+func TestSeedCommandCatalog(t *testing.T) {
+	testlog.Start(t)
+	seed := NewSeedWithRunner(DefaultUnit, &fakeRunner{})
+	catalog := seed.CommandCatalog()
+	if len(catalog) != 5 {
+		t.Fatalf("unexpected catalog size: %d", len(catalog))
+	}
+	if catalog[0].SeedSelector != "seed.mongod" || catalog[0].Operation != "status" {
+		t.Fatalf("unexpected first catalog entry: %+v", catalog[0])
+	}
+	if len(catalog[0].Args) != 1 || catalog[0].Args[0].Key != "unit" {
+		t.Fatalf("unexpected unit arg spec: %+v", catalog[0].Args)
+	}
+}

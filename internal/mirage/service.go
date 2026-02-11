@@ -21,39 +21,43 @@ import (
 	"github.com/danmuck/edgectl/internal/protocol/frame"
 	"github.com/danmuck/edgectl/internal/protocol/schema"
 	"github.com/danmuck/edgectl/internal/protocol/session"
+	"github.com/danmuck/edgectl/internal/seeds"
 	logs "github.com/danmuck/smplog"
 )
 
 // Mirage session endpoint configuration.
 type ServiceConfig struct {
-	ListenAddr             string
-	RequireIdentityBinding bool
-	MirageID               string
-	AdminListenAddr        string
-	LocalGhostID           string
-	LocalGhostAdminAddr    string
-	PreloadGhostAdmins     []GhostAdminTarget
-	BuildlogPersistEnabled bool
-	BuildlogSeedSelector   string
-	BuildlogKeyPrefix      string
-	RootGhostAdminAddr     string
-	Session                session.Config
+	ListenAddr               string
+	RequireIdentityBinding   bool
+	MirageID                 string
+	AdminListenAddr          string
+	LocalGhostID             string
+	LocalGhostAdminAddr      string
+	GhostAdminFrameAuthToken string
+	PreloadGhostAdmins       []GhostAdminTarget
+	BuildlogPersistEnabled   bool
+	BuildlogSeedSelector     string
+	BuildlogKeyPrefix        string
+	RootGhostAdminAddr       string
+	GhostManifests           []GhostManifest
+	Session                  session.Config
 }
 
 // Mirage service defaults for session endpoint configuration.
 func DefaultServiceConfig() ServiceConfig {
 	return ServiceConfig{
-		ListenAddr:             ":9000",
-		RequireIdentityBinding: true,
-		MirageID:               "mirage.local",
-		AdminListenAddr:        "",
-		LocalGhostID:           "ghost.local",
-		LocalGhostAdminAddr:    "127.0.0.1:7010",
-		BuildlogPersistEnabled: false,
-		BuildlogSeedSelector:   "seed.fs",
-		BuildlogKeyPrefix:      "local/buildlogs/",
-		RootGhostAdminAddr:     "",
-		Session:                session.DefaultConfig(),
+		ListenAddr:               ":9000",
+		RequireIdentityBinding:   true,
+		MirageID:                 "mirage.local",
+		AdminListenAddr:          "",
+		LocalGhostID:             "ghost.local",
+		LocalGhostAdminAddr:      "127.0.0.1:7010",
+		GhostAdminFrameAuthToken: "",
+		BuildlogPersistEnabled:   false,
+		BuildlogSeedSelector:     "seed.fs",
+		BuildlogKeyPrefix:        "local/buildlogs/",
+		RootGhostAdminAddr:       "",
+		Session:                  session.DefaultConfig(),
 	}
 }
 
@@ -79,6 +83,22 @@ type GhostRoute struct {
 type AvailableService struct {
 	SeedID   string   `json:"seed_id"`
 	GhostIDs []string `json:"ghost_ids"`
+}
+
+// SeedCapability mirrors one Ghost-published seed capability entry.
+type SeedCapability struct {
+	Metadata       seeds.SeedMetadata      `json:"metadata"`
+	Operations     []seeds.OperationSpec   `json:"operations"`
+	CommandCatalog []seeds.CommandTemplate `json:"command_catalog"`
+}
+
+// GhostSeedCatalog captures one Ghost capability snapshot and fetch status.
+type GhostSeedCatalog struct {
+	GhostID     string           `json:"ghost_id"`
+	AdminAddr   string           `json:"admin_addr"`
+	Connected   bool             `json:"connected"`
+	Error       string           `json:"error,omitempty"`
+	SeedCatalog []SeedCapability `json:"seed_catalog"`
 }
 
 // Mirage internal state with mutable registration metadata and ack idempotency map.
@@ -134,7 +154,7 @@ func NewServiceWithConfig(cfg ServiceConfig) *Service {
 		localAdminAddr = strings.TrimSpace(cfg.RootGhostAdminAddr)
 	}
 	if localAdminAddr != "" {
-		svc.controlClient = NewGhostControlClient(localAdminAddr)
+		svc.controlClient = svc.newGhostControlClient(localAdminAddr)
 		svc.server.SetGhostSpawner(NewGhostAdminSpawner(localAdminAddr))
 		localGhostID := strings.TrimSpace(cfg.LocalGhostID)
 		if localGhostID != "" {
@@ -197,6 +217,10 @@ func (s *Service) Run() error {
 			controlErr <- s.serveAdminControl(ctx, strings.TrimSpace(s.cfg.AdminListenAddr))
 		}()
 	}
+	ghostHeartbeatErr := make(chan error, 1)
+	go func() {
+		ghostHeartbeatErr <- s.runGhostHeartbeatLoop(ctx)
+	}()
 	serveErr := make(chan error, 1)
 	go func() {
 		serveErr <- s.Serve(ctx, ln)
@@ -205,6 +229,11 @@ func (s *Service) Run() error {
 	case err := <-serveErr:
 		return err
 	case err := <-controlErr:
+		if err != nil {
+			return err
+		}
+		return <-serveErr
+	case err := <-ghostHeartbeatErr:
 		if err != nil {
 			return err
 		}
@@ -266,7 +295,7 @@ func (s *Service) SnapshotConnectedGhosts() []RegisteredGhost {
 	bound := s.snapshotGhostAdmins()
 	now := time.Now()
 	for ghostID, adminAddr := range bound {
-		client := NewGhostControlClient(adminAddr)
+		client := s.newGhostControlClient(adminAddr)
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		status, err := client.Status(ctx)
 		cancel()
@@ -360,6 +389,50 @@ func (s *Service) SnapshotAvailableServices() []AvailableService {
 	return out
 }
 
+// SnapshotSeedCatalog returns per-ghost seed capability catalogs via Ghost admin routes.
+func (s *Service) SnapshotSeedCatalog() []GhostSeedCatalog {
+	bound := s.snapshotGhostAdmins()
+	out := make([]GhostSeedCatalog, 0, len(bound))
+	for ghostID, adminAddr := range bound {
+		entry := GhostSeedCatalog{
+			GhostID:   strings.TrimSpace(ghostID),
+			AdminAddr: strings.TrimSpace(adminAddr),
+		}
+
+		client := s.newGhostControlClient(entry.AdminAddr)
+		statusCtx, statusCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		status, statusErr := client.Status(statusCtx)
+		statusCancel()
+		resolvedID := strings.TrimSpace(status.GhostID)
+		if resolvedID != "" && resolvedID != entry.GhostID {
+			s.bindGhostAdmin(resolvedID, entry.AdminAddr)
+			entry.GhostID = resolvedID
+		}
+		if statusErr != nil {
+			entry.Connected = false
+			entry.Error = statusErr.Error()
+			out = append(out, entry)
+			continue
+		}
+
+		entry.Connected = true
+		catalogCtx, catalogCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		catalog, catalogErr := client.ListSeedCatalog(catalogCtx)
+		catalogCancel()
+		if catalogErr != nil {
+			entry.Error = catalogErr.Error()
+			out = append(out, entry)
+			continue
+		}
+		entry.SeedCatalog = cloneSeedCapabilities(catalog)
+		out = append(out, entry)
+	}
+	sort.Slice(out, func(i int, j int) bool {
+		return out[i].GhostID < out[j].GhostID
+	})
+	return out
+}
+
 func (s *Service) bindGhostAdmin(ghostID string, adminAddr string) {
 	id := strings.TrimSpace(ghostID)
 	addr := strings.TrimSpace(adminAddr)
@@ -369,6 +442,49 @@ func (s *Service) bindGhostAdmin(ghostID string, adminAddr string) {
 	s.adminGhostMu.Lock()
 	defer s.adminGhostMu.Unlock()
 	s.adminGhostAddrs[id] = addr
+}
+
+func cloneSeedCapabilities(in []SeedCapability) []SeedCapability {
+	if len(in) == 0 {
+		return []SeedCapability{}
+	}
+	out := make([]SeedCapability, len(in))
+	copy(out, in)
+	for i := range out {
+		out[i].Operations = cloneOperationSpecs(out[i].Operations)
+		out[i].CommandCatalog = cloneCommandTemplates(out[i].CommandCatalog)
+	}
+	return out
+}
+
+func cloneOperationSpecs(in []seeds.OperationSpec) []seeds.OperationSpec {
+	if len(in) == 0 {
+		return []seeds.OperationSpec{}
+	}
+	out := make([]seeds.OperationSpec, len(in))
+	copy(out, in)
+	return out
+}
+
+func cloneCommandTemplates(in []seeds.CommandTemplate) []seeds.CommandTemplate {
+	if len(in) == 0 {
+		return []seeds.CommandTemplate{}
+	}
+	out := make([]seeds.CommandTemplate, len(in))
+	copy(out, in)
+	for i := range out {
+		out[i].Args = cloneCommandArgSpecs(out[i].Args)
+	}
+	return out
+}
+
+func cloneCommandArgSpecs(in []seeds.CommandArgSpec) []seeds.CommandArgSpec {
+	if len(in) == 0 {
+		return []seeds.CommandArgSpec{}
+	}
+	out := make([]seeds.CommandArgSpec, len(in))
+	copy(out, in)
+	return out
 }
 
 func (s *Service) snapshotGhostAdmins() map[string]string {
@@ -395,17 +511,96 @@ func (s *Service) preloadGhostAdmins() {
 	}
 }
 
+// Mirage background loop that periodically probes all configured ghost admin endpoints.
+// Retries attach for ghosts that failed during preload, and logs health transitions.
+func (s *Service) runGhostHeartbeatLoop(ctx context.Context) error {
+	const probeInterval = 10 * time.Second
+	const probeTimeout = 2 * time.Second
+
+	// Build initial pending set: preload targets + manifest targets not yet bound.
+	type ghostTarget struct {
+		ghostID   string
+		adminAddr string
+	}
+	pending := make(map[string]ghostTarget)
+	for _, t := range s.cfg.PreloadGhostAdmins {
+		id := strings.TrimSpace(t.GhostID)
+		addr := strings.TrimSpace(t.AdminAddr)
+		if id != "" && addr != "" {
+			pending[addr] = ghostTarget{ghostID: id, adminAddr: addr}
+		}
+	}
+	for _, m := range s.cfg.GhostManifests {
+		addr := strings.TrimSpace(m.AdminListen)
+		id := strings.TrimSpace(m.GhostID)
+		if addr != "" && id != "" {
+			pending[addr] = ghostTarget{ghostID: id, adminAddr: addr}
+		}
+	}
+	// Remove targets already bound at startup.
+	bound := s.snapshotGhostAdmins()
+	for _, addr := range bound {
+		delete(pending, addr)
+	}
+
+	// Track last-known health state for transition logging.
+	ghostUp := make(map[string]bool)
+	for id := range bound {
+		ghostUp[id] = true
+	}
+
+	ticker := time.NewTicker(probeInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+
+		// Probe bound ghosts for health.
+		currentBound := s.snapshotGhostAdmins()
+		for ghostID, adminAddr := range currentBound {
+			client := s.newGhostControlClient(adminAddr)
+			probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+			_, err := client.Status(probeCtx)
+			cancel()
+
+			wasUp := ghostUp[ghostID]
+			nowUp := err == nil
+			if wasUp && !nowUp {
+				logs.Warnf("mirage.ghostHeartbeat ghost down ghost_id=%q addr=%q err=%v", ghostID, adminAddr, err)
+			} else if !wasUp && nowUp {
+				logs.Warnf("mirage.ghostHeartbeat ghost up ghost_id=%q addr=%q", ghostID, adminAddr)
+			}
+			ghostUp[ghostID] = nowUp
+		}
+
+		// Retry pending (unattached) ghosts.
+		for addr, target := range pending {
+			if _, err := s.attachGhostAdmin(target.ghostID, target.adminAddr); err == nil {
+				logs.Warnf("mirage.ghostHeartbeat attached pending ghost ghost_id=%q addr=%q", target.ghostID, addr)
+				ghostUp[target.ghostID] = true
+				delete(pending, addr)
+			}
+		}
+	}
+}
+
 func (s *Service) bindGhostToMirage(ghostID string, adminAddr string) error {
 	id := strings.TrimSpace(ghostID)
 	addr := strings.TrimSpace(adminAddr)
 	if id == "" || addr == "" {
 		return fmt.Errorf("mirage: ghost bind requires ghost_id and admin_addr")
 	}
-	client := NewGhostControlClient(addr)
+	// Extract session listener port from mirage config so ghost can resolve session address.
+	sessionPort := extractPort(s.cfg.ListenAddr)
+	client := s.newGhostControlClient(addr)
 	var lastErr error
 	for attempt := 1; attempt <= 5; attempt++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		err := client.BindMirage(ctx, strings.TrimSpace(s.cfg.MirageID))
+		err := client.BindMirage(ctx, strings.TrimSpace(s.cfg.MirageID), sessionPort)
 		cancel()
 		if err == nil {
 			logs.Warnf("mirage.admin ghost bind success ghost_id=%q addr=%q attempt=%d", id, addr, attempt)
@@ -654,6 +849,10 @@ func peerIdentityFromCert(cert *x509.Certificate) string {
 		}
 	}
 	return ""
+}
+
+func (s *Service) newGhostControlClient(adminAddr string) *GhostControlClient {
+	return NewGhostControlClient(adminAddr).WithCommandFrameAuthToken(strings.TrimSpace(s.cfg.GhostAdminFrameAuthToken))
 }
 
 // Mirage TLS server-config builder for listener transport enforcement.

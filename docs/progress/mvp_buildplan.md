@@ -1,6 +1,6 @@
 # MVP Build Plan and Slices (Canonical)
 
-Status: `Phase 4 complete; Phase 5 in implementation; Phases 6-9 templated`
+Status: `Phase 5 complete (baseline); Phase 6 complete; Phase 7 complete; Phases 8-9 templated`
 
 This is the canonical high-level schedule for `mvp_p0.md` through `mvp_p9.md`.
 Use phase files for detailed task execution and acceptance check tracking.
@@ -12,9 +12,9 @@ Use phase files for detailed task execution and acceptance check tracking.
 - [x] Phase 2: `mvp_p2.md`
 - [x] Phase 3: `mvp_p3.md`
 - [x] Phase 4: `mvp_p4.md`
-- [ ] Phase 5: `mvp_p5.md`
-- [ ] Phase 6: `mvp_p6.md`
-- [ ] Phase 7: `mvp_p7.md`
+- [x] Phase 5: `mvp_p5.md`
+- [x] Phase 6: `mvp_p6.md`
+- [x] Phase 7: `mvp_p7.md`
 - [ ] Phase 8: `mvp_p8.md`
 - [ ] Phase 9: `mvp_p9.md` (placeholder; scope to be restored)
 
@@ -60,7 +60,7 @@ Use phase files for detailed task execution and acceptance check tracking.
 - [ ] Add error mapping per `errors.toml`
 - [x] Add failure-path tests (disconnect, duplicate IDs, timeout, validation failures)
 
-- [ ] Milestone 5: Mirage orchestration loop baseline (`mvp_p5.md`)
+- [x] Milestone 5: Mirage orchestration loop baseline (`mvp_p5.md`)
 - [x] Implement `issue` ingestion + desired-state persistence
 - [x] Implement reconcile loop (single-ghost first)
 - [x] Dispatch commands and ingest events into observed state
@@ -72,16 +72,18 @@ Use phase files for detailed task execution and acceptance check tracking.
 - [x] Add admin discovery/read-model surfaces (`registered_ghosts`, `routing_table`, `available_services`) and remote attach flow (`attach_ghost_admin`)
 - [x] Add temporary persistence seeds (`seed.kv` and `seed.fs`) and route buildlog persistence through seed execution
 
-- [ ] Milestone 6: Boundary transport integration (`mvp_p6.md`)
+- [x] Milestone 6: Boundary transport integration (`mvp_p6.md`)
 - [x] Bind Mirage command dispatch link to Ghost admin execute boundary to protocol envelopes (`execute_envelope`)
-- [ ] Replace direct action-style HTTP shortcuts between Mirage and Ghost
-- [ ] Wire optional auth block handling and validation hooks
-- [ ] Add contract tests for all boundaries
+- [x] Replace direct action-style HTTP shortcuts between Mirage and Ghost
+- [x] Wire optional auth block handling and validation hooks
+- [x] Add contract tests for all boundaries
+- [x] Fix client-tm multi-stage intent submission path (template filtering, orchestrator invocation, ghost selection)
+- [x] Add E2E test for multi-seed orchestrator intent template through full mirage orchestration
 
-- [ ] Milestone 7: End-to-end control loop validation (`mvp_p7.md`)
+- [x] Milestone 7: End-to-end control loop validation (`mvp_p7.md`)
 - [x] Add E2E scenario: intent -> command -> seed execution -> event -> report
-- [ ] Add deterministic logs for ownership transitions
-- [ ] Add E2E failure scenario with corrective behavior
+- [x] Add deterministic logs for ownership transitions
+- [x] Add E2E failure scenario with corrective behavior
 
 - [ ] Milestone 8: Hardening completion (`mvp_p8.md`)
 - [ ] Add idempotency strategy for repeated commands/events
@@ -115,5 +117,7 @@ Use phase files for detailed task execution and acceptance check tracking.
 
 Current state:
 - P4 conformance transport/handshake/reliability baseline is closed (`docs/progress/p4_conformance_report.md`).
-- Phase 5 baseline orchestration is in implementation with core loop/report/admin boundaries landed.
-- Deterministic orchestration e2e coverage is now present for `seed.fs` store/fanout flow; remaining major gaps are Milestones 4/6+ hardening, full boundary envelope migration, and contract test expansion.
+- Phase 5 baseline orchestration is complete: core loop, report, admin boundaries, persistence seeds, local ghost spin-up, discovery surfaces all landed and tested.
+- Phase 6 boundary transport integration is complete: execute path is envelope-only, optional command-frame auth hooks are wired, and boundary contract tests are in place.
+- Multi-stage intent orchestration path from client-tm through Mirage is enabled and E2E covered (see `mvp_p6.md` stop-gaps closure).
+- Remaining major gaps: Milestones 4/8+ hardening, structured observability/error mapping completion, and finalization tasks.

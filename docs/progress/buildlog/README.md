@@ -15,13 +15,11 @@ Examples:
 
 ## Required Process
 
-- Create one build log for the initial prompt.
-- For short, concise, single-target follow-up prompts in the same workstream, update the same build log file.
-- Create a new build log when prompt scope changes or when a prompt initiates a larger problem space.
+- Create one new build log for every user prompt.
+- Do not append follow-up prompts to an existing build log file.
 - Copy `template.toml` and fill all required fields.
 - Include:
   - initial prompt
-  - follow-up prompts
   - all files changed
   - justification for each change
   - any completed tasks from progress checklists

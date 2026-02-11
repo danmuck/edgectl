@@ -84,14 +84,14 @@ func EncodeFields(fields []Field) []byte {
 
 // TLV field lookup returning the first field with matching id.
 func GetField(fields []Field, id uint16) (Field, bool) {
-	logs.Debugf("tlv.GetField id=%d count=%d", id, len(fields))
+	// logs.Devf("tlv.GetField id=%d count=%d", id, len(fields))
 	for _, f := range fields {
 		if f.ID == id {
-			logs.Debugf("tlv.GetField found id=%d type=%d", f.ID, f.Type)
+			logs.Devf("tlv.GetField found id=%d type=%d", f.ID, f.Type)
 			return f, true
 		}
 	}
-	logs.Debugf("tlv.GetField missing id=%d", id)
+	// logs.Devf("tlv.GetField missing id=%d", id)
 	return Field{}, false
 }
 

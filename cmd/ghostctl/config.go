@@ -37,6 +37,7 @@ type fileConfig struct {
 	MirageTLSInsecure    bool              `toml:"mirage_tls_insecure_skip_verify"`
 	SeedInstallEnabled   bool              `toml:"seed_install_enabled"`
 	SeedInstallRoot      string            `toml:"seed_install_root"`
+	SeedInstallBinRoot   string            `toml:"seed_install_bin_root"`
 	SeedInstallWhitelist []string          `toml:"seed_install_whitelist"`
 	SeedInstall          []fileSeedInstall `toml:"seed_install"`
 }
@@ -54,6 +55,7 @@ type fileSeedInstall struct {
 	Tap                string   `toml:"tap"`
 	BootstrapIfMissing bool     `toml:"bootstrap_if_missing"`
 	BootstrapCommand   []string `toml:"bootstrap_cmd"`
+	InstallToBin       bool     `toml:"install_to_bin"`
 }
 
 // ghostctl loader for TOML config with default overlay.
@@ -154,6 +156,9 @@ func loadServiceConfig(path string) (ghost.ServiceConfig, error) {
 	if meta.IsDefined("seed_install_root") {
 		cfg.SeedInstall.InstallRoot = strings.TrimSpace(raw.SeedInstallRoot)
 	}
+	if meta.IsDefined("seed_install_bin_root") {
+		cfg.SeedInstall.BinRoot = strings.TrimSpace(raw.SeedInstallBinRoot)
+	}
 	if meta.IsDefined("seed_install_whitelist") {
 		cfg.SeedInstall.Whitelist = normalizeList(raw.SeedInstallWhitelist)
 	}
@@ -224,6 +229,7 @@ func parseSeedInstallSpecs(in []fileSeedInstall) ([]seeds.InstallSpec, error) {
 			Tap:                strings.TrimSpace(row.Tap),
 			BootstrapIfMissing: row.BootstrapIfMissing,
 			BootstrapCommand:   normalizeList(row.BootstrapCommand),
+			InstallToBin:       row.InstallToBin,
 		})
 	}
 	return out, nil

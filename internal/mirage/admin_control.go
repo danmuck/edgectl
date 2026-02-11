@@ -25,14 +25,21 @@ type AdminIssueCommand struct {
 	Blocking     bool              `json:"blocking"`
 }
 
+// AdminIssueStage defines one stage containing ordered commands in a mirage issue.
+type AdminIssueStage struct {
+	ID       string              `json:"id"`
+	Commands []AdminIssueCommand `json:"commands"`
+	Barrier  bool                `json:"barrier"`
+}
+
 // AdminIssueRequest defines one issue ingest request for mirage admin controls.
 type AdminIssueRequest struct {
-	IntentID         string              `json:"intent_id"`
-	Actor            string              `json:"actor"`
-	TargetScope      string              `json:"target_scope"`
-	Objective        string              `json:"objective"`
-	SeedDependencies []string            `json:"seed_dependencies,omitempty"`
-	CommandPlan      []AdminIssueCommand `json:"command_plan"`
+	IntentID         string            `json:"intent_id"`
+	Actor            string            `json:"actor"`
+	TargetScope      string            `json:"target_scope"`
+	Objective        string            `json:"objective"`
+	SeedDependencies []string          `json:"seed_dependencies,omitempty"`
+	Stages           []AdminIssueStage `json:"stages"`
 }
 
 // AdminSnapshotIntentResponse captures one intent snapshot response payload.
@@ -53,12 +60,13 @@ type AdminAttachGhostResponse struct {
 }
 
 type adminControlRequest struct {
-	Action         string            `json:"action"`
-	Limit          int               `json:"limit,omitempty"`
-	IntentID       string            `json:"intent_id,omitempty"`
-	Issue          AdminIssueRequest `json:"issue,omitempty"`
-	Spawn          SpawnGhostRequest `json:"spawn,omitempty"`
-	GhostAdminAddr string            `json:"ghost_admin_addr,omitempty"`
+	Action         string             `json:"action"`
+	Limit          int                `json:"limit,omitempty"`
+	IntentID       string             `json:"intent_id,omitempty"`
+	Issue          AdminIssueRequest  `json:"issue,omitempty"`
+	Spawn          SpawnGhostRequest  `json:"spawn,omitempty"`
+	Deploy         DeployGhostRequest `json:"deploy,omitempty"`
+	GhostAdminAddr string             `json:"ghost_admin_addr,omitempty"`
 }
 
 type adminControlResponse struct {
@@ -191,6 +199,8 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 		return adminControlResponse{OK: true, Data: s.SnapshotRoutingTable()}
 	case "available_services":
 		return adminControlResponse{OK: true, Data: s.SnapshotAvailableServices()}
+	case "seed_catalog":
+		return adminControlResponse{OK: true, Data: s.SnapshotSeedCatalog()}
 	case "attach_ghost_admin":
 		addr := strings.TrimSpace(req.GhostAdminAddr)
 		if addr == "" {
@@ -215,6 +225,39 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 		s.bindGhostAdmin(out.GhostID, out.AdminAddr)
 		logs.Warnf("mirage.admin spawned local ghost ghost_id=%q addr=%q", out.GhostID, out.AdminAddr)
 		return adminControlResponse{OK: true, Data: out}
+	case "deploy_ghost":
+		deployer := NewSSHDeployer()
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		result, err := deployer.Deploy(ctx, req.Deploy)
+		if err != nil {
+			return adminControlResponse{OK: false, Error: err.Error()}
+		}
+		// Auto-attach the newly deployed ghost via admin routing.
+		if result.AdminAddr != "" {
+			attachCtx, attachCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer attachCancel()
+			// Wait briefly for process startup before attempting attach.
+			select {
+			case <-attachCtx.Done():
+			case <-time.After(2 * time.Second):
+			}
+			out, attachErr := s.attachGhostAdmin(result.GhostID, result.AdminAddr)
+			if attachErr != nil {
+				logs.Warnf("mirage.admin deploy_ghost auto-attach failed ghost_id=%q addr=%q err=%v",
+					result.GhostID, result.AdminAddr, attachErr)
+				result.Message += "; auto-attach failed: " + attachErr.Error()
+			} else {
+				logs.Warnf("mirage.admin deploy_ghost attached ghost_id=%q addr=%q", out.GhostID, out.AdminAddr)
+				result.Status = "deployed_and_attached"
+			}
+		}
+		s.persistBuildlog("deploy_ghost", map[string]any{
+			"ghost_id": result.GhostID,
+			"host":     result.Host,
+			"status":   result.Status,
+		})
+		return adminControlResponse{OK: true, Data: result}
 	default:
 		return adminControlResponse{OK: false, Error: fmt.Sprintf("unknown action: %s", req.Action)}
 	}
@@ -227,7 +270,7 @@ func (s *Service) attachGhostAdmin(expectedGhostID string, adminAddr string) (Ad
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	client := NewGhostControlClient(addr)
+	client := s.newGhostControlClient(addr)
 	status, err := client.Status(ctx)
 	if err != nil {
 		return AdminAttachGhostResponse{}, err
@@ -254,6 +297,7 @@ func (s *Service) attachGhostAdmin(expectedGhostID string, adminAddr string) (Ad
 	return AdminAttachGhostResponse{GhostID: ghostID, AdminAddr: addr}, nil
 }
 
+// mapAdminIssue converts a wire-format admin issue request to an internal IssueEnv.
 func mapAdminIssue(in AdminIssueRequest) IssueEnv {
 	out := IssueEnv{
 		IntentID:         strings.TrimSpace(in.IntentID),
@@ -261,19 +305,32 @@ func mapAdminIssue(in AdminIssueRequest) IssueEnv {
 		TargetScope:      strings.TrimSpace(in.TargetScope),
 		Objective:        strings.TrimSpace(in.Objective),
 		SeedDependencies: normalizeStringList(in.SeedDependencies),
-		CommandPlan:      make([]IssueCommand, 0, len(in.CommandPlan)),
+		Stages:           make([]IssueStage, 0, len(in.Stages)),
 	}
-	for i := range in.CommandPlan {
-		step := in.CommandPlan[i]
-		out.CommandPlan = append(out.CommandPlan, IssueCommand{
-			GhostID:      strings.TrimSpace(step.GhostID),
-			SeedSelector: strings.TrimSpace(step.SeedSelector),
-			Operation:    strings.TrimSpace(step.Operation),
-			Args:         copyArgs(step.Args),
-			Blocking:     step.Blocking,
-		})
+	for i := range in.Stages {
+		src := in.Stages[i]
+		stage := IssueStage{
+			ID:       strings.TrimSpace(src.ID),
+			Barrier:  src.Barrier,
+			Commands: make([]IssueCommand, 0, len(src.Commands)),
+		}
+		for j := range src.Commands {
+			stage.Commands = append(stage.Commands, mapAdminIssueCommand(src.Commands[j]))
+		}
+		out.Stages = append(out.Stages, stage)
 	}
 	return out
+}
+
+// mapAdminIssueCommand converts one wire-format command to internal IssueCommand.
+func mapAdminIssueCommand(in AdminIssueCommand) IssueCommand {
+	return IssueCommand{
+		GhostID:      strings.TrimSpace(in.GhostID),
+		SeedSelector: strings.TrimSpace(in.SeedSelector),
+		Operation:    strings.TrimSpace(in.Operation),
+		Args:         copyArgs(in.Args),
+		Blocking:     in.Blocking,
+	}
 }
 
 func normalizeStringList(in []string) []string {

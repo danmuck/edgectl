@@ -58,6 +58,58 @@ func (s Seed) Operations() []seeds.OperationSpec {
 	}
 }
 
+// CommandCatalog returns guided operator-facing command templates for this seed.
+func (s Seed) CommandCatalog() []seeds.CommandTemplate {
+	seedID := s.Metadata().ID
+	return []seeds.CommandTemplate{
+		{
+			ID:           seedID + ".write",
+			Label:        "Filesystem Write",
+			Description:  "Write file content under ghost-scoped seed.fs root.",
+			SeedSelector: seedID,
+			Operation:    "write",
+			Args: []seeds.CommandArgSpec{
+				{Key: "path", Prompt: "filename (relative path)", Required: true},
+				{Key: "content", Prompt: "file content", Required: true, Multiline: true, Terminator: ".done"},
+			},
+			DefaultBlocking: true,
+		},
+		{
+			ID:           seedID + ".read",
+			Label:        "Filesystem Read",
+			Description:  "Read file content from ghost-scoped seed.fs root.",
+			SeedSelector: seedID,
+			Operation:    "read",
+			Args: []seeds.CommandArgSpec{
+				{Key: "path", Prompt: "relative file path", Required: true},
+			},
+			DefaultBlocking: true,
+		},
+		{
+			ID:           seedID + ".list",
+			Label:        "Filesystem List",
+			Description:  "List file paths from ghost-scoped seed.fs root.",
+			SeedSelector: seedID,
+			Operation:    "list",
+			Args: []seeds.CommandArgSpec{
+				{Key: "prefix", Prompt: "path prefix (optional)", Required: false},
+			},
+			DefaultBlocking: true,
+		},
+		{
+			ID:           seedID + ".delete",
+			Label:        "Filesystem Delete",
+			Description:  "Delete file path from ghost-scoped seed.fs root.",
+			SeedSelector: seedID,
+			Operation:    "delete",
+			Args: []seeds.CommandArgSpec{
+				{Key: "path", Prompt: "relative file path", Required: true},
+			},
+			DefaultBlocking: true,
+		},
+	}
+}
+
 // Execute applies one filesystem operation scoped to the configured seed root.
 func (s Seed) Execute(action string, args map[string]string) (seeds.SeedResult, error) {
 	switch strings.TrimSpace(action) {

@@ -134,12 +134,19 @@ func TestServerDelegatesOrchestration(t *testing.T) {
 		t.Fatalf("register executor: %v", err)
 	}
 	if err := srv.SubmitIssue(IssueEnv{
-		IntentID:     "intent.1",
-		Actor:        "user:dan",
-		TargetScope:  "ghost:ghost.alpha",
-		Objective:    "status",
-		Operation:    "status",
-		SeedSelector: "seed.flow",
+		IntentID:    "intent.1",
+		Actor:       "user:dan",
+		TargetScope: "ghost:ghost.alpha",
+		Objective:   "status",
+		Stages: []IssueStage{
+			{
+				ID:      "stage.1",
+				Barrier: true,
+				Commands: []IssueCommand{
+					{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status"},
+				},
+			},
+		},
 	}); err != nil {
 		t.Fatalf("submit issue: %v", err)
 	}

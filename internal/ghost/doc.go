@@ -14,6 +14,14 @@
 //
 // - standalone runtime does not require Mirage to be connected.
 //
+// Builtin seed catalog:
+// - seed.flow (control plane)
+// - seed.mongod (systemctl mongod adapter)
+// - seed.kv (in-memory key-value store)
+// - seed.fs (ghost-scoped filesystem)
+// - seed.docker (container runtime CLI adapter)
+// - seed.host (host introspection via Go stdlib + CLI)
+//
 // Ghost does not own desired state.
 //
 // Canonical references (consult before changes):

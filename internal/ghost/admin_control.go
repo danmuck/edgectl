@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -15,6 +17,11 @@ import (
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/seeds"
 	logs "github.com/danmuck/smplog"
+)
+
+var (
+	ErrAdminFrameAuthRequired = errors.New("ghost.admin: command_frame auth required")
+	ErrAdminFrameAuthInvalid  = errors.New("ghost.admin: command_frame auth invalid")
 )
 
 // AdminCommand is the external admin execution request payload.
@@ -51,10 +58,10 @@ type controlRequest struct {
 	Action       string            `json:"action"`
 	Limit        int               `json:"limit,omitempty"`
 	CommandID    string            `json:"command_id,omitempty"`
-	Command      AdminCommand      `json:"command,omitempty"`
 	CommandFrame []byte            `json:"command_frame,omitempty"`
 	Spawn        SpawnGhostRequest `json:"spawn,omitempty"`
 	MirageID     string            `json:"mirage_id,omitempty"`
+	SessionPort  string            `json:"session_port,omitempty"`
 }
 
 // controlResponse is one admin action result envelope emitted by ghostctl.
@@ -126,6 +133,11 @@ func (s *Service) ListSeeds() []seeds.SeedMetadata {
 	return s.server.SeedMetadata()
 }
 
+// SeedCatalog returns full seed capabilities including operations and command templates.
+func (s *Service) SeedCatalog() []SeedCapability {
+	return s.server.SeedCatalog()
+}
+
 // ExecutionByCommandID proxies execution lookup by command id.
 func (s *Service) ExecutionByCommandID(commandID string) (ExecutionState, bool) {
 	return s.server.ExecutionByCommandID(commandID)
@@ -134,33 +146,28 @@ func (s *Service) ExecutionByCommandID(commandID string) (ExecutionState, bool) 
 func (s *Service) RecentAdminEvents(limit int) []EventEnv {
 	s.adminMu.Lock()
 	defer s.adminMu.Unlock()
-	if limit <= 0 {
-		limit = 20
-	}
-	if len(s.adminEvents) <= limit {
-		out := make([]EventEnv, len(s.adminEvents))
-		copy(out, s.adminEvents)
-		return out
-	}
-	out := make([]EventEnv, limit)
-	copy(out, s.adminEvents[len(s.adminEvents)-limit:])
-	return out
+	return cloneRecent(s.adminEvents, limit)
 }
 
 // VerificationView returns a bounded list of correlation records for protocol inspection.
 func (s *Service) VerificationView(limit int) []VerificationRecord {
 	s.adminMu.Lock()
 	defer s.adminMu.Unlock()
+	return cloneRecent(s.verificationEvents, limit)
+}
+
+// cloneRecent returns a defensive copy of the most recent items.
+func cloneRecent[T any](in []T, limit int) []T {
 	if limit <= 0 {
 		limit = 20
 	}
-	if len(s.verificationEvents) <= limit {
-		out := make([]VerificationRecord, len(s.verificationEvents))
-		copy(out, s.verificationEvents)
+	if len(in) <= limit {
+		out := make([]T, len(in))
+		copy(out, in)
 		return out
 	}
-	out := make([]VerificationRecord, limit)
-	copy(out, s.verificationEvents[len(s.verificationEvents)-limit:])
+	out := make([]T, limit)
+	copy(out, in[len(in)-limit:])
 	return out
 }
 
@@ -215,7 +222,7 @@ func (s *Service) handleAdminConn(conn net.Conn) {
 			_ = writeControlResponse(conn, controlResponse{OK: false, Error: err.Error()})
 			continue
 		}
-		resp := s.handleControlRequest(req)
+		resp := s.handleControlRequest(req, remote)
 		if err := writeControlResponse(conn, resp); err != nil {
 			logs.Warnf("ghost.admin write err=%v", err)
 			return
@@ -224,24 +231,15 @@ func (s *Service) handleAdminConn(conn net.Conn) {
 }
 
 // handleControlRequest dispatches RPC-like admin actions to service methods.
-func (s *Service) handleControlRequest(req controlRequest) controlResponse {
+// remoteAddr is the admin client's TCP remote address for connection-derived resolution.
+func (s *Service) handleControlRequest(req controlRequest, remoteAddr string) controlResponse {
 	switch req.Action {
 	case "status":
 		return controlResponse{OK: true, Data: s.server.Status()}
 	case "list_seeds":
 		return controlResponse{OK: true, Data: s.ListSeeds()}
-	case "execute":
-		state, event, err := s.ExecuteAdminCommand(req.Command)
-		if err != nil {
-			return controlResponse{OK: false, Error: err.Error()}
-		}
-		return controlResponse{
-			OK: true,
-			Data: map[string]any{
-				"execution": state,
-				"event":     event,
-			},
-		}
+	case "list_seed_catalog":
+		return controlResponse{OK: true, Data: s.SeedCatalog()}
 	case "execute_envelope":
 		out, err := s.executeAdminCommandEnvelope(req.CommandFrame)
 		if err != nil {
@@ -268,7 +266,7 @@ func (s *Service) handleControlRequest(req controlRequest) controlResponse {
 		}
 		return controlResponse{OK: true, Data: out}
 	case "bind_mirage":
-		s.BindMirageAdminRoute(req.MirageID)
+		s.BindMirageAdminRoute(req.MirageID, remoteAddr, req.SessionPort)
 		return controlResponse{OK: true}
 	default:
 		return controlResponse{OK: false, Error: fmt.Sprintf("unknown action: %s", req.Action)}
@@ -286,6 +284,13 @@ func (s *Service) executeAdminCommandEnvelope(commandFrame []byte) (executeEnvel
 	}
 	fr, err := frame.ReadFrame(bytes.NewReader(commandFrame), frame.DefaultLimits())
 	if err != nil {
+		return executeEnvelopeResponse{}, err
+	}
+	validator := s.adminFrameAuthValidator
+	if validator == nil {
+		validator = defaultCommandFrameAuthValidator(strings.TrimSpace(s.cfg.AdminFrameAuthToken))
+	}
+	if err := validator(fr.Auth); err != nil {
 		return executeEnvelopeResponse{}, err
 	}
 	cmd, err := session.DecodeCommandFrame(fr)
@@ -315,6 +320,23 @@ func (s *Service) executeAdminCommandEnvelope(commandFrame []byte) (executeEnvel
 		return executeEnvelopeResponse{}, err
 	}
 	return executeEnvelopeResponse{EventFrame: eventFrame}, nil
+}
+
+func defaultCommandFrameAuthValidator(token string) CommandFrameAuthValidator {
+	expected := strings.TrimSpace(token)
+	if expected == "" {
+		return func(_ []byte) error { return nil }
+	}
+	expectedBytes := []byte(expected)
+	return func(auth []byte) error {
+		if len(auth) == 0 {
+			return ErrAdminFrameAuthRequired
+		}
+		if subtle.ConstantTimeCompare(auth, expectedBytes) != 1 {
+			return ErrAdminFrameAuthInvalid
+		}
+		return nil
+	}
 }
 
 func writeControlResponse(w io.Writer, resp controlResponse) error {

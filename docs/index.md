@@ -10,6 +10,7 @@ This index is the navigation root for architecture and protocol documentation.
 ## Architecture
 
 - Control loop overview: [`architecture/control-loop.md`](architecture/control-loop.md)
+- Future API v1 proposal (northbound boundary): [`architecture/future_api_v1.md`](architecture/future_api_v1.md)
 - High-level design contract: [`architecture/definitions/design.toml`](architecture/definitions/design.toml)
 - Protocol/package boundary contract: [`architecture/definitions/protocol.toml`](architecture/definitions/protocol.toml)
 - Mirage-Ghost transport contract: [`architecture/transport.md`](architecture/transport.md)
@@ -29,6 +30,8 @@ This index is the navigation root for architecture and protocol documentation.
 - Decision model: [`architecture/models/decision_model.mmd`](architecture/models/decision_model.mmd)
 - State authority: [`architecture/models/state_authority.mmd`](architecture/models/state_authority.mmd)
 - Protocol interface boundary: [`architecture/models/proto_interface_boundary.mmd`](architecture/models/proto_interface_boundary.mmd)
+- Future API v1 boundary (proposal): [`architecture/models/future_api_v1_boundary.mmd`](architecture/models/future_api_v1_boundary.mmd)
+- Future API v1 issue/reconcile flow (proposal): [`architecture/models/future_api_v1_issue_reconcile_flow.mmd`](architecture/models/future_api_v1_issue_reconcile_flow.mmd)
 
 ## Glossary and Contracts
 
@@ -75,3 +78,4 @@ This index is the navigation root for architecture and protocol documentation.
 15. [`glossary/transport.md`](glossary/transport.md)
 16. [`glossary/frame.md`](glossary/frame.md)
 17. [`architecture/control-loop.md`](architecture/control-loop.md)
+18. [`architecture/future_api_v1.md`](architecture/future_api_v1.md)

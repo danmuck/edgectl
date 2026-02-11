@@ -27,8 +27,14 @@ func TestHandleAdminControlSubmitAndReconcileIntent(t *testing.T) {
 			Actor:       "user:dan",
 			TargetScope: "ghost:ghost.alpha",
 			Objective:   "status",
-			CommandPlan: []AdminIssueCommand{
-				{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status"},
+			Stages: []AdminIssueStage{
+				{
+					ID:      "stage.1",
+					Barrier: true,
+					Commands: []AdminIssueCommand{
+						{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status"},
+					},
+				},
 			},
 		},
 	})
@@ -343,6 +349,196 @@ func TestServicePreloadGhostAdmins(t *testing.T) {
 	}
 	if !strings.HasPrefix(addr, "127.0.0.1:") {
 		t.Fatalf("expected normalized preload addr, got %q", addr)
+	}
+	<-done
+}
+
+func TestHandleAdminControlSeedCatalogMixedConnectivity(t *testing.T) {
+	testlog.Start(t)
+
+	healthyLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen healthy: %v", err)
+	}
+	defer healthyLn.Close()
+
+	// Acquire a closed address for deterministic connection-refused behavior.
+	deadLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen dead: %v", err)
+	}
+	deadAddr := deadLn.Addr().String()
+	_ = deadLn.Close()
+
+	healthyDone := make(chan struct{})
+	go func() {
+		defer close(healthyDone)
+		for i := 0; i < 2; i++ {
+			conn, err := healthyLn.Accept()
+			if err != nil {
+				return
+			}
+			reader := bufio.NewReader(conn)
+			line, err := reader.ReadBytes('\n')
+			if err != nil {
+				_ = conn.Close()
+				return
+			}
+			var req ghostControlRequest
+			if err := json.Unmarshal(line, &req); err != nil {
+				_ = conn.Close()
+				return
+			}
+			resp := ghostControlResponse{OK: true}
+			switch req.Action {
+			case statusAction:
+				resp.Data = mustJSON(t, map[string]any{"GhostID": "ghost.alpha"})
+			case listSeedCatalogAction:
+				resp.Data = mustJSON(t, []map[string]any{
+					{
+						"metadata": map[string]any{
+							"id":          "seed.flow",
+							"name":        "Flow",
+							"description": "Deterministic control-flow seed",
+						},
+						"operations": []map[string]any{
+							{"name": "status", "description": "status", "idempotent": true},
+						},
+						"command_catalog": []map[string]any{
+							{
+								"id":               "seed.flow.status",
+								"label":            "Flow Status",
+								"description":      "Read deterministic flow status.",
+								"seed_selector":    "seed.flow",
+								"operation":        "status",
+								"default_blocking": false,
+							},
+						},
+					},
+				})
+			default:
+				_ = conn.Close()
+				return
+			}
+			payload, _ := json.Marshal(resp)
+			payload = append(payload, '\n')
+			_, _ = conn.Write(payload)
+			_ = conn.Close()
+		}
+	}()
+
+	cfg := DefaultServiceConfig()
+	cfg.LocalGhostID = ""
+	cfg.LocalGhostAdminAddr = ""
+	svc := NewServiceWithConfig(cfg)
+	svc.bindGhostAdmin("ghost.alpha", healthyLn.Addr().String())
+	svc.bindGhostAdmin("ghost.beta", deadAddr)
+
+	resp := svc.handleAdminControlRequest(adminControlRequest{Action: "seed_catalog"})
+	if !resp.OK {
+		t.Fatalf("seed_catalog failed: %+v", resp)
+	}
+	list, ok := resp.Data.([]GhostSeedCatalog)
+	if !ok {
+		t.Fatalf("unexpected seed_catalog payload type: %T", resp.Data)
+	}
+	if len(list) != 2 {
+		t.Fatalf("unexpected seed_catalog list size: %d", len(list))
+	}
+
+	byID := make(map[string]GhostSeedCatalog, len(list))
+	for i := range list {
+		byID[list[i].GhostID] = list[i]
+	}
+	alpha, ok := byID["ghost.alpha"]
+	if !ok {
+		t.Fatalf("missing ghost.alpha entry: %+v", list)
+	}
+	if !alpha.Connected || len(alpha.SeedCatalog) == 0 {
+		t.Fatalf("unexpected healthy ghost entry: %+v", alpha)
+	}
+	beta, ok := byID["ghost.beta"]
+	if !ok {
+		t.Fatalf("missing ghost.beta entry: %+v", list)
+	}
+	if beta.Connected || strings.TrimSpace(beta.Error) == "" {
+		t.Fatalf("unexpected disconnected ghost entry: %+v", beta)
+	}
+	<-healthyDone
+}
+
+func TestHandleAdminControlSeedCatalogPartialAvailability(t *testing.T) {
+	testlog.Start(t)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 2; i++ {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			reader := bufio.NewReader(conn)
+			line, err := reader.ReadBytes('\n')
+			if err != nil {
+				_ = conn.Close()
+				return
+			}
+			var req ghostControlRequest
+			if err := json.Unmarshal(line, &req); err != nil {
+				_ = conn.Close()
+				return
+			}
+			resp := ghostControlResponse{OK: true}
+			switch req.Action {
+			case statusAction:
+				resp.Data = mustJSON(t, map[string]any{"GhostID": "ghost.partial"})
+			case listSeedCatalogAction:
+				resp.OK = false
+				resp.Error = "catalog disabled"
+			default:
+				_ = conn.Close()
+				return
+			}
+			payload, _ := json.Marshal(resp)
+			payload = append(payload, '\n')
+			_, _ = conn.Write(payload)
+			_ = conn.Close()
+		}
+	}()
+
+	cfg := DefaultServiceConfig()
+	cfg.LocalGhostID = ""
+	cfg.LocalGhostAdminAddr = ""
+	svc := NewServiceWithConfig(cfg)
+	svc.bindGhostAdmin("ghost.partial", ln.Addr().String())
+
+	resp := svc.handleAdminControlRequest(adminControlRequest{Action: "seed_catalog"})
+	if !resp.OK {
+		t.Fatalf("seed_catalog failed: %+v", resp)
+	}
+	list, ok := resp.Data.([]GhostSeedCatalog)
+	if !ok {
+		t.Fatalf("unexpected seed_catalog payload type: %T", resp.Data)
+	}
+	if len(list) != 1 {
+		t.Fatalf("unexpected seed_catalog list size: %d", len(list))
+	}
+	entry := list[0]
+	if !entry.Connected {
+		t.Fatalf("expected connected entry on partial availability, got %+v", entry)
+	}
+	if !strings.Contains(entry.Error, "catalog disabled") {
+		t.Fatalf("expected catalog error, got %+v", entry)
+	}
+	if len(entry.SeedCatalog) != 0 {
+		t.Fatalf("expected empty seed catalog on partial availability, got %+v", entry.SeedCatalog)
 	}
 	<-done
 }

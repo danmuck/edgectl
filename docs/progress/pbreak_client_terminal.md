@@ -6,20 +6,22 @@
 
 ### Tasks
 
-- [ ] Define `cmd/client-tm` scope and module boundaries (UI shell, command router, transport client, formatting layer).
+- [x] Define `cmd/client-tm` scope and module boundaries (UI shell, command router, transport client, formatting layer).
 - [ ] Define contracts-first interfaces for control actions: `start/stop/status/health/version/config`, RPC command execution, and monitoring streams.
 - [ ] Define identity/addressing model in client state: `ghost_id`, `seed_id`, `mirage_id`, endpoint, and active target context.
 - [x] Implement interactive TUI shell in `cmd/client-tm` with navigation for:
   - [x] Target selection (`Ghost Admin Console`, `Seed Operations`)
   - [x] Command execution views
   - [x] Monitoring views
-  - [ ] `Mirage Control` (placeholder only; not wired)
+  - [x] `Mirage Control` (admin console, issue submission, reconcile, reports, ghost routing)
 - [ ] Integrate `smplog` for formatted output (operator-friendly tables, status panels, structured event lines).
 - [x] Implement Ghost admin console workflows (connect, inspect, run control commands, monitor server/seed activity).
 - [x] Implement seed workflows via Ghost (issue commands to seeds, stream status/events, verify responses).
 - [x] Implement protocol/message verification view (request/response IDs, component, peer, trace/request IDs, result/error).
 - [x] Add support for managing many Ghost targets in one session (switching context safely and explicitly).
 - [x] Add single-Mirage control path placeholder + abstraction for future multi-Mirage support (no hardcoded singleton assumptions).
+- [x] Fix multi-seed intent orchestrator submission path: template filtering, orchestrator invocation, ghost selection (see `mvp_p6.md` stop-gaps — all resolved).
+- [x] Unify Mirage intent template and issue submission path to stages-only payloads (`stages` only, no `command_plan` fallback path).
 - [ ] Define failure behavior for CLI operations: timeouts, retries/backoff, idempotent command handling, reconnect/resume.
 - [ ] Add architecture + message-flow diagrams for this phase (CLI-to-Ghost now, CLI-to-Mirage extension path later).
 
@@ -33,6 +35,7 @@
 - [ ] Protocol verification output allows matching request->response and clearly surfaces timeout/retry/error cases.
 - [ ] `smplog` formatting is applied consistently across command output, monitoring, and error paths.
 - [x] Single-Mirage path is represented in routing/config and works as a placeholder without blocking Ghost workflows.
+- [x] Mirage issue payloads carry explicit stages end-to-end (client template -> admin control wire -> orchestrator ingest).
 - [ ] Client architecture explicitly supports future multi-Mirage (typed target model and non-singleton interfaces).
 - [ ] Failure semantics are explicit and testable: timeout defaults, retry policy, backoff behavior, and idempotency expectations.
 - [ ] Diagrams are committed and current:

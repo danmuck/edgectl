@@ -35,6 +35,20 @@ type fileConfig struct {
 	SessionTLSCertFile           string              `toml:"session_tls_cert_file"`
 	SessionTLSKeyFile            string              `toml:"session_tls_key_file"`
 	SessionTLSCAFile             string              `toml:"session_tls_ca_file"`
+	GhostManifests               []ghostManifestFile `toml:"ghost_manifests"`
+}
+
+// ghostManifestFile maps one ghost_manifests TOML table row for remote deploy targets.
+type ghostManifestFile struct {
+	GhostID       string   `toml:"ghost_id"`
+	Host          string   `toml:"host"`
+	User          string   `toml:"user"`
+	SSHKey        string   `toml:"ssh_key"`
+	SSHPort       int      `toml:"ssh_port"`
+	Seeds         []string `toml:"seeds"`
+	AdminListen   string   `toml:"admin_listen"`
+	MiragePolicy  string   `toml:"mirage_policy"`
+	MirageAddress string   `toml:"mirage_address"`
 }
 
 // preloadGhostAdmin maps one preload_ghost_admins TOML table row.
@@ -107,6 +121,9 @@ func loadServiceConfig(path string) (mirage.ServiceConfig, error) {
 	}
 	if meta.IsDefined("session_tls_ca_file") {
 		cfg.Session.TLS.CAFile = strings.TrimSpace(raw.SessionTLSCAFile)
+	}
+	if meta.IsDefined("ghost_manifests") {
+		cfg.GhostManifests = normalizeGhostManifests(raw.GhostManifests)
 	}
 
 	if cfg.BuildlogPersistEnabled {
@@ -213,6 +230,29 @@ func loadRuntimeConfigs(path string) (mirage.ServiceConfig, ghost.ServiceConfig,
 		cfg.HeartbeatInterval = time.Duration(raw.LocalGhostHeartbeatMS) * time.Millisecond
 	}
 	return mCfg, cfg, nil
+}
+
+func normalizeGhostManifests(raw []ghostManifestFile) []mirage.GhostManifest {
+	out := make([]mirage.GhostManifest, 0, len(raw))
+	for _, r := range raw {
+		id := strings.TrimSpace(r.GhostID)
+		host := strings.TrimSpace(r.Host)
+		if id == "" || host == "" {
+			continue
+		}
+		out = append(out, mirage.GhostManifest{
+			GhostID:       id,
+			Host:          host,
+			User:          strings.TrimSpace(r.User),
+			SSHKeyFile:    strings.TrimSpace(r.SSHKey),
+			SSHPort:       r.SSHPort,
+			Seeds:         normalizeList(r.Seeds),
+			AdminListen:   strings.TrimSpace(r.AdminListen),
+			MiragePolicy:  strings.TrimSpace(r.MiragePolicy),
+			MirageAddress: strings.TrimSpace(r.MirageAddress),
+		})
+	}
+	return out
 }
 
 func normalizeList(in []string) []string {

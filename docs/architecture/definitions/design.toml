@@ -136,6 +136,23 @@ container_stop = "docker stop {{container}}"
 container_rm = "docker rm {{container}}"
 
 [[seed_examples]]
+description = "Represents host-level node introspection"
+
+[seed_examples.metadata]
+id = "node.host"
+name = "Host Node"
+description = "Host identity and network introspection interface"
+
+[seed_examples.commands]
+# service interface
+status = "Check host identity and network status"
+
+# host introspection
+host_status = "hostname && uname -a"
+host_ports = "lsof -i -P -n -sTCP:LISTEN || ss -tulnp"
+host_interfaces = "ip addr show || ifconfig"
+
+[[seed_examples]]
 description = "Represents Kubernetes CLI interaction"
 
 [seed_examples.metadata]

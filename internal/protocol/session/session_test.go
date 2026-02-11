@@ -10,6 +10,7 @@ import (
 
 	"github.com/danmuck/edgectl/internal/protocol/frame"
 	"github.com/danmuck/edgectl/internal/testutil/testlog"
+	logs "github.com/danmuck/smplog"
 )
 
 func TestNextBackoffDelayDeterministicNoJitter(t *testing.T) {
@@ -135,6 +136,35 @@ func TestEncodeDecodeEventFrame(t *testing.T) {
 	}
 }
 
+func TestEncodeDecodeCommandFrameWithAuth(t *testing.T) {
+	testlog.Start(t)
+	payload, err := EncodeCommandFrameWithAuth(77, Command{
+		CommandID:    "cmd.77",
+		IntentID:     "intent.77",
+		GhostID:      "ghost.alpha",
+		SeedSelector: "seed.flow",
+		Operation:    "status",
+	}, []byte("token-77"))
+	if err != nil {
+		t.Fatalf("encode command frame: %v", err)
+	}
+
+	fr, err := frame.ReadFrame(bytes.NewReader(payload), frame.DefaultLimits())
+	if err != nil {
+		t.Fatalf("read frame: %v", err)
+	}
+	if string(fr.Auth) != "token-77" {
+		t.Fatalf("unexpected auth block: %q", string(fr.Auth))
+	}
+	got, err := DecodeCommandFrame(fr)
+	if err != nil {
+		t.Fatalf("decode command: %v", err)
+	}
+	if got.CommandID != "cmd.77" || got.IntentID != "intent.77" || got.GhostID != "ghost.alpha" {
+		t.Fatalf("unexpected command: %+v", got)
+	}
+}
+
 func TestEncodeDecodeEventAckFrame(t *testing.T) {
 	testlog.Start(t)
 	payload, err := EncodeEventAckFrame(99, EventAck{
@@ -227,5 +257,179 @@ func TestValidateServerTransportProductionRequiresTLSMTLS(t *testing.T) {
 	cfg.TLS.Enabled = true
 	if err := cfg.ValidateServerTransport(); !errors.Is(err, ErrMTLSRequired) {
 		t.Fatalf("expected ErrMTLSRequired, got %v", err)
+	}
+}
+
+// TestDefaultConfigMatchesReliabilityContract verifies timeout/backoff defaults from reliability.toml.
+func TestDefaultConfigMatchesReliabilityContract(t *testing.T) {
+	testlog.Start(t)
+	cfg := DefaultConfig()
+	logs.Infof("test default config=%+v", cfg)
+
+	if cfg.ConnectTimeout != 5*time.Second {
+		t.Fatalf("connect timeout mismatch: got=%v want=%v", cfg.ConnectTimeout, 5*time.Second)
+	}
+	if cfg.HandshakeTimeout != 5*time.Second {
+		t.Fatalf("handshake timeout mismatch: got=%v want=%v", cfg.HandshakeTimeout, 5*time.Second)
+	}
+	if cfg.ReadTimeout != 15*time.Second {
+		t.Fatalf("read timeout mismatch: got=%v want=%v", cfg.ReadTimeout, 15*time.Second)
+	}
+	if cfg.WriteTimeout != 15*time.Second {
+		t.Fatalf("write timeout mismatch: got=%v want=%v", cfg.WriteTimeout, 15*time.Second)
+	}
+	if cfg.HeartbeatInterval != 5*time.Second {
+		t.Fatalf("heartbeat interval mismatch: got=%v want=%v", cfg.HeartbeatInterval, 5*time.Second)
+	}
+	if cfg.SessionDeadAfter != 15*time.Second {
+		t.Fatalf("session dead-after mismatch: got=%v want=%v", cfg.SessionDeadAfter, 15*time.Second)
+	}
+	if cfg.AckTimeout != 20*time.Second {
+		t.Fatalf("ack timeout mismatch: got=%v want=%v", cfg.AckTimeout, 20*time.Second)
+	}
+
+	if cfg.Backoff.InitialDelay != 250*time.Millisecond {
+		t.Fatalf("initial backoff mismatch: got=%v want=%v", cfg.Backoff.InitialDelay, 250*time.Millisecond)
+	}
+	if cfg.Backoff.Multiplier != 2.0 {
+		t.Fatalf("backoff multiplier mismatch: got=%v want=2.0", cfg.Backoff.Multiplier)
+	}
+	if cfg.Backoff.MaxDelay != 5*time.Second {
+		t.Fatalf("max backoff mismatch: got=%v want=%v", cfg.Backoff.MaxDelay, 5*time.Second)
+	}
+	if !cfg.Backoff.Jitter {
+		t.Fatalf("expected jitter enabled by default")
+	}
+}
+
+// TestWithDefaultsPreservesExplicitOverrides verifies only unset values are defaulted.
+func TestWithDefaultsPreservesExplicitOverrides(t *testing.T) {
+	testlog.Start(t)
+
+	in := Config{
+		ConnectTimeout:   3 * time.Second,
+		HandshakeTimeout: 4 * time.Second,
+		SecurityMode:     "PRODUCTION",
+		TLS: TLSConfig{
+			Enabled: true,
+			Mutual:  true,
+		},
+		Backoff: BackoffConfig{
+			InitialDelay: 100 * time.Millisecond,
+			Multiplier:   3.0,
+			MaxDelay:     2 * time.Second,
+			Jitter:       false,
+		},
+	}
+	out := in.WithDefaults()
+	logs.Infof("test with defaults input=%+v output=%+v", in, out)
+
+	if out.ConnectTimeout != 3*time.Second {
+		t.Fatalf("connect timeout override not preserved: %v", out.ConnectTimeout)
+	}
+	if out.HandshakeTimeout != 4*time.Second {
+		t.Fatalf("handshake timeout override not preserved: %v", out.HandshakeTimeout)
+	}
+	if out.ReadTimeout != 15*time.Second || out.WriteTimeout != 15*time.Second {
+		t.Fatalf("expected default read/write timeouts, got read=%v write=%v", out.ReadTimeout, out.WriteTimeout)
+	}
+	if out.SecurityMode != SecurityModeProduction {
+		t.Fatalf("expected normalized production mode, got=%q", out.SecurityMode)
+	}
+	if out.Backoff.InitialDelay != 100*time.Millisecond || out.Backoff.Multiplier != 3.0 || out.Backoff.MaxDelay != 2*time.Second {
+		t.Fatalf("backoff overrides not preserved: %+v", out.Backoff)
+	}
+	if out.Backoff.Jitter {
+		t.Fatalf("expected explicit jitter=false preserved")
+	}
+}
+
+// TestReadRegistrationRejectsOversizeControlEnvelope verifies handshake control message size bounds.
+func TestReadRegistrationRejectsOversizeControlEnvelope(t *testing.T) {
+	testlog.Start(t)
+
+	var buf bytes.Buffer
+	for i := 0; i < 129*1024; i++ {
+		buf.WriteByte('x')
+	}
+	buf.WriteByte('\n')
+
+	logs.Infof("test reading control envelope len=%d", buf.Len())
+	_, err := ReadRegistration(bufio.NewReader(&buf))
+	if !errors.Is(err, ErrControlMessageTooLarge) {
+		t.Fatalf("expected ErrControlMessageTooLarge, got %v", err)
+	}
+}
+
+// TestReadRegistrationRejectsMissingSeedDescription verifies handshake required seed fields.
+func TestReadRegistrationRejectsMissingSeedDescription(t *testing.T) {
+	testlog.Start(t)
+
+	payload := []byte(`{"type":"seed.register","registration":{"ghost_id":"ghost.alpha","peer_identity":"ghost.alpha","seed_list":[{"id":"seed.flow","name":"Flow","description":""}]}}` + "\n")
+	logs.Infof("test raw registration payload=%s", string(payload))
+	_, err := ReadRegistration(bufio.NewReader(bytes.NewReader(payload)))
+	if !errors.Is(err, ErrInvalidRegistration) {
+		t.Fatalf("expected ErrInvalidRegistration, got %v", err)
+	}
+}
+
+// TestReadRegistrationAckRejectsUnexpectedType verifies control-plane type discrimination.
+func TestReadRegistrationAckRejectsUnexpectedType(t *testing.T) {
+	testlog.Start(t)
+
+	payload := []byte(`{"type":"seed.register","registration":{"ghost_id":"ghost.alpha","seed_list":[]}}` + "\n")
+	logs.Infof("test raw ack payload with wrong type=%s", string(payload))
+	_, err := ReadRegistrationAck(bufio.NewReader(bytes.NewReader(payload)))
+	if !errors.Is(err, ErrInvalidRegistrationAck) {
+		t.Fatalf("expected ErrInvalidRegistrationAck, got %v", err)
+	}
+}
+
+// TestEventOutboxWhitespaceKeyNormalization verifies stable event_id key normalization behavior.
+func TestEventOutboxWhitespaceKeyNormalization(t *testing.T) {
+	testlog.Start(t)
+
+	o := NewEventOutbox()
+	now := time.Unix(1700000000, 0)
+	o.Upsert(PendingEvent{
+		EventID:       "  evt.norm.1  ",
+		CommandID:     "cmd.1",
+		GhostID:       "ghost.alpha",
+		QueuedAt:      now,
+		AckDeadlineAt: now.Add(20 * time.Second),
+	})
+	logs.Infof("test inserted pending event with padded key")
+
+	if _, ok := o.Get("evt.norm.1"); !ok {
+		t.Fatalf("expected trimmed key lookup to succeed")
+	}
+	if _, ok := o.Get("  evt.norm.1  "); !ok {
+		t.Fatalf("expected padded key lookup to succeed due to normalization")
+	}
+}
+
+// TestEventOutboxListDeterministicOrdering verifies sorted snapshots for retry workers and debug readability.
+func TestEventOutboxListDeterministicOrdering(t *testing.T) {
+	testlog.Start(t)
+
+	o := NewEventOutbox()
+	now := time.Unix(1700000010, 0)
+	for _, id := range []string{"evt.3", "evt.1", "evt.2"} {
+		o.Upsert(PendingEvent{
+			EventID:       id,
+			CommandID:     "cmd." + id,
+			GhostID:       "ghost.alpha",
+			QueuedAt:      now,
+			AckDeadlineAt: now.Add(20 * time.Second),
+		})
+	}
+
+	list := o.List()
+	logs.Infof("test sorted outbox snapshot=%+v", list)
+	if len(list) != 3 {
+		t.Fatalf("unexpected list length: %d", len(list))
+	}
+	if list[0].EventID != "evt.1" || list[1].EventID != "evt.2" || list[2].EventID != "evt.3" {
+		t.Fatalf("unexpected sort order: %+v", list)
 	}
 }

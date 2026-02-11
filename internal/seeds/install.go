@@ -45,6 +45,7 @@ type InstallSpec struct {
 	Tap                string
 	BootstrapIfMissing bool
 	BootstrapCommand   []string
+	InstallToBin       bool
 }
 
 var defaultBrewBootstrapCommand = []string{
@@ -57,6 +58,7 @@ var defaultBrewBootstrapCommand = []string{
 type InstallerConfig struct {
 	WorkspaceRoot string
 	InstallRoot   string
+	BinRoot       string
 	Whitelist     []string
 	Runner        tools.CommandRunner
 }
@@ -65,6 +67,7 @@ type InstallerConfig struct {
 type Installer struct {
 	workspaceRoot string
 	installRoot   string
+	binRoot       string
 	whitelist     map[string]struct{}
 	runner        tools.CommandRunner
 }
@@ -100,6 +103,21 @@ func NewInstaller(cfg InstallerConfig) (*Installer, error) {
 		return nil, err
 	}
 
+	binRoot := strings.TrimSpace(cfg.BinRoot)
+	if binRoot == "" {
+		binRoot = filepath.Join("local", "bin")
+	}
+	if !filepath.IsAbs(binRoot) {
+		binRoot = filepath.Join(workspaceAbs, binRoot)
+	}
+	binRoot = filepath.Clean(binRoot)
+	if !isWithin(binRoot, localRoot) {
+		return nil, fmt.Errorf("%w: bin_root=%q must be under %q", ErrInstallInvalidRoot, binRoot, localRoot)
+	}
+	if err := os.MkdirAll(binRoot, 0o755); err != nil {
+		return nil, err
+	}
+
 	runner := cfg.Runner
 	if runner == nil {
 		runner = tools.ExecRunner{}
@@ -108,6 +126,7 @@ func NewInstaller(cfg InstallerConfig) (*Installer, error) {
 	return &Installer{
 		workspaceRoot: workspaceAbs,
 		installRoot:   installRoot,
+		binRoot:       binRoot,
 		whitelist:     normalizeWhitelist(cfg.Whitelist),
 		runner:        runner,
 	}, nil
@@ -145,7 +164,13 @@ func (i *Installer) Install(spec InstallSpec) error {
 	case InstallMethodWorkspaceCopy:
 		return i.installWorkspaceCopy(spec, dest)
 	case InstallMethodBrew:
-		return i.installBrew(spec)
+		if err := i.installBrew(spec); err != nil {
+			return err
+		}
+		if spec.InstallToBin {
+			return i.symlinkBrewToBin(spec)
+		}
+		return nil
 	default:
 		return fmt.Errorf("%w: %q", ErrInstallUnsupportedMethod, spec.Method)
 	}
@@ -336,6 +361,41 @@ func (i *Installer) checkBrewVersion() error {
 		strings.TrimSpace(string(stderr)),
 		err,
 	)
+}
+
+// BinRoot returns the resolved binary install directory path.
+func (i *Installer) BinRoot() string {
+	return i.binRoot
+}
+
+// symlinkBrewToBin creates a symlink in binRoot pointing to the brew-installed binary.
+func (i *Installer) symlinkBrewToBin(spec InstallSpec) error {
+	pkg := strings.TrimSpace(spec.Package)
+	if pkg == "" {
+		return nil
+	}
+	// Resolve brew binary path.
+	stdout, _, _, err := i.runner.Run("brew", "--prefix", pkg)
+	if err != nil {
+		logs.Warnf("seeds.install symlink_brew_to_bin: could not resolve prefix for %q", pkg)
+		return nil
+	}
+	prefix := strings.TrimSpace(string(stdout))
+	binPath := filepath.Join(prefix, "bin", pkg)
+	if _, err := os.Stat(binPath); err != nil {
+		// Try the package name without path nesting.
+		binPath = filepath.Join(prefix, "bin")
+		entries, dirErr := os.ReadDir(binPath)
+		if dirErr != nil || len(entries) == 0 {
+			logs.Warnf("seeds.install symlink_brew_to_bin: no binaries found under %q", prefix)
+			return nil
+		}
+		binPath = filepath.Join(binPath, entries[0].Name())
+	}
+	link := filepath.Join(i.binRoot, filepath.Base(binPath))
+	_ = os.Remove(link)
+	logs.Infof("seeds.install symlink %s -> %s", link, binPath)
+	return os.Symlink(binPath, link)
 }
 
 func (i *Installer) allowedWorkspaceSource(srcAbs string) bool {

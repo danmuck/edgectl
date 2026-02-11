@@ -337,6 +337,11 @@ func enrichSeedListForGhost(ghostID string, remoteAddr string, in []session.Seed
 		case "seed.flow":
 			desc = appendDiscoveryField(desc, "seed_scope=", "control_plane")
 			desc = appendDiscoveryField(desc, "dispatch=", "ghost_execute")
+		case "seed.docker":
+			desc = appendDiscoveryField(desc, "host=", host)
+			desc = appendDiscoveryField(desc, "seed_scope=", "host_container_runtime")
+		case "seed.host":
+			desc = appendDiscoveryField(desc, "seed_scope=", "host_introspection")
 		default:
 			desc = appendDiscoveryField(desc, "seed_scope=", "ghost_local")
 		}

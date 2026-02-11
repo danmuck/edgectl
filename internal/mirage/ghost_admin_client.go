@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/danmuck/edgectl/internal/protocol/frame"
 	"github.com/danmuck/edgectl/internal/protocol/session"
+	"github.com/danmuck/edgectl/internal/seeds"
 )
 
 const (
@@ -19,15 +21,16 @@ const (
 	executeEnvelopeAction = "execute_envelope"
 	statusAction          = "status"
 	listSeedsAction       = "list_seeds"
+	listSeedCatalogAction = "list_seed_catalog"
 	bindMirageAction      = "bind_mirage"
 )
 
 type ghostControlRequest struct {
 	Action       string            `json:"action"`
 	Spawn        SpawnGhostRequest `json:"spawn,omitempty"`
-	Command      ghostAdminCommand `json:"command,omitempty"`
 	CommandFrame []byte            `json:"command_frame,omitempty"`
 	MirageID     string            `json:"mirage_id,omitempty"`
+	SessionPort  string            `json:"session_port,omitempty"`
 }
 
 type ghostAdminCommand struct {
@@ -76,10 +79,42 @@ type ghostSeedMetadata struct {
 	Description string `json:"description"`
 }
 
+type ghostSeedCapability struct {
+	Metadata       ghostSeedMetadata      `json:"metadata"`
+	Operations     []ghostOperationSpec   `json:"operations"`
+	CommandCatalog []ghostCommandTemplate `json:"command_catalog"`
+}
+
+type ghostOperationSpec struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Idempotent  bool   `json:"idempotent"`
+}
+
+type ghostCommandTemplate struct {
+	ID              string                `json:"id"`
+	Label           string                `json:"label"`
+	Description     string                `json:"description"`
+	SeedSelector    string                `json:"seed_selector"`
+	Operation       string                `json:"operation"`
+	Args            []ghostCommandArgSpec `json:"args"`
+	DefaultBlocking bool                  `json:"default_blocking"`
+}
+
+type ghostCommandArgSpec struct {
+	Key          string `json:"key"`
+	Prompt       string `json:"prompt"`
+	Required     bool   `json:"required"`
+	DefaultValue string `json:"default_value"`
+	Multiline    bool   `json:"multiline"`
+	Terminator   string `json:"terminator"`
+}
+
 // GhostControlClient is a TCP JSON control client for one root/local ghost admin endpoint.
 type GhostControlClient struct {
-	adminAddr string
-	timeout   time.Duration
+	adminAddr        string
+	timeout          time.Duration
+	commandFrameAuth []byte
 }
 
 // NewGhostControlClient constructs a control client bound to one ghost admin address.
@@ -88,6 +123,17 @@ func NewGhostControlClient(adminAddr string) *GhostControlClient {
 		adminAddr: strings.TrimSpace(adminAddr),
 		timeout:   5 * time.Second,
 	}
+}
+
+// WithCommandFrameAuthToken configures optional auth bytes attached to execute_envelope command frames.
+func (c *GhostControlClient) WithCommandFrameAuthToken(token string) *GhostControlClient {
+	raw := strings.TrimSpace(token)
+	if raw == "" {
+		c.commandFrameAuth = nil
+		return c
+	}
+	c.commandFrameAuth = []byte(raw)
+	return c
 }
 
 // SpawnLocalGhost calls root ghost admin "spawn_ghost" for local provisioning.
@@ -108,14 +154,14 @@ func (c *GhostControlClient) ExecuteAdminCommand(ctx context.Context, command gh
 	if ghostID == "" {
 		ghostID = "ghost.local"
 	}
-	cmdFrame, err := session.EncodeCommandFrame(1, session.Command{
+	cmdFrame, err := session.EncodeCommandFrameWithAuth(1, session.Command{
 		CommandID:    strings.TrimSpace(command.CommandID),
 		IntentID:     strings.TrimSpace(command.IntentID),
 		GhostID:      ghostID,
 		SeedSelector: strings.TrimSpace(command.SeedSelector),
 		Operation:    strings.TrimSpace(command.Operation),
 		Args:         copyArgs(command.Args),
-	})
+	}, c.commandFrameAuth)
 	if err != nil {
 		return session.Event{}, err
 	}
@@ -163,12 +209,88 @@ func (c *GhostControlClient) ListSeeds(ctx context.Context) ([]session.SeedInfo,
 	return seeds, nil
 }
 
+// ListSeedCatalog reads full seed capability descriptors from the ghost admin endpoint.
+func (c *GhostControlClient) ListSeedCatalog(ctx context.Context) ([]SeedCapability, error) {
+	var out []ghostSeedCapability
+	if err := c.call(ctx, ghostControlRequest{Action: listSeedCatalogAction}, &out); err != nil {
+		return nil, err
+	}
+	caps := make([]SeedCapability, 0, len(out))
+	for i := range out {
+		item := out[i]
+		caps = append(caps, SeedCapability{
+			Metadata: seeds.SeedMetadata{
+				ID:          strings.TrimSpace(item.Metadata.ID),
+				Name:        strings.TrimSpace(item.Metadata.Name),
+				Description: strings.TrimSpace(item.Metadata.Description),
+			},
+			Operations:     mapOperationSpecs(item.Operations),
+			CommandCatalog: mapCommandTemplates(item.CommandCatalog),
+		})
+	}
+	return caps, nil
+}
+
 // BindMirage marks a ghost admin endpoint as attached to one Mirage control plane.
-func (c *GhostControlClient) BindMirage(ctx context.Context, mirageID string) error {
+// sessionPort is the mirage session listener port (e.g. "9000") so ghost can resolve the session address.
+func (c *GhostControlClient) BindMirage(ctx context.Context, mirageID string, sessionPort string) error {
 	return c.call(ctx, ghostControlRequest{
-		Action:   bindMirageAction,
-		MirageID: strings.TrimSpace(mirageID),
+		Action:      bindMirageAction,
+		MirageID:    strings.TrimSpace(mirageID),
+		SessionPort: strings.TrimSpace(sessionPort),
 	}, nil)
+}
+
+func mapOperationSpecs(in []ghostOperationSpec) []seeds.OperationSpec {
+	if len(in) == 0 {
+		return []seeds.OperationSpec{}
+	}
+	out := make([]seeds.OperationSpec, len(in))
+	for i := range in {
+		out[i] = seeds.OperationSpec{
+			Name:        strings.TrimSpace(in[i].Name),
+			Description: strings.TrimSpace(in[i].Description),
+			Idempotent:  in[i].Idempotent,
+		}
+	}
+	return out
+}
+
+func mapCommandTemplates(in []ghostCommandTemplate) []seeds.CommandTemplate {
+	if len(in) == 0 {
+		return []seeds.CommandTemplate{}
+	}
+	out := make([]seeds.CommandTemplate, len(in))
+	for i := range in {
+		out[i] = seeds.CommandTemplate{
+			ID:              strings.TrimSpace(in[i].ID),
+			Label:           strings.TrimSpace(in[i].Label),
+			Description:     strings.TrimSpace(in[i].Description),
+			SeedSelector:    strings.TrimSpace(in[i].SeedSelector),
+			Operation:       strings.TrimSpace(in[i].Operation),
+			Args:            mapCommandArgSpecs(in[i].Args),
+			DefaultBlocking: in[i].DefaultBlocking,
+		}
+	}
+	return out
+}
+
+func mapCommandArgSpecs(in []ghostCommandArgSpec) []seeds.CommandArgSpec {
+	if len(in) == 0 {
+		return []seeds.CommandArgSpec{}
+	}
+	out := make([]seeds.CommandArgSpec, len(in))
+	for i := range in {
+		out[i] = seeds.CommandArgSpec{
+			Key:          strings.TrimSpace(in[i].Key),
+			Prompt:       strings.TrimSpace(in[i].Prompt),
+			Required:     in[i].Required,
+			DefaultValue: strings.TrimSpace(in[i].DefaultValue),
+			Multiline:    in[i].Multiline,
+			Terminator:   strings.TrimSpace(in[i].Terminator),
+		}
+	}
+	return out
 }
 
 func (c *GhostControlClient) call(ctx context.Context, req ghostControlRequest, out any) error {
@@ -276,6 +398,8 @@ func (e *GhostAdminCommandExecutor) ExecuteCommand(ctx context.Context, cmd sess
 type GhostSeedBuildlogStore struct {
 	client       *GhostControlClient
 	seedSelector string
+	// commandSeq provides per-process uniqueness for buildlog command IDs.
+	commandSeq atomic.Uint64
 }
 
 // NewGhostSeedBuildlogStore constructs a buildlog persistence sink using seed.kv/seed.fs.
@@ -299,6 +423,7 @@ func (s *GhostSeedBuildlogStore) Persist(ctx context.Context, key string, value 
 	switch selector {
 	case "seed.kv":
 		_, err := s.client.ExecuteAdminCommand(ctx, ghostAdminCommand{
+			CommandID:    s.nextBuildlogCommandID(),
 			IntentID:     "intent.mirage.buildlog",
 			SeedSelector: selector,
 			Operation:    "put",
@@ -314,6 +439,7 @@ func (s *GhostSeedBuildlogStore) Persist(ctx context.Context, key string, value 
 			return fmt.Errorf("mirage: buildlog key/path required")
 		}
 		_, err := s.client.ExecuteAdminCommand(ctx, ghostAdminCommand{
+			CommandID:    s.nextBuildlogCommandID(),
 			IntentID:     "intent.mirage.buildlog",
 			SeedSelector: selector,
 			Operation:    "write",
@@ -326,4 +452,11 @@ func (s *GhostSeedBuildlogStore) Persist(ctx context.Context, key string, value 
 	default:
 		return fmt.Errorf("mirage: unsupported buildlog seed selector %q", selector)
 	}
+}
+
+// nextBuildlogCommandID returns a unique command_id for buildlog seed writes.
+// Boundary: IDs satisfy the protocol required command_id field and are local-process unique.
+func (s *GhostSeedBuildlogStore) nextBuildlogCommandID() string {
+	seq := s.commandSeq.Add(1)
+	return fmt.Sprintf("cmd.intent.mirage.buildlog.%d.%d", time.Now().UnixNano(), seq)
 }
