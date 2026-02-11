@@ -3,14 +3,28 @@ package main
 import (
 	"testing"
 
+	"github.com/danmuck/edgectl/internal/ghost"
 	"github.com/danmuck/edgectl/internal/seeds"
 )
 
-func TestGhostCommandTemplatesForSeedListFiltersSeeds(t *testing.T) {
-	seedList := []seeds.SeedMetadata{
-		{ID: "seed.flow"},
+func TestGhostCommandTemplatesForSeedCatalogFiltersSeeds(t *testing.T) {
+	seedCatalog := []ghost.SeedCapability{
+		{
+			Metadata:   seeds.SeedMetadata{ID: "seed.flow"},
+			Operations: []seeds.OperationSpec{{Name: "status"}},
+			CommandCatalog: []seeds.CommandTemplate{
+				{ID: "seed.flow.status", SeedSelector: "seed.flow", Operation: "status"},
+			},
+		},
+		{
+			Metadata:   seeds.SeedMetadata{ID: "seed.kv"},
+			Operations: []seeds.OperationSpec{{Name: "put"}},
+			CommandCatalog: []seeds.CommandTemplate{
+				{ID: "seed.kv.put", SeedSelector: "seed.kv", Operation: "put"},
+			},
+		},
 	}
-	templates := ghostCommandTemplatesForSeedList(seedList)
+	templates := ghostCommandTemplatesForSeedCatalog(seedCatalog[:1])
 	if len(templates) == 0 {
 		t.Fatalf("expected flow templates")
 	}
@@ -18,6 +32,27 @@ func TestGhostCommandTemplatesForSeedListFiltersSeeds(t *testing.T) {
 		if templates[i].SeedSelector != "seed.flow" {
 			t.Fatalf("unexpected seed selector in filtered templates: %q", templates[i].SeedSelector)
 		}
+	}
+}
+
+func TestGhostCommandTemplatesForSeedCatalogFiltersUnknownOperations(t *testing.T) {
+	seedCatalog := []ghost.SeedCapability{
+		{
+			Metadata:   seeds.SeedMetadata{ID: "seed.flow"},
+			Operations: []seeds.OperationSpec{{Name: "status"}},
+			CommandCatalog: []seeds.CommandTemplate{
+				{ID: "seed.flow.status", SeedSelector: "seed.flow", Operation: "status"},
+				{ID: "seed.flow.step", SeedSelector: "seed.flow", Operation: "step"},
+			},
+		},
+	}
+
+	templates := ghostCommandTemplatesForSeedCatalog(seedCatalog)
+	if len(templates) != 1 {
+		t.Fatalf("expected only one template after op filtering, got %d", len(templates))
+	}
+	if templates[0].Operation != "status" {
+		t.Fatalf("unexpected operation after filtering: %q", templates[0].Operation)
 	}
 }
 

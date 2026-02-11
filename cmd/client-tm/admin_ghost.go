@@ -15,7 +15,6 @@ import (
 	"github.com/danmuck/edgectl/internal/ghost"
 	"github.com/danmuck/edgectl/internal/protocol/frame"
 	"github.com/danmuck/edgectl/internal/protocol/session"
-	"github.com/danmuck/edgectl/internal/seeds"
 )
 
 // GhostAdmin defines the client control boundary for one Ghost target.
@@ -23,7 +22,7 @@ type GhostAdmin interface {
 	GhostID() string
 	Address() string
 	Status() (ghost.LifecycleStatus, error)
-	ListSeeds() ([]seeds.SeedMetadata, error)
+	ListSeedCatalog() ([]ghost.SeedCapability, error)
 	Execute(command GhostAdminCommand) (ghost.ExecutionState, ghost.EventEnv, error)
 	ExecutionByCommandID(commandID string) (ghost.ExecutionState, bool, error)
 	RecentEvents(limit int) ([]ghost.EventEnv, error)
@@ -56,12 +55,12 @@ func (c *RemoteGhostAdmin) Status() (ghost.LifecycleStatus, error) {
 	return status, nil
 }
 
-func (c *RemoteGhostAdmin) ListSeeds() ([]seeds.SeedMetadata, error) {
-	var list []seeds.SeedMetadata
-	if err := c.call(controlRequest{Action: "list_seeds"}, &list); err != nil {
+func (c *RemoteGhostAdmin) ListSeedCatalog() ([]ghost.SeedCapability, error) {
+	var catalog []ghost.SeedCapability
+	if err := c.call(controlRequest{Action: "list_seed_catalog"}, &catalog); err != nil {
 		return nil, err
 	}
-	return list, nil
+	return catalog, nil
 }
 
 func (c *RemoteGhostAdmin) Execute(command GhostAdminCommand) (ghost.ExecutionState, ghost.EventEnv, error) {

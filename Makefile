@@ -17,17 +17,17 @@ clear:
 
 ### TEST
 test:
-	go run ./cmd/testctl -mode interactive -pkg ./...
+	clear; go run ./cmd/testctl -mode interactive -pkg ./...
 
 test-override:
-	go run ./cmd/testctl -mode run -pkg ./...
+	clear; go run ./cmd/testctl -mode run -pkg ./...
 
 ###  RUN
 run-mirage:
-	go run ./cmd/miragectl
+	clear; go run ./cmd/miragectl
 
 run-ghost:
-	go run ./cmd/ghostctl
+	clear; go run ./cmd/ghostctl
 
 run-pi:
 	clear; go run ./cmd/ghostctl -config cmd/ghostctl/pi.tls.config.toml

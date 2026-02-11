@@ -31,7 +31,7 @@ func TestHandleControlRequestExecuteEnvelope(t *testing.T) {
 	resp := svc.handleControlRequest(controlRequest{
 		Action:       "execute_envelope",
 		CommandFrame: commandFrame,
-	})
+	}, "")
 	if !resp.OK {
 		t.Fatalf("execute_envelope failed: %s", resp.Error)
 	}
@@ -73,7 +73,7 @@ func TestHandleControlRequestExecuteEnvelopeMissingFrame(t *testing.T) {
 	testlog.Start(t)
 
 	svc := NewServiceWithConfig(DefaultServiceConfig())
-	resp := svc.handleControlRequest(controlRequest{Action: "execute_envelope"})
+	resp := svc.handleControlRequest(controlRequest{Action: "execute_envelope"}, "")
 	if resp.OK {
 		t.Fatalf("expected missing command frame failure")
 	}
@@ -83,7 +83,7 @@ func TestHandleControlRequestExecuteLegacyActionRejected(t *testing.T) {
 	testlog.Start(t)
 
 	svc := NewServiceWithConfig(DefaultServiceConfig())
-	resp := svc.handleControlRequest(controlRequest{Action: "execute"})
+	resp := svc.handleControlRequest(controlRequest{Action: "execute"}, "")
 	if resp.OK {
 		t.Fatalf("expected execute action rejection")
 	}
@@ -114,7 +114,7 @@ func TestHandleControlRequestExecuteEnvelopeAuthRequired(t *testing.T) {
 	resp := svc.handleControlRequest(controlRequest{
 		Action:       "execute_envelope",
 		CommandFrame: commandFrame,
-	})
+	}, "")
 	if resp.OK {
 		t.Fatalf("expected execute_envelope auth failure")
 	}
@@ -145,7 +145,7 @@ func TestHandleControlRequestExecuteEnvelopeAuthAccepted(t *testing.T) {
 	resp := svc.handleControlRequest(controlRequest{
 		Action:       "execute_envelope",
 		CommandFrame: commandFrame,
-	})
+	}, "")
 	if !resp.OK {
 		t.Fatalf("execute_envelope with auth failed: %s", resp.Error)
 	}
@@ -157,7 +157,7 @@ func TestHandleControlRequestListSeedCatalog(t *testing.T) {
 	svc := NewServiceWithConfig(DefaultServiceConfig())
 	svc.server = newRadiatingServer(t, "ghost.alpha")
 
-	resp := svc.handleControlRequest(controlRequest{Action: "list_seed_catalog"})
+	resp := svc.handleControlRequest(controlRequest{Action: "list_seed_catalog"}, "")
 	if !resp.OK {
 		t.Fatalf("list_seed_catalog failed: %s", resp.Error)
 	}

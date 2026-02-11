@@ -1,6 +1,6 @@
 package main
 
-// util.go contains pure helper functions (string formatting, address normalization, seed operations).
+// util.go contains pure helper functions (string formatting, address normalization, set filtering).
 
 import (
 	"errors"
@@ -11,12 +11,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-
-	"github.com/danmuck/edgectl/internal/seeds"
-	seedflow "github.com/danmuck/edgectl/internal/seeds/flow"
-	seedfs "github.com/danmuck/edgectl/internal/seeds/fs"
-	seedkv "github.com/danmuck/edgectl/internal/seeds/kv"
-	seedmongod "github.com/danmuck/edgectl/internal/seeds/mongod"
 )
 
 func indentLines(in string, prefix string) string {
@@ -68,34 +62,6 @@ func connectedGhostCandidatesForSeed(
 		out = append(out, ghostID)
 	}
 	sort.Strings(out)
-	return out
-}
-
-func operationsForSeed(seedID string) []seeds.OperationSpec {
-	switch strings.TrimSpace(seedID) {
-	case "seed.flow":
-		s := seedflow.NewSeed()
-		return sortedOps(s.Operations())
-	case "seed.fs":
-		s := seedfs.NewSeed()
-		return sortedOps(s.Operations())
-	case "seed.kv":
-		s := seedkv.NewSeed()
-		return sortedOps(s.Operations())
-	case "seed.mongod":
-		s := seedmongod.NewSeed()
-		return sortedOps(s.Operations())
-	default:
-		return nil
-	}
-}
-
-func sortedOps(in []seeds.OperationSpec) []seeds.OperationSpec {
-	out := make([]seeds.OperationSpec, len(in))
-	copy(out, in)
-	sort.Slice(out, func(i int, j int) bool {
-		return out[i].Name < out[j].Name
-	})
 	return out
 }
 

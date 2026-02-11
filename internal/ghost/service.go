@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -100,7 +101,8 @@ type Service struct {
 	mirage *MirageSession
 	seq    atomic.Uint64
 
-	mirageAdminBound atomic.Bool
+	mirageAdminBound    atomic.Bool
+	mirageResolvedAddr  atomic.Value // string: resolved mirage session address from bind_mirage
 
 	adminMu                 sync.Mutex
 	adminSeq                atomic.Uint64
@@ -326,8 +328,13 @@ func (s *Service) connectMirageSession(ctx context.Context) (*MirageSession, err
 			}
 		}
 	}
+	// Prefer resolved mirage session address from bind_mirage over configured hostname.
+	mirageAddr := strings.TrimSpace(s.cfg.Mirage.Address)
+	if resolved, ok := s.mirageResolvedAddr.Load().(string); ok && resolved != "" {
+		mirageAddr = resolved
+	}
 	clientCfg := MirageClientConfig{
-		Address:            strings.TrimSpace(s.cfg.Mirage.Address),
+		Address:            mirageAddr,
 		GhostID:            strings.TrimSpace(s.cfg.GhostID),
 		PeerIdentity:       strings.TrimSpace(s.cfg.Mirage.PeerIdentity),
 		SeedList:           seedList,
@@ -432,9 +439,23 @@ func (s *Service) MirageLinkMode() string {
 }
 
 // BindMirageAdminRoute marks this Ghost as connected to Mirage via admin routing.
-func (s *Service) BindMirageAdminRoute(mirageID string) {
+// If remoteAddr and sessionPort are provided, ghost resolves the mirage session dial target
+// by extracting the IP from the admin connection and combining it with the session port.
+func (s *Service) BindMirageAdminRoute(mirageID string, remoteAddr string, sessionPort string) {
 	id := strings.TrimSpace(mirageID)
 	s.mirageAdminBound.Store(true)
+
+	port := strings.TrimSpace(sessionPort)
+	remote := strings.TrimSpace(remoteAddr)
+	if port != "" && remote != "" {
+		host, _, err := net.SplitHostPort(remote)
+		if err == nil && host != "" {
+			resolved := net.JoinHostPort(host, port)
+			s.mirageResolvedAddr.Store(resolved)
+			logs.Warnf("ghost.admin mirage route bound mirage_id=%q resolved_session_addr=%q", id, resolved)
+			return
+		}
+	}
 	logs.Warnf("ghost.admin mirage route bound mirage_id=%q", id)
 }
 

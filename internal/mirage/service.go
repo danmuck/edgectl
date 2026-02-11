@@ -508,11 +508,13 @@ func (s *Service) bindGhostToMirage(ghostID string, adminAddr string) error {
 	if id == "" || addr == "" {
 		return fmt.Errorf("mirage: ghost bind requires ghost_id and admin_addr")
 	}
+	// Extract session listener port from mirage config so ghost can resolve session address.
+	sessionPort := extractPort(s.cfg.ListenAddr)
 	client := s.newGhostControlClient(addr)
 	var lastErr error
 	for attempt := 1; attempt <= 5; attempt++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		err := client.BindMirage(ctx, strings.TrimSpace(s.cfg.MirageID))
+		err := client.BindMirage(ctx, strings.TrimSpace(s.cfg.MirageID), sessionPort)
 		cancel()
 		if err == nil {
 			logs.Warnf("mirage.admin ghost bind success ghost_id=%q addr=%q attempt=%d", id, addr, attempt)

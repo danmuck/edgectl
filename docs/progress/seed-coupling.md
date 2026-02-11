@@ -138,11 +138,11 @@ sequenceDiagram
   - [x] Add Mirage-side catalog snapshot structure aligned to Ghost output.
   - [x] Add/extend admin action to return aggregated seed template capabilities.
   - [x] Add tests for mixed connectivity and partial ghost availability.
-- [ ] **Stage 4: Client Migration + Code Reduction**
-  - [ ] Remove static ghost template catalog in `cmd/client-tm/cmd_ghost.go`.
-  - [ ] Remove local `operationsForSeed` abstraction for Ghost command wizard filtering.
-  - [ ] Keep existing `CommandTemplate` rendering/prompt pipeline; only change the source of data.
-  - [ ] Update tests to assert remote capability-driven behavior.
+- [x] **Stage 4: Client Migration + Code Reduction**
+  - [x] Remove static ghost template catalog in `cmd/client-tm/cmd_ghost.go`.
+  - [x] Remove local `operationsForSeed` abstraction for Ghost command wizard filtering.
+  - [x] Keep existing `CommandTemplate` rendering/prompt pipeline; only change the source of data.
+  - [x] Update tests to assert remote capability-driven behavior.
 - [ ] **Stage 5: Async + Multi-Ghost Readiness Hooks**
   - [ ] Ensure template descriptor supports blocking/default execution hints already used by client.
   - [ ] Add optional non-breaking fields for future async dispatch hints and multi-ghost scheduling affinity.
@@ -150,15 +150,15 @@ sequenceDiagram
 
 ## Acceptance Checks
 
-- [ ] Client Ghost command wizard renders from seed-provided templates only.
-- [ ] No static command template catalog remains in `cmd/client-tm`.
+- [x] Client Ghost command wizard renders from seed-provided templates only.
+- [x] No static command template catalog remains in `cmd/client-tm`.
 - [x] Built-in seeds publish complete template descriptors with deterministic ordering.
 - [x] Mirage can return aggregated capability data sufficient for intent-template filtering.
-- [ ] Existing `issue -> command -> seed.execute -> seed.result -> event -> report` flow remains unchanged.
+- [x] Existing `issue -> command -> seed.execute -> seed.result -> event -> report` flow remains unchanged.
 - [x] `go test ./...` passes.
 
 ## Code Reduction Targets
 
-- [ ] Remove static template catalog maintenance in `cmd/client-tm/cmd_ghost.go`.
-- [ ] Remove local seed operation inference switch in `cmd/client-tm/util.go`.
-- [ ] Eliminate duplicated operation/template filtering logic in client path.
+- [x] Remove static template catalog maintenance in `cmd/client-tm/cmd_ghost.go`.
+- [x] Remove local seed operation inference switch in `cmd/client-tm/util.go`.
+- [x] Eliminate duplicated operation/template filtering logic in client path.

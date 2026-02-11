@@ -61,6 +61,7 @@ type controlRequest struct {
 	CommandFrame []byte            `json:"command_frame,omitempty"`
 	Spawn        SpawnGhostRequest `json:"spawn,omitempty"`
 	MirageID     string            `json:"mirage_id,omitempty"`
+	SessionPort  string            `json:"session_port,omitempty"`
 }
 
 // controlResponse is one admin action result envelope emitted by ghostctl.
@@ -221,7 +222,7 @@ func (s *Service) handleAdminConn(conn net.Conn) {
 			_ = writeControlResponse(conn, controlResponse{OK: false, Error: err.Error()})
 			continue
 		}
-		resp := s.handleControlRequest(req)
+		resp := s.handleControlRequest(req, remote)
 		if err := writeControlResponse(conn, resp); err != nil {
 			logs.Warnf("ghost.admin write err=%v", err)
 			return
@@ -230,7 +231,8 @@ func (s *Service) handleAdminConn(conn net.Conn) {
 }
 
 // handleControlRequest dispatches RPC-like admin actions to service methods.
-func (s *Service) handleControlRequest(req controlRequest) controlResponse {
+// remoteAddr is the admin client's TCP remote address for connection-derived resolution.
+func (s *Service) handleControlRequest(req controlRequest, remoteAddr string) controlResponse {
 	switch req.Action {
 	case "status":
 		return controlResponse{OK: true, Data: s.server.Status()}
@@ -264,7 +266,7 @@ func (s *Service) handleControlRequest(req controlRequest) controlResponse {
 		}
 		return controlResponse{OK: true, Data: out}
 	case "bind_mirage":
-		s.BindMirageAdminRoute(req.MirageID)
+		s.BindMirageAdminRoute(req.MirageID, remoteAddr, req.SessionPort)
 		return controlResponse{OK: true}
 	default:
 		return controlResponse{OK: false, Error: fmt.Sprintf("unknown action: %s", req.Action)}

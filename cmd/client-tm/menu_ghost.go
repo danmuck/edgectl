@@ -5,9 +5,11 @@ package main
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/seeds"
 	logs "github.com/danmuck/smplog"
 )
 
@@ -84,7 +86,7 @@ func (a *App) showGhostTargetSummary(target GhostTarget) {
 		fmt.Printf("Status error: %v\n", err)
 		return
 	}
-	seedsList, err := target.Admin.ListSeeds()
+	seedCatalog, err := target.Admin.ListSeedCatalog()
 	if err != nil {
 		fmt.Printf("Seed list error: %v\n", err)
 		return
@@ -97,21 +99,32 @@ func (a *App) showGhostTargetSummary(target GhostTarget) {
 	fmt.Printf("  phase:    %s\n", status.Phase)
 	fmt.Printf("  seeds:    %d\n", status.SeedCount)
 	fmt.Println("  seed ids:")
-	for _, seed := range seedsList {
-		fmt.Printf("    - %s\n", seed.ID)
+	for i := range seedCatalog {
+		seedID := strings.TrimSpace(seedCatalog[i].Metadata.ID)
+		if seedID == "" {
+			continue
+		}
+		fmt.Printf("    - %s\n", seedID)
 	}
 }
 
 func (a *App) listSeedOperations(target GhostTarget) error {
-	seedList, err := target.Admin.ListSeeds()
+	seedCatalog, err := target.Admin.ListSeedCatalog()
 	if err != nil {
 		return err
 	}
 	fmt.Println()
 	fmt.Println("Seed Operations")
-	for _, seedMeta := range seedList {
-		fmt.Printf("  %s\n", seedMeta.ID)
-		specs := operationsForSeed(seedMeta.ID)
+	for i := range seedCatalog {
+		seedID := strings.TrimSpace(seedCatalog[i].Metadata.ID)
+		if seedID == "" {
+			continue
+		}
+		fmt.Printf("  %s\n", seedID)
+		specs := append([]seeds.OperationSpec(nil), seedCatalog[i].Operations...)
+		sort.Slice(specs, func(a, b int) bool {
+			return specs[a].Name < specs[b].Name
+		})
 		if len(specs) == 0 {
 			fmt.Println("    - (operations unknown)")
 			continue
@@ -128,11 +141,11 @@ func (a *App) listSeedOperations(target GhostTarget) error {
 }
 
 func (a *App) executeSeedCommand(target GhostTarget) error {
-	seedList, err := target.Admin.ListSeeds()
+	seedCatalog, err := target.Admin.ListSeedCatalog()
 	if err != nil {
 		return err
 	}
-	templates := ghostCommandTemplatesForSeedList(seedList)
+	templates := ghostCommandTemplatesForSeedCatalog(seedCatalog)
 	if len(templates) == 0 {
 		return errors.New("no supported command templates for connected seeds")
 	}

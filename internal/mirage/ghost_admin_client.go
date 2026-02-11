@@ -29,6 +29,7 @@ type ghostControlRequest struct {
 	Spawn        SpawnGhostRequest `json:"spawn,omitempty"`
 	CommandFrame []byte            `json:"command_frame,omitempty"`
 	MirageID     string            `json:"mirage_id,omitempty"`
+	SessionPort  string            `json:"session_port,omitempty"`
 }
 
 type ghostAdminCommand struct {
@@ -230,10 +231,12 @@ func (c *GhostControlClient) ListSeedCatalog(ctx context.Context) ([]SeedCapabil
 }
 
 // BindMirage marks a ghost admin endpoint as attached to one Mirage control plane.
-func (c *GhostControlClient) BindMirage(ctx context.Context, mirageID string) error {
+// sessionPort is the mirage session listener port (e.g. "9000") so ghost can resolve the session address.
+func (c *GhostControlClient) BindMirage(ctx context.Context, mirageID string, sessionPort string) error {
 	return c.call(ctx, ghostControlRequest{
-		Action:   bindMirageAction,
-		MirageID: strings.TrimSpace(mirageID),
+		Action:      bindMirageAction,
+		MirageID:    strings.TrimSpace(mirageID),
+		SessionPort: strings.TrimSpace(sessionPort),
 	}, nil)
 }
 

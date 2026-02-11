@@ -26,6 +26,7 @@
 - [x] Complete Seed Coupling Stage 1 contract pass: add seed-owned command catalog types, extend `seeds.Seed` interface, and publish command catalogs for all built-in seeds.
 - [x] Complete Seed Coupling Stage 2 Ghost publication pass: expose full seed capability catalog (`metadata + operations + command_catalog`) via Ghost server/admin, preserving legacy `list_seeds`.
 - [x] Complete Seed Coupling Stage 3 Mirage aggregation pass: aggregate Ghost `seed_catalog` snapshots in Mirage, expose via Mirage admin action, and add mixed-connectivity/partial-availability tests.
+- [x] Complete Seed Coupling Stage 4 client migration pass: drive Ghost command wizard and operation listing from remote `list_seed_catalog` payloads, remove static client catalog/inference helpers, and keep the existing `CommandTemplate` UI shape.
 - [x] Set `cmd/testctl` run-mode default pacing to `free` so `make test-override` executes the full suite non-interactively while preserving paused pacing in interactive mode.
 
 ## Guardrails

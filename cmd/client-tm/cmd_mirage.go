@@ -12,13 +12,6 @@ func mirageIntentTemplateCatalog() []MirageIntentTemplate {
 		{Key: "path", Prompt: "filename (relative path)", Required: true},
 		{Key: "content", Prompt: "file content", Required: true, Multiline: true, Terminator: ".done"},
 	}
-	for _, cmd := range ghostCommandTemplateCatalog() {
-		if cmd.ID != "seed.fs.write" || len(cmd.Args) == 0 {
-			continue
-		}
-		storeFileArgs = append([]CommandArgSpec(nil), cmd.Args...)
-		break
-	}
 
 	return []MirageIntentTemplate{
 		{
