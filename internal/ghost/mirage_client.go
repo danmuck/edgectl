@@ -78,7 +78,7 @@ func (c *MirageClient) ConnectAndRegister(ctx context.Context) (*MirageSession, 
 		attempt++
 		conn, err := c.dial(ctx)
 		if err != nil {
-			logs.Warnf("ghost.MirageClient dial attempt=%d addr=%q err=%v", attempt, c.cfg.Address, err)
+			logs.Warnf("ghost.MirageClient.ConnectAndRegister dial attempt=%d addr=%q err=%v", attempt, c.cfg.Address, err)
 			if !c.shouldRetry(attempt) {
 				return nil, err
 			}
