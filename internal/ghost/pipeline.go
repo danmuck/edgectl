@@ -9,7 +9,7 @@ import (
 	logs "github.com/danmuck/smplog"
 )
 
-const unknownSeedExitCode int32 = 127
+const unknownSeedExitCode uint32 = 127
 
 // Ghost full command pipeline: boundary accept -> seed.execute -> seed.result -> event.
 func (s *Server) HandleCommandAndExecute(cmd CommandEnv) (EventEnv, error) {
@@ -121,7 +121,7 @@ func normalizeSeedResult(exec SeedExecuteEnv, result seeds.SeedResult, execErr e
 }
 
 // Ghost deterministic seed.result builder for dispatch-time failures.
-func errorSeedResult(exec SeedExecuteEnv, reason string, exitCode int32) SeedResultEnv {
+func errorSeedResult(exec SeedExecuteEnv, reason string, exitCode uint32) SeedResultEnv {
 	return SeedResultEnv{
 		ExecutionID: exec.ExecutionID,
 		SeedID:      exec.SeedID,

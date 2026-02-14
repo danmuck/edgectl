@@ -111,7 +111,7 @@ observed_state = "owned by mirage (aggregated from ghost events)"
 # User -> Mirage
 
 [examples.issue.fields]
-message_type = "Intent"
+message_type = "issue"
 intent_id = "intent.2026.02.06.001"
 actor = "user:dan"
 target_scope = "ghost:edge-ctl/*"

@@ -48,7 +48,7 @@ type VerificationRecord struct {
 	Operation          string `json:"operation"`
 	Outcome            string `json:"outcome"`
 	SeedStatus         string `json:"seed_status"`
-	ExitCode           int32  `json:"exit_code"`
+	ExitCode           uint32 `json:"exit_code"`
 	TimestampMS        uint64 `json:"timestamp_ms"`
 	Status             string `json:"status"`
 }

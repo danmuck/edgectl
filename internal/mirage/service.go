@@ -730,8 +730,8 @@ func (s *Service) handleRegistration(
 	_ = conn.SetDeadline(time.Now().Add(s.cfg.Session.HandshakeTimeout))
 	now := uint64(time.Now().UnixMilli())
 	const (
-		errorCodeTransportFailure   = 1000
-		errorCodeSemanticValidation = 1300
+		errorCodeTransportFailure   = schema.ErrCodeTransportFailure
+		errorCodeSemanticValidation = schema.ErrCodeSemanticValidation
 	)
 
 	reg, err := session.ReadRegistration(reader)

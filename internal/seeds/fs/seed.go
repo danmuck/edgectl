@@ -116,39 +116,39 @@ func (s Seed) Execute(action string, args map[string]string) (seeds.SeedResult, 
 	case "write":
 		p, err := s.resolvePath(args["path"])
 		if err != nil {
-			return errorResult(err), err
+			return seeds.ErrorResultErr(err), err
 		}
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			return errorResult(err), err
+			return seeds.ErrorResultErr(err), err
 		}
 		content := []byte(args["content"])
 		if err := os.WriteFile(p, content, 0o644); err != nil {
-			return errorResult(err), err
+			return seeds.ErrorResultErr(err), err
 		}
-		return okResult("ok\n"), nil
+		return seeds.OKResult("ok\n"), nil
 	case "read":
 		p, err := s.resolvePath(args["path"])
 		if err != nil {
-			return errorResult(err), err
+			return seeds.ErrorResultErr(err), err
 		}
 		out, err := os.ReadFile(p)
 		if err != nil {
-			return errorResult(err), err
+			return seeds.ErrorResultErr(err), err
 		}
 		return seeds.SeedResult{Status: "ok", Stdout: out, ExitCode: 0}, nil
 	case "delete":
 		p, err := s.resolvePath(args["path"])
 		if err != nil {
-			return errorResult(err), err
+			return seeds.ErrorResultErr(err), err
 		}
 		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-			return errorResult(err), err
+			return seeds.ErrorResultErr(err), err
 		}
-		return okResult("ok\n"), nil
+		return seeds.OKResult("ok\n"), nil
 	case "list":
 		root, err := filepath.Abs(s.root)
 		if err != nil {
-			return errorResult(err), err
+			return seeds.ErrorResultErr(err), err
 		}
 		prefix := strings.TrimSpace(args["prefix"])
 		keys := make([]string, 0)
@@ -167,10 +167,10 @@ func (s Seed) Execute(action string, args map[string]string) (seeds.SeedResult, 
 			return nil
 		})
 		sort.Strings(keys)
-		return okResult(strings.Join(keys, "\n") + "\n"), nil
+		return seeds.OKResult(strings.Join(keys, "\n") + "\n"), nil
 	default:
 		err := fmt.Errorf("seed.fs: unknown action=%q", action)
-		return errorResult(err), err
+		return seeds.ErrorResultErr(err), err
 	}
 }
 
@@ -202,22 +202,3 @@ func isWithin(path string, root string) bool {
 	return strings.HasPrefix(p, r+string(os.PathSeparator))
 }
 
-func okResult(stdout string) seeds.SeedResult {
-	return seeds.SeedResult{
-		Status:   "ok",
-		Stdout:   []byte(stdout),
-		ExitCode: 0,
-	}
-}
-
-func errorResult(err error) seeds.SeedResult {
-	msg := "error"
-	if err != nil {
-		msg = err.Error()
-	}
-	return seeds.SeedResult{
-		Status:   "error",
-		Stderr:   []byte(msg + "\n"),
-		ExitCode: 1,
-	}
-}

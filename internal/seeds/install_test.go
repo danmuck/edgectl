@@ -19,11 +19,11 @@ type installFakeRunner struct {
 type installRunResult struct {
 	stdout   []byte
 	stderr   []byte
-	exitCode int32
+	exitCode uint32
 	err      error
 }
 
-func (r *installFakeRunner) Run(name string, args ...string) ([]byte, []byte, int32, error) {
+func (r *installFakeRunner) Run(name string, args ...string) ([]byte, []byte, uint32, error) {
 	cmd := []string{name}
 	cmd = append(cmd, args...)
 	r.commands = append(r.commands, cmd)

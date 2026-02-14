@@ -139,20 +139,5 @@ func (s Seed) Execute(action string, args map[string]string) (seeds.SeedResult, 
 }
 
 func (s Seed) exec(name string, args ...string) (seeds.SeedResult, error) {
-	stdout, stderr, exitCode, err := s.runner.Run(name, args...)
-	if err != nil {
-		if len(stderr) == 0 {
-			stderr = []byte(err.Error() + "\n")
-		}
-		if exitCode == 0 {
-			exitCode = 1
-		}
-		return seeds.SeedResult{
-			Status:   "error",
-			Stdout:   stdout,
-			Stderr:   stderr,
-			ExitCode: exitCode,
-		}, fmt.Errorf("%w: %v", ErrCommandFailed, err)
-	}
-	return seeds.SeedResult{Status: "ok", Stdout: stdout, Stderr: stderr, ExitCode: 0}, nil
+	return seeds.ExecCommand(s.runner, ErrCommandFailed, name, args...)
 }
