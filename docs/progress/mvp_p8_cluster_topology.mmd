@@ -1,0 +1,21 @@
+flowchart LR
+    U["Operator (client-tm)"]
+    M["VM1: Mirage Control Plane<br/>miragectl<br/>admin:7001<br/>session:9000"]
+
+    subgraph PXC["Proxmox Cluster"]
+        G2["VM2: ghostctl<br/>ghost.alpha<br/>admin:7011"]
+        G3["VM3: ghostctl<br/>ghost.beta<br/>admin:7012"]
+        G4["VM4: ghostctl<br/>ghost.gamma<br/>admin:7013"]
+    end
+
+    U -->|"issue/reconcile/report (admin API)"| M
+    M -->|"command dispatch (admin route)"| G2
+    M -->|"command dispatch (admin route)"| G3
+    M -->|"command dispatch (admin route)"| G4
+    G2 -->|"event + heartbeat (session/mTLS :9000)"| M
+    G3 -->|"event + heartbeat (session/mTLS :9000)"| M
+    G4 -->|"event + heartbeat (session/mTLS :9000)"| M
+
+    G2 --- S2["Builtin Seeds<br/>docker, mongod, host, fs, kv, flow"]
+    G3 --- S3["Builtin Seeds<br/>docker, mongod, host, fs, kv, flow"]
+    G4 --- S4["Builtin Seeds<br/>docker, mongod, host, fs, kv, flow"]

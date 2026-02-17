@@ -250,6 +250,57 @@ func TestInstallBrewBootstrapsAndInstalls(t *testing.T) {
 	}
 }
 
+func TestInstallAptRunsAptGet(t *testing.T) {
+	workspace := t.TempDir()
+	runner := &installFakeRunner{}
+	installer, err := NewInstaller(InstallerConfig{
+		WorkspaceRoot: workspace,
+		InstallRoot:   "local/seeds",
+		Whitelist:     []string{"seed.docker"},
+		Runner:        runner,
+	})
+	if err != nil {
+		t.Fatalf("new installer: %v", err)
+	}
+
+	if err := installer.Install(InstallSpec{
+		SeedID:  "seed.docker",
+		Method:  InstallMethodApt,
+		Package: "docker.io",
+	}); err != nil {
+		t.Fatalf("install apt: %v", err)
+	}
+
+	if len(runner.commands) != 1 {
+		t.Fatalf("expected 1 command, got %d", len(runner.commands))
+	}
+	got := strings.Join(runner.commands[0], " ")
+	if got != "apt-get install -y docker.io" {
+		t.Fatalf("unexpected apt command: %q", got)
+	}
+}
+
+func TestInstallAptRejectsMissingPackage(t *testing.T) {
+	workspace := t.TempDir()
+	installer, err := NewInstaller(InstallerConfig{
+		WorkspaceRoot: workspace,
+		InstallRoot:   "local/seeds",
+		Whitelist:     []string{"seed.docker"},
+		Runner:        &installFakeRunner{},
+	})
+	if err != nil {
+		t.Fatalf("new installer: %v", err)
+	}
+
+	err = installer.Install(InstallSpec{
+		SeedID: "seed.docker",
+		Method: InstallMethodApt,
+	})
+	if !errors.Is(err, ErrInstallInvalidSpec) {
+		t.Fatalf("expected ErrInstallInvalidSpec, got %v", err)
+	}
+}
+
 func TestNewInstallerDefaultRunnerUsesEnvRunner(t *testing.T) {
 	workspace := t.TempDir()
 	installer, err := NewInstaller(InstallerConfig{

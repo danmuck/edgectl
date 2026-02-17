@@ -1,0 +1,26 @@
+flowchart LR
+    FE["Frontend Client"]
+    API["Mirage api/v1 Boundary"]
+    ORCH["Mirage Orchestrator"]
+    CAT["Dependency Catalog and Approval Ledger"]
+    G1["Ghost Node A"]
+    G2["Ghost Node B"]
+    G3["Ghost Node N"]
+    SEEDS["Seed Interfaces and Adapters"]
+    OBS["Reports and Metrics Read Models"]
+
+    FE -->|"HTTP api/v1"| API
+    API -->|"issue and reconcile actions"| ORCH
+    API -->|"dependency proposal and approval actions"| CAT
+    CAT -->|"approved install plans"| ORCH
+    ORCH -->|"command dispatch admin route"| G1
+    ORCH -->|"command dispatch admin route"| G2
+    ORCH -->|"command dispatch admin route"| G3
+    G1 -->|"event and heartbeat session route"| ORCH
+    G2 -->|"event and heartbeat session route"| ORCH
+    G3 -->|"event and heartbeat session route"| ORCH
+    G1 --- SEEDS
+    G2 --- SEEDS
+    G3 --- SEEDS
+    ORCH --> OBS
+    OBS -->|"reports services ghosts metrics"| API

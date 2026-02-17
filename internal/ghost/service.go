@@ -16,6 +16,7 @@ import (
 
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/seeds"
+	seedcatalog "github.com/danmuck/edgectl/internal/seeds/catalog"
 	seeddocker "github.com/danmuck/edgectl/internal/seeds/docker"
 	seedflow "github.com/danmuck/edgectl/internal/seeds/flow"
 	seedfs "github.com/danmuck/edgectl/internal/seeds/fs"
@@ -649,9 +650,19 @@ func buildBuiltinRegistry(seedIDs []string, ghostID string) (*seeds.Registry, er
 }
 
 // Ghost bootstrap hook that runs configured seed dependency installations.
+// When no explicit specs are configured, resolves deps from the catalog for
+// each enabled builtin seed — so a Ghost can auto-resolve its seed dependencies.
 func (s *Service) installSeedDependencies() error {
 	cfg := s.cfg.SeedInstall
-	if !cfg.Enabled || len(cfg.Specs) == 0 {
+	if !cfg.Enabled {
+		return nil
+	}
+
+	specs := cfg.Specs
+	if len(specs) == 0 {
+		specs = s.specsFromCatalog()
+	}
+	if len(specs) == 0 {
 		return nil
 	}
 
@@ -664,10 +675,35 @@ func (s *Service) installSeedDependencies() error {
 	if err != nil {
 		return err
 	}
-	if err := installer.InstallAll(cfg.Specs); err != nil {
+	if err := installer.InstallAll(specs); err != nil {
 		return err
 	}
 	return nil
+}
+
+// specsFromCatalog derives InstallSpecs from the dependency catalog for each configured builtin seed.
+func (s *Service) specsFromCatalog() []seeds.InstallSpec {
+	catalog := seedcatalog.DependencyCatalog()
+	var specs []seeds.InstallSpec
+	for _, rawID := range s.cfg.BuiltinSeedIDs {
+		seedID := strings.TrimSpace(rawID)
+		// Normalize short IDs to canonical form.
+		if !strings.HasPrefix(seedID, "seed.") {
+			seedID = "seed." + seedID
+		}
+		deps, ok := catalog[seedID]
+		if !ok {
+			continue
+		}
+		for _, dep := range deps {
+			specs = append(specs, seeds.InstallSpec{
+				SeedID:  seedID + ".dep." + dep.Name,
+				Method:  dep.InstallMethod,
+				Package: dep.AptPackage,
+			})
+		}
+	}
+	return specs
 }
 
 // fetchHostSummary queries seed.host status if registered and returns a compact summary string.

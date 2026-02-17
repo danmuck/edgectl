@@ -47,9 +47,9 @@ certs:
 
 
 run-client:
-	@printf "Run client for ghost or mirage? [g/m] (default g): "; \
+	@printf "Run client for mirage or ghost? [m/g] (default m): "; \
 	read mode; \
-	if [ -z "$$mode" ]; then mode=g; fi; \
+	if [ -z "$$mode" ]; then mode=m; fi; \
 	case "$$mode" in \
 		g|ghost) mode=ghost ;; \
 		m|mirage) mode=mirage ;; \

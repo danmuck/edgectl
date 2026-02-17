@@ -1,5 +1,5 @@
 [chain_of_custody]
-diagram = '''
+diagram = """
 User
   ↓ (issue.intent envelope)
 Mirage
@@ -13,7 +13,7 @@ Ghost
 Mirage
   ↑ (report envelope)
 User
-'''
+"""
 
 [protocol]
 # Wire-level contract for all control-plane communication
@@ -152,7 +152,7 @@ ack_status = "accepted"
 timestamp_ms = "1760000000000"
 
 [description]
-protocol_boundary_canonical_loop = '''
+protocol_boundary_canonical_loop = """
 ----------------------------------------
 STEP 1: ISSUE (User -> Mirage)
 ----------------------------------------
@@ -205,4 +205,4 @@ mirage |> report {user}
 # - report.corrective   -> drift detected, corrective commands scheduled
 
 # Loop continues while intent remains active.
-'''
+"""

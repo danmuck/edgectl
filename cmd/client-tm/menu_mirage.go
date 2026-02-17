@@ -16,7 +16,7 @@ import (
 
 func (a *App) printMirageMenu() {
 	fmt.Println()
-	fmt.Println("Client TM (Mirage)")
+	fmt.Println("Client TM (Mirage Core Mode)")
 	fmt.Printf("  ghost config:  %s (targets=%d)\n", a.ghostCfgPath, len(a.ghostCfg.Targets))
 	fmt.Printf("  mirage config: %s (single control plane)\n", a.mirageCfgPath)
 	fmt.Printf("  clear screen after command: %v\n", a.clearScreen)

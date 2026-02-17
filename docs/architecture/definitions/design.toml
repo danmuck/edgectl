@@ -1,5 +1,5 @@
 [chain_of_custody]
-diagram = '''
+diagram = """
 User
   ↓ (intent)
 Mirage
@@ -11,7 +11,7 @@ Seed
 Ghost
   ↑ (aggregation)
 Mirage
-'''
+"""
 
 [mirage]
 description = "Represents the cloud control center (cloud execution via ghosts)"
@@ -242,7 +242,7 @@ pihole_disable = "pihole disable"
 update_gravity = "pihole -g"
 
 [description]
-chain_of_custody_canonical_control_flow = '''
+chain_of_custody_canonical_control_flow = """
 ────────────────────────────────────────────────────────
 BOOTSTRAP / DISCOVERY PHASE
 ────────────────────────────────────────────────────────
@@ -303,4 +303,4 @@ mirage |> report {user}            # Re-evaluate intent vs observed state
 # - corrective commands -> drift detected
 
 # Loop continues until intent is withdrawn
-'''
+"""

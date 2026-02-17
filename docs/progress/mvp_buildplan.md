@@ -1,6 +1,6 @@
 # MVP Build Plan and Slices (Canonical)
 
-Status: `Phase 5 complete (baseline); Phase 6 complete; Phase 7 complete; Phases 8-9 templated`
+Status: `Phase 5 complete (baseline); Phase 6 complete; Phase 7 complete; Phase 8 in progress (refined); Phase 9 scope defined`
 
 This is the canonical high-level schedule for `mvp_p0.md` through `mvp_p9.md`.
 Use phase files for detailed task execution and acceptance check tracking.
@@ -16,7 +16,7 @@ Use phase files for detailed task execution and acceptance check tracking.
 - [x] Phase 6: `mvp_p6.md`
 - [x] Phase 7: `mvp_p7.md`
 - [ ] Phase 8: `mvp_p8.md`
-- [ ] Phase 9: `mvp_p9.md` (placeholder; scope to be restored)
+- [ ] Phase 9: `mvp_p9.md` (scope defined; implementation pending)
 
 ## Slice Status
 
@@ -92,7 +92,7 @@ Use phase files for detailed task execution and acceptance check tracking.
 - [ ] Add timeout/retry policies and terminal error states
 
 - [ ] Milestone 9: MVP finalization (`mvp_p9.md`)
-- [ ] Recover original Phase 9 definition
+- [ ] Deliver defined MVP v1 seed and API scope
 - [ ] Define MVP exit criteria and final release validation matrix
 
 ## Immediate Next Sprint
@@ -120,4 +120,6 @@ Current state:
 - Phase 5 baseline orchestration is complete: core loop, report, admin boundaries, persistence seeds, local ghost spin-up, discovery surfaces all landed and tested.
 - Phase 6 boundary transport integration is complete: execute path is envelope-only, optional command-frame auth hooks are wired, and boundary contract tests are in place.
 - Multi-stage intent orchestration path from client-tm through Mirage is enabled and E2E covered (see `mvp_p6.md` stop-gaps closure).
-- Remaining major gaps: Milestones 4/8+ hardening, structured observability/error mapping completion, and finalization tasks.
+- Phase 8 hardening now has a concrete implementation and cluster-validation plan (`docs/progress/mvp_p8.md`, `docs/progress/mvp_p8_cluster_topology.mmd`, `docs/progress/mvp_p8_reliability_message_flow.mmd`).
+- Phase 9 MVP v1 scope is now explicitly defined with seed/API/dependency governance goals (`docs/progress/mvp_p9.md` + Phase 9 diagrams).
+- Remaining major gaps: execute Phase 8 hardening preconditions, then implement/validate Phase 9 MVP v1 scope and release matrix.

@@ -1,0 +1,35 @@
+sequenceDiagram
+    participant U as User Boundary (client-tm)
+    participant M as Mirage Reconciler
+    participant G as Ghost Admin Boundary
+    participant S as Seed Adapter
+    participant O as Ghost Event Outbox
+
+    U->>M: issue(intent_id)
+    M->>G: execute_envelope(command_id, execution_id)
+    G->>S: seed.execute(execution_id)
+    S-->>G: seed.result(status, exit_code)
+    G->>O: enqueue event(event_id, command_id)
+    O->>M: event(event_id)
+    M-->>O: event.ack(event_id, ack_status=accepted)
+    M-->>U: report(intent_id, completion_state)
+
+    alt duplicate command replay (same command_id)
+        M->>G: execute_envelope(command_id replay)
+        G-->>M: prior execution/event mapping (no new seed.execute)
+    end
+
+    alt duplicate event delivery (same event_id)
+        O->>M: event(event_id replay)
+        M-->>O: event.ack(event_id, ack_status=accepted, idempotent=true)
+    end
+
+    alt event.ack timeout
+        O->>O: backoff with jitter (250ms..5000ms, bounded)
+        O->>M: event retry(event_id)
+    end
+
+    alt ack rejected
+        M-->>O: event.ack(event_id, ack_status=rejected)
+        O->>G: mark delivery_failed (no mutation replay)
+    end

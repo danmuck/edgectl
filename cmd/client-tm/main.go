@@ -23,7 +23,7 @@ var (
 
 func main() {
 	var mode string
-	flag.StringVar(&mode, "mode", "ghost", "client mode: ghost or mirage")
+	flag.StringVar(&mode, "mode", "mirage", "client mode: mirage (default) or ghost (headless operations)")
 	flag.Parse()
 
 	logging.ConfigureRuntime()

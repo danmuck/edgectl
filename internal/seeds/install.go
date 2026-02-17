@@ -30,6 +30,7 @@ const (
 	InstallMethodGitHub        InstallMethod = "github"
 	InstallMethodWorkspaceCopy InstallMethod = "workspace_copy"
 	InstallMethodBrew          InstallMethod = "brew"
+	InstallMethodApt           InstallMethod = "apt"
 )
 
 // Seeds package dependency install plan for one seed id.
@@ -163,6 +164,8 @@ func (i *Installer) Install(spec InstallSpec) error {
 		return i.installGitHub(spec, dest)
 	case InstallMethodWorkspaceCopy:
 		return i.installWorkspaceCopy(spec, dest)
+	case InstallMethodApt:
+		return i.installApt(spec)
 	case InstallMethodBrew:
 		if err := i.installBrew(spec); err != nil {
 			return err
@@ -289,6 +292,18 @@ func (i *Installer) installWorkspaceCopy(spec InstallSpec, dest string) error {
 		return copyDir(srcAbs, dest)
 	}
 	return copyFile(srcAbs, dest, info.Mode().Perm())
+}
+
+// Seeds package apt installer for seed dependency packages on Ubuntu targets.
+func (i *Installer) installApt(spec InstallSpec) error {
+	pkg := strings.TrimSpace(spec.Package)
+	if pkg == "" {
+		return fmt.Errorf("%w: missing package for apt install", ErrInstallInvalidSpec)
+	}
+	if err := i.runCommand("apt-get", "install", "-y", pkg); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Seeds package brew installer for seed dependency packages on host.

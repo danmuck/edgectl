@@ -74,6 +74,17 @@ func ErrorResultErr(err error) SeedResult {
 	}
 }
 
+// DepSpec declares one external dependency required by a seed on a target host.
+type DepSpec struct {
+	Name          string        // human-readable dependency name (e.g. "docker")
+	Binary        string        // expected binary name in PATH (e.g. "docker")
+	InstallMethod InstallMethod // allowlisted install method (apt, brew, github, etc.)
+	AptPackage    string        // apt package name for Ubuntu targets
+	CurlURL       string        // direct download URL for curl method
+	Destination   string        // install destination relative to install root
+	Required      bool          // hard dependency — blocks seed execution if missing
+}
+
 // Seed is the seed execution boundary used by Ghost-local dispatch.
 type Seed interface {
 	Metadata() SeedMetadata

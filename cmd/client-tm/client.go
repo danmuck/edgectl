@@ -27,7 +27,7 @@ func NewApp(ghostCfgPath string, mirageCfgPath string, mode string) *App {
 
 func (a *App) printMainMenu() {
 	fmt.Println()
-	fmt.Println("Client TM")
+	fmt.Println("Client TM (Ghost Headless Mode)")
 	fmt.Printf("  ghost config:  %s (targets=%d)\n", a.ghostCfgPath, len(a.ghostCfg.Targets))
 	fmt.Printf("  mirage config: %s (targets=%d)\n", a.mirageCfgPath, len(a.mirageCfg.Targets))
 	fmt.Printf("  clear screen after command: %v\n", a.clearScreen)

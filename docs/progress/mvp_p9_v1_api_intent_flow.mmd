@@ -1,0 +1,23 @@
+sequenceDiagram
+    participant FE as Frontend
+    participant API as MirageAPI
+    participant ORCH as Orchestrator
+    participant G as Ghost
+    participant S as Seed
+    participant RM as ReadModels
+
+    FE->>API: POST /api/v1/intents
+    API->>ORCH: submit issue intent
+    ORCH-->>API: accepted intent id
+    API-->>FE: 202 accepted
+
+    FE->>API: POST /api/v1/intents/{intent_id}/reconcile
+    API->>ORCH: reconcile intent
+    ORCH->>G: command envelope
+    G->>S: seed.execute
+    S-->>G: seed.result
+    G-->>ORCH: event envelope
+    ORCH-->>G: event.ack
+    ORCH->>RM: update report and metrics
+    RM-->>API: report snapshot
+    API-->>FE: 200 report response
