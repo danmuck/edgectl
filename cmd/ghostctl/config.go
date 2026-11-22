@@ -11,6 +11,7 @@ import (
 	"github.com/danmuck/edgectl/internal/ghost"
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/seeds"
+	"github.com/danmuck/edgectl/internal/tools"
 )
 
 // ghostctl config.toml key mapping to Ghost runtime settings.
@@ -85,7 +86,7 @@ func loadServiceConfig(path string) (ghost.ServiceConfig, error) {
 	}
 
 	if meta.IsDefined("seeds") {
-		cfg.BuiltinSeedIDs = normalizeSeeds(raw.Seeds)
+		cfg.BuiltinSeedIDs = tools.NormalizeNonEmptyList(raw.Seeds)
 	}
 
 	if meta.IsDefined("heartbeat") {
@@ -160,7 +161,7 @@ func loadServiceConfig(path string) (ghost.ServiceConfig, error) {
 		cfg.SeedInstall.BinRoot = strings.TrimSpace(raw.SeedInstallBinRoot)
 	}
 	if meta.IsDefined("seed_install_whitelist") {
-		cfg.SeedInstall.Whitelist = normalizeList(raw.SeedInstallWhitelist)
+		cfg.SeedInstall.Whitelist = tools.NormalizeNonEmptyList(raw.SeedInstallWhitelist)
 	}
 	if meta.IsDefined("seed_install") {
 		specs, err := parseSeedInstallSpecs(raw.SeedInstall)
@@ -171,38 +172,6 @@ func loadServiceConfig(path string) (ghost.ServiceConfig, error) {
 	}
 
 	return cfg, nil
-}
-
-// ghostctl seed list normalizer that trims ids and drops empty entries.
-func normalizeSeeds(in []string) []string {
-	if len(in) == 0 {
-		return []string{}
-	}
-	out := make([]string, 0, len(in))
-	for _, seed := range in {
-		v := strings.TrimSpace(seed)
-		if v == "" {
-			continue
-		}
-		out = append(out, v)
-	}
-	return out
-}
-
-// ghostctl string-list normalizer that trims values and drops empty entries.
-func normalizeList(in []string) []string {
-	if len(in) == 0 {
-		return []string{}
-	}
-	out := make([]string, 0, len(in))
-	for _, raw := range in {
-		v := strings.TrimSpace(raw)
-		if v == "" {
-			continue
-		}
-		out = append(out, v)
-	}
-	return out
 }
 
 // ghostctl seed-install parser from config table entries into install specs.
@@ -228,7 +197,7 @@ func parseSeedInstallSpecs(in []fileSeedInstall) ([]seeds.InstallSpec, error) {
 			Package:            strings.TrimSpace(row.Package),
 			Tap:                strings.TrimSpace(row.Tap),
 			BootstrapIfMissing: row.BootstrapIfMissing,
-			BootstrapCommand:   normalizeList(row.BootstrapCommand),
+			BootstrapCommand:   tools.NormalizeNonEmptyList(row.BootstrapCommand),
 			InstallToBin:       row.InstallToBin,
 		})
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/danmuck/edgectl/internal/ghost"
 	"github.com/danmuck/edgectl/internal/mirage"
 	"github.com/danmuck/edgectl/internal/protocol/session"
+	"github.com/danmuck/edgectl/internal/tools"
 )
 
 // miragectl config.toml key mapping to Mirage runtime settings.
@@ -215,7 +216,7 @@ func loadRuntimeConfigs(path string) (mirage.ServiceConfig, ghost.ServiceConfig,
 	}
 	cfg.BuiltinSeedIDs = []string{"seed.flow", "seed.kv", "seed.fs", "seed.mongod"}
 	if meta.IsDefined("local_ghost_seeds") {
-		cfg.BuiltinSeedIDs = normalizeList(raw.LocalGhostSeeds)
+		cfg.BuiltinSeedIDs = tools.NormalizeNonEmptyList(raw.LocalGhostSeeds)
 	}
 	if meta.IsDefined("local_ghost_project_root") {
 		cfg.ProjectRoot = strings.TrimSpace(raw.LocalGhostProjectRoot)
@@ -253,7 +254,7 @@ func normalizeGhostManifests(raw []ghostManifestFile) []mirage.GhostManifest {
 			User:                             strings.TrimSpace(r.User),
 			SSHKeyFile:                       strings.TrimSpace(r.SSHKey),
 			SSHPort:                          r.SSHPort,
-			Seeds:                            normalizeList(r.Seeds),
+			Seeds:                            tools.NormalizeNonEmptyList(r.Seeds),
 			AdminListen:                      strings.TrimSpace(r.AdminListen),
 			MiragePolicy:                     strings.TrimSpace(r.MiragePolicy),
 			MirageAddress:                    strings.TrimSpace(r.MirageAddress),
@@ -261,7 +262,7 @@ func normalizeGhostManifests(raw []ghostManifestFile) []mirage.GhostManifest {
 			SeedInstallRoot:                  strings.TrimSpace(r.SeedInstallRoot),
 			SeedInstallBinRoot:               strings.TrimSpace(r.SeedInstallBinRoot),
 			SeedInstallAllowInternalDefaults: r.SeedInstallAllowInternalDefault,
-			SeedInstallWhitelist:             normalizeList(r.SeedInstallWhitelist),
+			SeedInstallWhitelist:             tools.NormalizeNonEmptyList(r.SeedInstallWhitelist),
 			SeedInstall:                      normalizeSeedInstallSpecs(r.SeedInstall),
 			ConfigTemplatePath:               strings.TrimSpace(r.ConfigTemplatePath),
 		})
@@ -290,23 +291,8 @@ func normalizeSeedInstallSpecs(in []mirage.GhostSeedInstallSpec) []mirage.GhostS
 		spec.Destination = strings.TrimSpace(spec.Destination)
 		spec.Package = strings.TrimSpace(spec.Package)
 		spec.Tap = strings.TrimSpace(spec.Tap)
-		spec.BootstrapCmd = normalizeList(spec.BootstrapCmd)
+		spec.BootstrapCmd = tools.NormalizeNonEmptyList(spec.BootstrapCmd)
 		out = append(out, spec)
-	}
-	return out
-}
-
-func normalizeList(in []string) []string {
-	if len(in) == 0 {
-		return []string{}
-	}
-	out := make([]string, 0, len(in))
-	for _, raw := range in {
-		v := strings.TrimSpace(raw)
-		if v == "" {
-			continue
-		}
-		out = append(out, v)
 	}
 	return out
 }
