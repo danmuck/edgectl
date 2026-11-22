@@ -18,6 +18,12 @@ These instructions govern how agents should make changes in this repository.
 - Agents SHOULD update `local/buildlogs/` on every pass.
 - Docs outside `docs/progress/` are read-only by default and MUST NOT be modified without explicit user approval in the active thread. New files are allowed if necessary, but no modifications to existing files in these directories without express user approval.
 
+## Commit and Review Gate
+
+- Agents MUST NOT run `git commit` (or create equivalent VCS commit objects) without explicit user approval in the active thread.
+- Agents SHOULD default to handing commit control to the user, even after implementation and validation are complete.
+- For large feature implementations, agents MUST pause after code + validation, provide a review summary, and wait for user direction before any commit action.
+
 ## Build Log Policy
 
 - Build logs live under `local/buildlogs/`.

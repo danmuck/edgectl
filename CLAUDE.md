@@ -53,6 +53,14 @@ If a change cannot be mapped to a specific contract or diagram, stop and ask.
 
 ---
 
+## Commit Approval and Review Breaks
+
+- Never run `git commit` (or equivalent commit-creating command) unless the user explicitly approves commit creation in the active thread.
+- Prefer leaving commits for the user by default, even when implementation and validation are complete.
+- For large feature implementations, stop after implementation and validation, provide a concise review package, and wait for user review/commit direction.
+
+---
+
 ## Build Log Requirements (Strict)
 
 - Build logs live under `local/buildlogs/`

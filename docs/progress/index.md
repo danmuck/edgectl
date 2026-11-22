@@ -25,6 +25,7 @@ The canonical high-level MVP phase schedule is [`mvp_buildplan.md`](mvp_buildpla
 - [x] Build logs (initial prompt + follow-up appends) and template: [`buildlog/README.md`](buildlog/README.md)
 - [x] Future API v1 proposal tracker: [`future_api_v1.md`](future_api_v1.md)
 - [x] Pi Homebrew bootstrap and ghost-local dependency control pass: [`pi_brew_bootstrap_validation.md`](pi_brew_bootstrap_validation.md)
+- [x] Claude policy hardening and repo-wide validation pass: [`claude_code_policy_validation.md`](claude_code_policy_validation.md)
 
 ## Intended Read Order
 
@@ -48,3 +49,4 @@ The canonical high-level MVP phase schedule is [`mvp_buildplan.md`](mvp_buildpla
 18. [`buildlog/README.md`](buildlog/README.md)
 19. [`future_api_v1.md`](future_api_v1.md)
 20. [`pi_brew_bootstrap_validation.md`](pi_brew_bootstrap_validation.md)
+21. [`claude_code_policy_validation.md`](claude_code_policy_validation.md)
