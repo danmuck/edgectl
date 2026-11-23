@@ -18,6 +18,22 @@ func (s *Server) HandleCommandAndExecute(cmd CommandEnv) (EventEnv, error) {
 		cmd.MessageID,
 		cmd.CommandID,
 	)
+	if err := cmd.Validate(); err != nil {
+		return EventEnv{}, err
+	}
+	// Replay boundary: a completed command_id (and its derived execution_id) returns the prior
+	// terminal event; the seed is not re-executed and the stored seed.result is unchanged.
+	if prior, ok := s.completedByCommandID(cmd.CommandID); ok {
+		logs.Infof(
+			"ghost.Server.HandleCommandAndExecute replay command_id=%q execution_id=%q event_id=%q message_id=%d",
+			prior.CommandID,
+			prior.ExecutionID,
+			prior.Event.EventID,
+			cmd.MessageID,
+		)
+		return prior.Event, nil
+	}
+
 	state, err := s.HandleCommand(cmd)
 	if err != nil {
 		return EventEnv{}, err

@@ -395,13 +395,15 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context, intentID string) (sess
 }
 
 // IngestObservedEvent maps an external ghost event into intent observed state.
-func (o *Orchestrator) IngestObservedEvent(event session.Event) (session.Report, bool, error) {
+// duplicate=true means the command was already observed; observed state is not re-mutated
+// and the latest report is returned for read-only emission.
+func (o *Orchestrator) IngestObservedEvent(event session.Event) (session.Report, bool, bool, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
 	intentID, plan, ok := o.findPlannedCommandByCommandID(event.CommandID)
 	if !ok {
-		return session.Report{}, false, nil
+		return session.Report{}, false, false, nil
 	}
 	desired := o.desired[intentID]
 	observed := ensureObservedLocked(o, intentID)
@@ -416,7 +418,7 @@ func (o *Orchestrator) IngestObservedEvent(event session.Event) (session.Report,
 				strings.TrimSpace(report.CommandID),
 				strings.TrimSpace(report.EventID),
 			)
-			return report, true, nil
+			return report, true, true, nil
 		}
 		report := observed.Reports[len(observed.Reports)-1]
 		logs.Infof(
@@ -427,12 +429,12 @@ func (o *Orchestrator) IngestObservedEvent(event session.Event) (session.Report,
 			strings.TrimSpace(report.CommandID),
 			strings.TrimSpace(report.EventID),
 		)
-		return report, true, nil
+		return report, true, true, nil
 	}
 
 	report, ingestedEvent, err := o.ingestEventEnvelopeAndBuildReport(desired, observed, event)
 	if err != nil {
-		return session.Report{}, true, err
+		return session.Report{}, true, false, err
 	}
 	observed.ByCommandID[ingestedEvent.CommandID] = ingestedEvent
 	observed.Events = append(observed.Events, ingestedEvent)
@@ -457,7 +459,7 @@ func (o *Orchestrator) IngestObservedEvent(event session.Event) (session.Report,
 		strings.TrimSpace(report.CommandID),
 		strings.TrimSpace(report.EventID),
 	)
-	return report, true, nil
+	return report, true, false, nil
 }
 
 // dispatchCommandEnvelope round-trips command payload through protocol framing.

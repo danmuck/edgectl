@@ -9,6 +9,13 @@
 //
 // - report production
 //
+// Idempotency (reliability.toml [idempotency], control-loop.md):
+// - session event ingest dedupes by event_id before observation (Server.IngestEvent)
+//
+// - event.ack is idempotent by event_id and retained for DuplicateWindow (15m)
+//
+// - observed state dedupes by command_id; duplicates never append reports
+//
 // Mirage does not execute seed operations directly.
 //
 // Canonical references (consult before changes):

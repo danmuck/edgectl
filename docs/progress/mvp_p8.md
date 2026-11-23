@@ -30,11 +30,22 @@ Harden Mirage/Ghost reliability behavior to contract level and validate the cont
 
 ### Slice A — Idempotency and Replay Safety
 
-- [ ] Add Ghost command idempotency ledger keyed by `command_id` with duplicate retention window `>=15m`.
-- [ ] Add Ghost seed execution idempotency keyed by `execution_id` so replay returns prior terminal `seed.result`.
-- [ ] Add Mirage event ingest dedupe keyed by `event_id`; repeated delivery must not re-mutate observed state.
-- [ ] Return idempotent `event.ack` by `event_id` (accepted for already-accepted event).
-- [ ] Add conformance tests for duplicate `command`, duplicate `seed.result`, duplicate `event`, and duplicate `event.ack`.
+- [x] Add Ghost command idempotency ledger keyed by `command_id` with duplicate retention window `>=15m`.
+- [x] Add Ghost seed execution idempotency keyed by `execution_id` so replay returns prior terminal `seed.result`.
+- [x] Add Mirage event ingest dedupe keyed by `event_id`; repeated delivery must not re-mutate observed state.
+- [x] Return idempotent `event.ack` by `event_id` (accepted for already-accepted event).
+- [x] Add conformance tests for duplicate `command`, duplicate `seed.result`, duplicate `event`, and duplicate `event.ack`.
+
+Slice A implementation notes (2026-11-22):
+
+- Ghost `HandleCommandAndExecute` replays the stored terminal `event` for a completed `command_id`; the seed is not re-executed and the stored `seed.result` (keyed by derived `execution_id`) is unchanged. A retry may carry a new `message_id`; replay does not index it.
+- An in-flight duplicate (accepted, no terminal event yet) still returns `ErrDuplicateCommandID`; there is no terminal state to replay.
+- Completed Ghost records and Mirage acks are retained for `DuplicateWindow = 15m` and pruned after; in-flight records never expire.
+- Mirage `Server.IngestEvent` checks `event_id` before observation. A redelivered event returns the stored ack and does not touch observed state, report history, ghost event counters, or runtime buildlogs.
+- `Orchestrator.IngestObservedEvent` now returns `duplicate`; `Server.ObserveEvent` no longer appends a second report when a command was already observed (e.g. reconcile path followed by session delivery).
+- After ack expiry a redelivered event gets a fresh ack, but observed state still dedupes by `command_id`.
+- Tests: `internal/ghost/idempotency_test.go`, `internal/mirage/idempotency_test.go`.
+- Open question: replay does not compare payloads; a reused `command_id` with different seed/operation/args returns the original event. Contract is silent on conflict handling.
 
 ### Slice B — Timeout, Retry, Backoff, Terminal States
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/danmuck/edgectl/internal/seeds"
 	logs "github.com/danmuck/smplog"
@@ -71,6 +72,8 @@ type Server struct {
 	executionByID      map[string]ExecutionState
 	executionByCmdID   map[string]ExecutionState
 	commandByMessageID map[uint64]string
+	// Clock for duplicate-window expiry; replaceable in tests.
+	now func() time.Time
 }
 
 // Ghost constructor for a server in boot phase with empty execution state.
@@ -81,6 +84,7 @@ func NewServer() *Server {
 		executionByID:      make(map[string]ExecutionState),
 		executionByCmdID:   make(map[string]ExecutionState),
 		commandByMessageID: make(map[uint64]string),
+		now:                time.Now,
 	}
 }
 
@@ -196,6 +200,8 @@ func (s *Server) HandleCommand(cmd CommandEnv) (ExecutionState, error) {
 		return ExecutionState{}, ErrNotRadiating
 	}
 
+	s.pruneExpiredLocked()
+
 	if strings.TrimSpace(cmd.GhostID) != s.ghostID {
 		logs.Errf(
 			"ghost.Server.HandleCommand target mismatch target=%q local=%q",
@@ -249,6 +255,7 @@ func (s *Server) completeExecution(
 	state.Event = event
 	state.Outcome = event.Outcome
 	state.Phase = ExecutionComplete
+	state.CompletedAt = s.now()
 
 	s.executionByID[state.ExecutionID] = state
 	s.executionByCmdID[state.CommandID] = state
@@ -259,6 +266,40 @@ func (s *Server) completeExecution(
 		state.CommandID,
 		state.Outcome,
 	)
+}
+
+// Terminal record for a completed command_id still inside the duplicate window.
+// In-flight (accepted, not complete) records are not replayable and return false.
+func (s *Server) completedByCommandID(commandID string) (ExecutionState, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	state, ok := s.executionByCmdID[strings.TrimSpace(commandID)]
+	if !ok || state.Phase != ExecutionComplete || s.expiredLocked(state) {
+		return ExecutionState{}, false
+	}
+	return state, true
+}
+
+// Completed records older than DuplicateWindow are expired; in-flight records never expire.
+func (s *Server) expiredLocked(state ExecutionState) bool {
+	return state.Phase == ExecutionComplete && s.now().Sub(state.CompletedAt) >= DuplicateWindow
+}
+
+// Drops expired completed records from all execution indexes. Caller holds s.mu.
+func (s *Server) pruneExpiredLocked() {
+	for execID, state := range s.executionByID {
+		if !s.expiredLocked(state) {
+			continue
+		}
+		delete(s.executionByID, execID)
+		delete(s.executionByCmdID, state.CommandID)
+		delete(s.commandByMessageID, state.MessageID)
+		logs.Debugf(
+			"ghost.Server.pruneExpired command_id=%q execution_id=%q",
+			state.CommandID,
+			state.ExecutionID,
+		)
+	}
 }
 
 // Ghost execution lookup by execution_id.

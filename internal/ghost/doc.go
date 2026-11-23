@@ -22,6 +22,13 @@
 // - seed.docker (container runtime CLI adapter)
 // - seed.host (host introspection via Go stdlib + CLI)
 //
+// Idempotency (reliability.toml [idempotency]):
+// - a completed command_id replays its prior terminal event; the seed is not re-executed
+//
+// - execution_id is derived from command_id, so seed.result is never produced twice per key
+//
+// - completed records are retained for DuplicateWindow (15m) before pruning
+//
 // Ghost does not own desired state.
 //
 // Canonical references (consult before changes):

@@ -668,9 +668,18 @@ func (s *Service) handleConn(conn net.Conn) {
 			logs.Warnf("mirage.handleConn decode event err=%v", err)
 			return
 		}
-		if report, matched, err := s.server.ObserveEvent(event); err != nil {
-			logs.Warnf("mirage.handleConn observe event err=%v", err)
-		} else if matched {
+		ingest := s.server.IngestEvent(reg.GhostID, event)
+		report := ingest.Report
+		if ingest.ObserveErr != nil {
+			logs.Warnf("mirage.handleConn observe event err=%v", ingest.ObserveErr)
+		} else if ingest.Duplicate {
+			logs.Infof(
+				"mirage.handleConn duplicate event dedupe event_id=%q command_id=%q ghost_id=%q",
+				event.EventID,
+				event.CommandID,
+				reg.GhostID,
+			)
+		} else if ingest.Matched {
 			logs.Warnf(
 				"mirage.handleConn report intent_id=%q phase=%q completion_state=%q command_id=%q event_id=%q",
 				report.IntentID,
@@ -687,8 +696,7 @@ func (s *Service) handleConn(conn net.Conn) {
 				"event_id":         report.EventID,
 			})
 		}
-		ack := s.server.AcceptEvent(reg.GhostID, event)
-		ackPayload, err := session.EncodeEventAckFrame(fr.Header.MessageID, ack)
+		ackPayload, err := session.EncodeEventAckFrame(fr.Header.MessageID, ingest.Ack)
 		if err != nil {
 			logs.Warnf("mirage.handleConn encode event.ack err=%v", err)
 			return

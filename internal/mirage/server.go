@@ -73,7 +73,13 @@ type Server struct {
 
 	reports []session.Report
 	spawner GhostSpawner
+
+	// Clock for ack timestamps and duplicate-window expiry; replaceable in tests.
+	now func() time.Time
 }
+
+// Minimum retention for accepted event_id acks (reliability.toml idempotency.duplicate_window).
+const DuplicateWindow = 15 * time.Minute
 
 // NewServer constructs Mirage server state in boot phase.
 func NewServer() *Server {
@@ -82,6 +88,7 @@ func NewServer() *Server {
 		registry: make(map[string]*registeredGhostState),
 		loop:     NewOrchestrator(),
 		reports:  make([]session.Report, 0),
+		now:      time.Now,
 	}
 }
 
@@ -216,19 +223,21 @@ func (s *Server) AcceptEvent(ghostID string, event session.Event) session.EventA
 		}
 		s.registry[ghostID] = state
 	}
+	s.pruneExpiredAcksLocked(state)
 	if ack, ok := state.ackByEvent[event.EventID]; ok {
 		return ack
 	}
+	now := s.now()
 	ack := session.EventAck{
 		EventID:     event.EventID,
 		CommandID:   event.CommandID,
 		GhostID:     ghostID,
 		AckStatus:   session.AckStatusAccepted,
 		AckCode:     0,
-		TimestampMS: uint64(time.Now().UnixMilli()),
+		TimestampMS: uint64(now.UnixMilli()),
 	}
 	state.ackByEvent[event.EventID] = ack
-	state.meta.LastEventAt = time.Now()
+	state.meta.LastEventAt = now
 	state.meta.EventCount++
 	return ack
 }
@@ -264,13 +273,71 @@ func (s *Server) ListIntentIDs() []string {
 }
 
 // ObserveEvent ingests a ghost event into orchestration observed state when command is known.
-func (s *Server) ObserveEvent(event session.Event) (session.Report, bool, error) {
-	report, matched, err := s.loop.IngestObservedEvent(event)
-	if err != nil || !matched {
-		return report, matched, err
+// Duplicate observations return the latest report without appending to report history.
+func (s *Server) ObserveEvent(event session.Event) (session.Report, bool, bool, error) {
+	report, matched, duplicate, err := s.loop.IngestObservedEvent(event)
+	if err != nil || !matched || duplicate {
+		return report, matched, duplicate, err
 	}
 	s.appendReport(report)
-	return report, matched, nil
+	return report, matched, false, nil
+}
+
+// EventIngest is the outcome of one session event delivery at the Mirage boundary.
+type EventIngest struct {
+	Ack session.EventAck
+	// Duplicate is true when event_id was already accepted; nothing was re-observed.
+	Duplicate bool
+	Report    session.Report
+	Matched   bool
+	// ObserveErr reports an observe failure; the event is still acked per reliability.toml.
+	ObserveErr error
+}
+
+// IngestEvent applies event_id dedupe before observation, then returns the idempotent ack.
+// A previously accepted event_id short-circuits to its stored ack with no state mutation.
+func (s *Server) IngestEvent(ghostID string, event session.Event) EventIngest {
+	if ack, ok := s.acceptedAck(ghostID, event.EventID); ok {
+		return EventIngest{Ack: ack, Duplicate: true}
+	}
+	report, matched, duplicate, err := s.ObserveEvent(event)
+	return EventIngest{
+		Ack:        s.AcceptEvent(ghostID, event),
+		Duplicate:  duplicate,
+		Report:     report,
+		Matched:    matched,
+		ObserveErr: err,
+	}
+}
+
+// Stored ack for an event_id accepted inside the duplicate window.
+func (s *Server) acceptedAck(ghostID string, eventID string) (session.EventAck, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	state, ok := s.registry[ghostID]
+	if !ok {
+		return session.EventAck{}, false
+	}
+	ack, ok := state.ackByEvent[eventID]
+	if !ok || s.ackExpiredLocked(ack) {
+		return session.EventAck{}, false
+	}
+	return ack, true
+}
+
+// Acks older than DuplicateWindow are eligible for pruning.
+func (s *Server) ackExpiredLocked(ack session.EventAck) bool {
+	acceptedAt := time.UnixMilli(int64(ack.TimestampMS))
+	return s.now().Sub(acceptedAt) >= DuplicateWindow
+}
+
+// Drops expired acks for one ghost. Caller holds s.mu for write.
+func (s *Server) pruneExpiredAcksLocked(state *registeredGhostState) {
+	for eventID, ack := range state.ackByEvent {
+		if s.ackExpiredLocked(ack) {
+			delete(state.ackByEvent, eventID)
+		}
+	}
 }
 
 // RecentReports returns bounded report history for user-boundary emission.
