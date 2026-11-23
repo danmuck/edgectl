@@ -14,6 +14,13 @@
 //
 // - mismatches get a rejected event.ack (code 1000), are not observed, and close the session
 //
+// Command retry and lifecycle (reliability.toml retry_policy.command, [backoff]):
+// - dispatch retries reuse command_id, use contract backoff, and stop once a terminal event is observed
+//
+// - per-command states: complete | failed | timed_out | retry_exhausted (observed state, not wire values)
+//
+// - attempts default to DefaultCommandMaxAttempts (3); terminal commands are never re-dispatched
+//
 // Idempotency (reliability.toml [idempotency], control-loop.md):
 // - session event ingest dedupes by event_id before observation (Server.IngestEvent)
 //

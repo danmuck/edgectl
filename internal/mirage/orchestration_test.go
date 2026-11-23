@@ -250,7 +250,7 @@ func TestOrchestratorIngestObservedEventByCommandID(t *testing.T) {
 		Outcome:     OutcomeSuccess,
 		TimestampMS: uint64(time.Now().UnixMilli()),
 	}
-	report, matched, duplicate, err := loop.IngestObservedEvent(event)
+	report, matched, duplicate, err := loop.IngestObservedEvent("ghost.alpha", event)
 	if err != nil {
 		t.Fatalf("ingest observed event: %v", err)
 	}

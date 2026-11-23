@@ -7,6 +7,16 @@ import (
 	"time"
 )
 
+// Delivery lifecycle state of one outbox event (reliability.toml [acknowledgement]).
+type DeliveryState string
+
+const (
+	// Awaiting an accepted event.ack; retries continue until ack_timeout_ms.
+	DeliveryPending DeliveryState = "pending"
+	// event.ack was rejected or ack_timeout_ms elapsed; no further retries or mutation replay.
+	DeliveryFailed DeliveryState = "delivery_failed"
+)
+
 // Session outbox record for one event awaiting event.ack.
 type PendingEvent struct {
 	EventID       string
@@ -17,6 +27,7 @@ type PendingEvent struct {
 	LastAttemptAt time.Time
 	AckDeadlineAt time.Time
 	LastError     string
+	State         DeliveryState
 }
 
 // Session outbox store keyed by stable event_id.
@@ -38,9 +49,27 @@ func (o *EventOutbox) Upsert(item PendingEvent) {
 	if key == "" {
 		return
 	}
+	if item.State == "" {
+		item.State = DeliveryPending
+	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.items[key] = item
+}
+
+// Terminal delivery failure: event.ack rejected or ack timeout. The record is retained for inspection.
+func (o *EventOutbox) MarkDeliveryFailed(eventID string, reason string) (PendingEvent, bool) {
+	key := strings.TrimSpace(eventID)
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	item, ok := o.items[key]
+	if !ok {
+		return PendingEvent{}, false
+	}
+	item.State = DeliveryFailed
+	item.LastError = strings.TrimSpace(reason)
+	o.items[key] = item
+	return item, true
 }
 
 // Session outbox attempt tracker for retry counters and latest error details.

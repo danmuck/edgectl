@@ -69,6 +69,50 @@ func TestEventForCommandPlannedOnAnotherGhostIsRejected(t *testing.T) {
 	}
 }
 
+func TestObserveRejectsCommandPlannedForAnotherGhostWithoutMutation(t *testing.T) {
+	testlog.Start(t)
+	srv, event := newIdempotencyServer(t)
+
+	event.GhostID = "ghost.beta"
+	_, _, _, err := srv.ObserveEvent("ghost.beta", event)
+	if !errors.Is(err, ErrCommandGhostMismatch) {
+		t.Fatalf("expected ErrCommandGhostMismatch, got %v", err)
+	}
+	assertNothingObserved(t, srv)
+}
+
+func TestSubmitIssueRejectsCommandIDCollisionAcrossIntents(t *testing.T) {
+	testlog.Start(t)
+	srv := NewServer()
+	issue := func(intentID, ghostID string) IssueEnv {
+		return IssueEnv{
+			IntentID:    intentID,
+			Actor:       "user:test",
+			TargetScope: "ghost:" + ghostID,
+			Objective:   "status",
+			Stages: []IssueStage{{
+				ID:       "stage.1",
+				Commands: []IssueCommand{{GhostID: ghostID, SeedSelector: "seed.flow", Operation: "status"}},
+			}},
+		}
+	}
+	if err := srv.SubmitIssue(issue("x/y", "ghost.alpha")); err != nil {
+		t.Fatalf("first issue: %v", err)
+	}
+	// "x.y" sanitizes to the same command_id prefix as "x/y".
+	err := srv.SubmitIssue(issue("x.y", "ghost.beta"))
+	if !errors.Is(err, ErrInvalidIssue) {
+		t.Fatalf("expected ErrInvalidIssue for colliding command_id, got %v", err)
+	}
+	if _, ok := srv.SnapshotIntent("x.y"); ok {
+		t.Fatalf("colliding intent must not be stored")
+	}
+	// Resubmitting the same intent_id replaces its own plan and is allowed.
+	if err := srv.SubmitIssue(issue("x/y", "ghost.alpha")); err != nil {
+		t.Fatalf("resubmit same intent: %v", err)
+	}
+}
+
 func TestEventForUnknownCommandWithMatchingGhostIsAccepted(t *testing.T) {
 	testlog.Start(t)
 	srv, _ := newIdempotencyServer(t)
@@ -146,6 +190,10 @@ func TestServiceClosesSessionOnIdentityBindingMismatch(t *testing.T) {
 	}
 	if ack.AckCode != schema.ErrCodeTransportFailure {
 		t.Fatalf("expected ack_code=%d, got %d", schema.ErrCodeTransportFailure, ack.AckCode)
+	}
+	// reliability.toml ack_reject_behavior: Ghost marks the event delivery_failed.
+	if outbox := gs.OutboxSnapshot(); len(outbox) != 1 || outbox[0].State != session.DeliveryFailed {
+		t.Fatalf("expected one delivery_failed outbox entry, got %+v", outbox)
 	}
 
 	// Session must be closed after the rejected ack; a follow-up event cannot be acked.

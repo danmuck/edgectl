@@ -7,6 +7,11 @@
 //
 // - retry/backoff/outbox primitives
 //
+// Reliability (reliability.toml [backoff], [acknowledgement]):
+// - backoff is exponential with jitter on every attempt, always capped at max_delay_ms
+//
+// - outbox entries are pending until accepted; rejected or timed-out acks mark delivery_failed
+//
 // Canonical references (consult before changes):
 // - docs/index.md
 //

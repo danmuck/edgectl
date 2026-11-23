@@ -72,6 +72,12 @@ func TestMirageSessionSendEventWithAckTimeout(t *testing.T) {
 		_ = <-done
 		t.Fatalf("expected ErrAckTimeout, got %v", err)
 	}
+	// reliability.toml: ack timeout marks delivery failed (retained, not silently pending).
+	if outbox := gs.OutboxSnapshot(); len(outbox) != 1 || outbox[0].State != session.DeliveryFailed {
+		_ = ln.Close()
+		_ = <-done
+		t.Fatalf("expected one delivery_failed outbox entry, got %+v", outbox)
+	}
 
 	if err := gs.Close(); err != nil {
 		_ = ln.Close()

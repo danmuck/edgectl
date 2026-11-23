@@ -41,6 +41,8 @@ type ServiceConfig struct {
 	RootGhostAdminAddr       string
 	GhostManifests           []GhostManifest
 	Session                  session.Config
+	// Dispatch attempts per command before retry_exhausted; <=0 uses DefaultCommandMaxAttempts.
+	CommandMaxAttempts int
 }
 
 // Mirage service defaults for session endpoint configuration.
@@ -58,6 +60,7 @@ func DefaultServiceConfig() ServiceConfig {
 		BuildlogKeyPrefix:        "local/buildlogs/",
 		RootGhostAdminAddr:       "",
 		Session:                  session.DefaultConfig(),
+		CommandMaxAttempts:       DefaultCommandMaxAttempts,
 	}
 }
 
@@ -149,6 +152,10 @@ func NewServiceWithConfig(cfg ServiceConfig) *Service {
 		conns:           make(map[net.Conn]struct{}),
 		adminGhostAddrs: make(map[string]string),
 	}
+	svc.server.SetCommandRetryPolicy(CommandRetryPolicy{
+		MaxAttempts: cfg.CommandMaxAttempts,
+		Backoff:     cfg.Session.Backoff,
+	})
 	localAdminAddr := strings.TrimSpace(cfg.LocalGhostAdminAddr)
 	if localAdminAddr == "" {
 		localAdminAddr = strings.TrimSpace(cfg.RootGhostAdminAddr)

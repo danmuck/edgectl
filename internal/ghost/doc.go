@@ -29,6 +29,11 @@
 //
 // - completed records are retained for DuplicateWindow (15m) before pruning
 //
+// Event delivery (reliability.toml [acknowledgement], [backoff]):
+// - events retry until an accepted event.ack or ack_timeout_ms; rejection or timeout marks delivery_failed
+//
+// - Mirage reconnect uses contract backoff with required jitter
+//
 // Ghost does not own desired state.
 //
 // Canonical references (consult before changes):

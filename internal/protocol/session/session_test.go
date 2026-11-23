@@ -207,6 +207,41 @@ func TestNextBackoffDelayJitterRange(t *testing.T) {
 	}
 }
 
+// Jittered delays never exceed max_delay_ms, including at and beyond the cap.
+func TestNextBackoffDelayJitterBoundedByMax(t *testing.T) {
+	testlog.Start(t)
+	cfg := DefaultConfig().Backoff
+	rng := rand.New(rand.NewSource(11))
+	for attempt := 1; attempt <= 12; attempt++ {
+		for i := 0; i < 200; i++ {
+			got := NextBackoffDelay(cfg, attempt, rng)
+			if got > cfg.MaxDelay {
+				t.Fatalf("attempt=%d delay %v exceeds max %v", attempt, got, cfg.MaxDelay)
+			}
+			if got <= 0 {
+				t.Fatalf("attempt=%d non-positive delay %v", attempt, got)
+			}
+		}
+	}
+}
+
+// Jitter with a nil rng still varies (shared source), so callers cannot silently lose jitter.
+func TestNextBackoffDelayJitterWithNilRNGVaries(t *testing.T) {
+	testlog.Start(t)
+	cfg := DefaultConfig().Backoff
+	seen := map[time.Duration]struct{}{}
+	for i := 0; i < 50; i++ {
+		got := NextBackoffDelay(cfg, 3, nil)
+		if got < 500*time.Millisecond || got >= 1500*time.Millisecond {
+			t.Fatalf("nil-rng jitter out of range: %v", got)
+		}
+		seen[got] = struct{}{}
+	}
+	if len(seen) < 2 {
+		t.Fatalf("expected varied delays with jitter and nil rng")
+	}
+}
+
 func TestValidateClientTransportProductionRequiresTLSMTLS(t *testing.T) {
 	testlog.Start(t)
 	cfg := DefaultConfig()
@@ -431,5 +466,23 @@ func TestEventOutboxListDeterministicOrdering(t *testing.T) {
 	}
 	if list[0].EventID != "evt.1" || list[1].EventID != "evt.2" || list[2].EventID != "evt.3" {
 		t.Fatalf("unexpected sort order: %+v", list)
+	}
+}
+
+// Outbox entries start pending and MarkDeliveryFailed records the terminal delivery state.
+func TestOutboxDeliveryStateTransitions(t *testing.T) {
+	testlog.Start(t)
+	o := NewEventOutbox()
+	o.Upsert(PendingEvent{EventID: "evt.d.1", CommandID: "cmd.d.1", GhostID: "ghost.alpha"})
+	item, ok := o.Get("evt.d.1")
+	if !ok || item.State != DeliveryPending {
+		t.Fatalf("expected pending state on upsert, got %+v", item)
+	}
+	failed, ok := o.MarkDeliveryFailed("evt.d.1", "event.ack rejected")
+	if !ok || failed.State != DeliveryFailed || failed.LastError != "event.ack rejected" {
+		t.Fatalf("unexpected delivery_failed record: %+v", failed)
+	}
+	if _, ok := o.MarkDeliveryFailed("evt.unknown", "x"); ok {
+		t.Fatalf("expected false for unknown event_id")
 	}
 }

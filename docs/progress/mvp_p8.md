@@ -54,14 +54,26 @@ Slice A security follow-up — event identity binding (2026-11-22):
 - Fix: `Server.IngestEvent` rejects, before dedupe or observation, any event whose declared `ghost_id` differs from the session, or whose `command_id` is planned for a different ghost. Rejected `event.ack` carries `ack_code=1000`; nothing is observed or stored; `handleConn` closes the session after writing the ack.
 - Tests: `internal/mirage/binding_test.go` (declared mismatch, planned-ghost mismatch with real result still accepted afterwards, unplanned command from bound ghost accepted, session closed end to end).
 - Not covered: the direct reconcile path (`ReconcileOnce` -> executor) trusts the event returned by the executor registered for that `ghost_id`; it is not a session boundary.
+- Hardening (second review): the planned-ghost check now runs inside `Orchestrator.IngestObservedEvent` under the same lock and against the same plan entry used for observation (was a separate lookup: check/use race). `SubmitIssue` rejects an intent whose generated `command_id`s collide with another intent's (sanitized ids such as `x/y` and `x.y` produced identical `command_id`s, making lookup ambiguous).
 
 ### Slice B — Timeout, Retry, Backoff, Terminal States
 
-- [ ] Normalize runtime defaults to reliability contract values (`connect`, `handshake`, `read`, `write`, `ack_timeout`).
-- [ ] Implement bounded exponential backoff with jitter (`initial=250ms`, `multiplier=2.0`, `max=5000ms`).
-- [ ] Retry `command` only when no terminal event is observed; retries must preserve idempotency keys.
-- [ ] Implement explicit terminal states for command/report lifecycle (`complete`, `failed`, `timed_out`, `delivery_failed`, `retry_exhausted`).
-- [ ] Add deterministic timeout/retry tests with bounded completion and explicit assertions on terminal state.
+- [x] Normalize runtime defaults to reliability contract values (`connect`, `handshake`, `read`, `write`, `ack_timeout`).
+- [x] Implement bounded exponential backoff with jitter (`initial=250ms`, `multiplier=2.0`, `max=5000ms`).
+- [x] Retry `command` only when no terminal event is observed; retries must preserve idempotency keys.
+- [x] Implement explicit terminal states for command/report lifecycle (`complete`, `failed`, `timed_out`, `delivery_failed`, `retry_exhausted`).
+- [x] Add deterministic timeout/retry tests with bounded completion and explicit assertions on terminal state.
+
+Slice B implementation notes (2026-11-22):
+
+- Decisions (user, 2026-11-22): terminal states are per-command in Mirage observed state, not wire values; report `completion_state` stays `in_progress|satisfied|failed` and the summary names the specific state. Command dispatch defaults to 3 attempts, configurable via miragectl `command_max_attempts` (contract is silent on a bound).
+- Defaults: `session.DefaultConfig` already matched `reliability.toml`; both runtimes and shipped TOML use it. Existing `TestDefaultConfigMatchesReliabilityContract` pins the values. No change needed.
+- Backoff: jitter was applied after the max cap (delays up to 7.5s) and only from attempt 2; jitter is now applied on every attempt and the result is always capped at `max_delay_ms`. A nil rng uses the shared source instead of a fixed 0.5 factor. Ghost reconnect previously forced `Jitter=false`, contrary to `jitter = "required"`; it now uses contract backoff.
+- Command retry: `Orchestrator.dispatchWithRetry` reuses the same `command_id` on every attempt (Ghost replays instead of re-executing, Slice A), sleeps with contract backoff between attempts, and stops early if a terminal event for the command arrives via the session path.
+- Mirage per-command states (`CommandStatus` in `ObservedIntent.CommandStates`): `complete` / `failed` from the terminal event outcome; `retry_exhausted` after `MaxAttempts` failures; `timed_out` when the caller deadline expires first. Terminal commands are settled and never re-dispatched. A real terminal event arriving later supersedes an inferred `timed_out`/`retry_exhausted` (attempt count kept).
+- Ghost event delivery: outbox entries carry `DeliveryState`; an `event.ack` rejection or `ack_timeout_ms` expiry marks `delivery_failed` and retains the record (previously a rejection deleted it and a timeout left it looking pending). Command results currently return synchronously over the admin path, so only session heartbeat events use this path today.
+- Reconcile requests have a 5s admin deadline and the ghost admin client uses a 5s per-call timeout, so a hung ghost yields `timed_out` after one attempt; fast transport failures get all 3 attempts (~250ms + ~500ms backoff).
+- Tests: `internal/mirage/command_retry_test.go` (8 tests, injected sleeper, no real waiting), backoff bound tests in `internal/protocol/session/session_test.go`, outbox state test, `delivery_failed` assertions in Ghost ack-timeout and Mirage binding-rejection tests, miragectl `command_max_attempts` config test.
 
 ### Slice C — Protocol Compatibility and Error Mapping Hardening
 

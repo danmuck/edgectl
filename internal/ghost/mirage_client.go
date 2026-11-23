@@ -265,6 +265,15 @@ func (s *MirageSession) Close() error {
 	return s.conn.Close()
 }
 
+// Records delivery_failed in the outbox with a structured terminal-state log line.
+func (s *MirageSession) markDeliveryFailed(event session.Event, attempts int, reason error) {
+	_, _ = s.outbox.MarkDeliveryFailed(event.EventID, reason.Error())
+	logs.Warnf(
+		"ghost.event.delivery component=ghost state=%s event_id=%q command_id=%q ghost_id=%q attempts=%d err=%q",
+		session.DeliveryFailed, event.EventID, event.CommandID, event.GhostID, attempts, reason.Error(),
+	)
+}
+
 // Ghost outbox snapshot for pending event retry diagnostics/tests.
 func (s *MirageSession) OutboxSnapshot() []session.PendingEvent {
 	return s.outbox.List()
@@ -310,15 +319,20 @@ func (s *MirageSession) SendEventWithAck(ctx context.Context, event EventEnv) (s
 		_, _ = s.outbox.MarkAttempt(wireEvent.EventID, time.Now(), "")
 		ack, err := s.sendEventOnce(ctx, wireEvent)
 		if err == nil {
-			s.outbox.Remove(wireEvent.EventID)
 			if ack.AckStatus == session.AckStatusAccepted {
+				s.outbox.Remove(wireEvent.EventID)
 				return ack, nil
 			}
-			return ack, fmt.Errorf("%w: status=%s code=%d", ErrAckRejected, ack.AckStatus, ack.AckCode)
+			// reliability.toml ack_reject_behavior: mark delivery failed; no implicit replay.
+			rejectErr := fmt.Errorf("%w: status=%s code=%d", ErrAckRejected, ack.AckStatus, ack.AckCode)
+			s.markDeliveryFailed(wireEvent, attempt, rejectErr)
+			return ack, rejectErr
 		}
 
 		_, _ = s.outbox.MarkAttempt(wireEvent.EventID, time.Now(), err.Error())
 		if time.Now().After(deadline) {
+			// ack_timeout_ms exceeded without an accepted ack: terminal delivery failure.
+			s.markDeliveryFailed(wireEvent, attempt, fmt.Errorf("%w: last_err=%v", ErrAckTimeout, err))
 			return session.EventAck{}, ErrAckTimeout
 		}
 		delay := session.NextBackoffDelay(s.cfg.Backoff, attempt, s.rng)

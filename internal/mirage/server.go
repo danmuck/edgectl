@@ -248,6 +248,11 @@ func (s *Server) RegisterExecutor(ghostID string, exec CommandExecutor) error {
 	return s.loop.RegisterExecutor(ghostID, exec)
 }
 
+// SetCommandRetryPolicy configures command dispatch retry bounds in the orchestration boundary.
+func (s *Server) SetCommandRetryPolicy(p CommandRetryPolicy) {
+	s.loop.SetCommandRetryPolicy(p)
+}
+
 // SubmitIssue ingests desired state into Mirage orchestration.
 func (s *Server) SubmitIssue(issue IssueEnv) error {
 	return s.loop.SubmitIssue(issue)
@@ -274,9 +279,10 @@ func (s *Server) ListIntentIDs() []string {
 }
 
 // ObserveEvent ingests a ghost event into orchestration observed state when command is known.
+// The command must be planned for boundGhostID (ErrCommandGhostMismatch otherwise, no mutation).
 // Duplicate observations return the latest report without appending to report history.
-func (s *Server) ObserveEvent(event session.Event) (session.Report, bool, bool, error) {
-	report, matched, duplicate, err := s.loop.IngestObservedEvent(event)
+func (s *Server) ObserveEvent(boundGhostID string, event session.Event) (session.Report, bool, bool, error) {
+	report, matched, duplicate, err := s.loop.IngestObservedEvent(boundGhostID, event)
 	if err != nil || !matched || duplicate {
 		return report, matched, duplicate, err
 	}
@@ -299,31 +305,27 @@ type EventIngest struct {
 	ObserveErr error
 }
 
-// IngestEvent applies identity binding, then event_id dedupe, then observation, and returns the ack.
-// A binding mismatch is rejected before any dedupe or state mutation (transport_security.toml
-// identity_binding; errors.toml declared_peer_mismatch=1000). A previously accepted event_id
-// short-circuits to its stored ack with no state mutation.
+// IngestEvent applies identity binding, event_id dedupe, and observation, and returns the ack.
+// Binding (transport_security.toml identity_binding; errors.toml declared_peer_mismatch=1000):
+// the declared ghost_id is checked first; the command's planned ghost is checked atomically with
+// observation. Either mismatch is rejected with no observation and no stored ack. A previously
+// accepted event_id short-circuits to its stored ack with no state mutation; stored acks only
+// exist for events that already passed binding for this same session ghost.
 func (s *Server) IngestEvent(ghostID string, event session.Event) EventIngest {
-	if reason := s.bindingMismatch(ghostID, event); reason != "" {
-		return EventIngest{
-			Ack: session.EventAck{
-				EventID:     event.EventID,
-				CommandID:   event.CommandID,
-				GhostID:     ghostID,
-				AckStatus:   session.AckStatusRejected,
-				AckCode:     schema.ErrCodeTransportFailure,
-				TimestampMS: uint64(s.now().UnixMilli()),
-			},
-			Rejected:     true,
-			RejectReason: reason,
-		}
+	bound := strings.TrimSpace(ghostID)
+	if declared := strings.TrimSpace(event.GhostID); declared != bound {
+		return s.rejectedIngest(bound, event,
+			fmt.Sprintf("event ghost_id=%q does not match session ghost_id=%q", declared, bound))
 	}
-	if ack, ok := s.acceptedAck(ghostID, event.EventID); ok {
+	if ack, ok := s.acceptedAck(bound, event.EventID); ok {
 		return EventIngest{Ack: ack, Duplicate: true}
 	}
-	report, matched, duplicate, err := s.ObserveEvent(event)
+	report, matched, duplicate, err := s.ObserveEvent(bound, event)
+	if errors.Is(err, ErrCommandGhostMismatch) {
+		return s.rejectedIngest(bound, event, err.Error())
+	}
 	return EventIngest{
-		Ack:        s.AcceptEvent(ghostID, event),
+		Ack:        s.AcceptEvent(bound, event),
 		Duplicate:  duplicate,
 		Report:     report,
 		Matched:    matched,
@@ -331,17 +333,20 @@ func (s *Server) IngestEvent(ghostID string, event session.Event) EventIngest {
 	}
 }
 
-// Non-empty reason when an event's declared ghost_id, or the ghost its command_id was planned for,
-// differs from the session's bound ghost_id. Events for unknown command_ids are checked on ghost_id only.
-func (s *Server) bindingMismatch(sessionGhostID string, event session.Event) string {
-	bound := strings.TrimSpace(sessionGhostID)
-	if declared := strings.TrimSpace(event.GhostID); declared != bound {
-		return fmt.Sprintf("event ghost_id=%q does not match session ghost_id=%q", declared, bound)
+// Rejected ingest result: ack_status=rejected, ack_code=1000, nothing stored.
+func (s *Server) rejectedIngest(ghostID string, event session.Event, reason string) EventIngest {
+	return EventIngest{
+		Ack: session.EventAck{
+			EventID:     event.EventID,
+			CommandID:   event.CommandID,
+			GhostID:     ghostID,
+			AckStatus:   session.AckStatusRejected,
+			AckCode:     schema.ErrCodeTransportFailure,
+			TimestampMS: uint64(s.now().UnixMilli()),
+		},
+		Rejected:     true,
+		RejectReason: reason,
 	}
-	if planned, ok := s.loop.PlannedGhostID(event.CommandID); ok && planned != bound {
-		return fmt.Sprintf("command_id=%q is planned for ghost_id=%q, not session ghost_id=%q", event.CommandID, planned, bound)
-	}
-	return ""
 }
 
 // Stored ack for an event_id accepted inside the duplicate window.

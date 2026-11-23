@@ -106,7 +106,7 @@ func TestEventForAlreadyObservedCommandDoesNotAppendReport(t *testing.T) {
 	srv, event := newIdempotencyServer(t)
 
 	// First observation without an ack (e.g. the direct reconcile path), then session delivery.
-	if _, _, dup, err := srv.ObserveEvent(event); err != nil || dup {
+	if _, _, dup, err := srv.ObserveEvent("ghost.alpha", event); err != nil || dup {
 		t.Fatalf("first observe: dup=%v err=%v", dup, err)
 	}
 	ingest := srv.IngestEvent("ghost.alpha", event)

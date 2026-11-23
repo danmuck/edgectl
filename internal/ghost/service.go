@@ -566,12 +566,10 @@ func (s *Service) sessionProbeEvent() EventEnv {
 	}
 }
 
-// Ghost reconnect backoff wait helper with deterministic delay.
+// Ghost reconnect backoff wait using contract backoff with required jitter (reliability.toml [backoff]).
 // Wakes early if bind_mirage delivers a resolved address.
 func (s *Service) waitReconnectBackoff(ctx context.Context, attempt int) error {
-	backoffCfg := s.cfg.Mirage.SessionConfig.Backoff
-	backoffCfg.Jitter = false
-	delay := session.NextBackoffDelay(backoffCfg, attempt, nil)
+	delay := session.NextBackoffDelay(s.cfg.Mirage.SessionConfig.Backoff, attempt, nil)
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {

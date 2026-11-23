@@ -37,6 +37,7 @@ type fileConfig struct {
 	SessionTLSKeyFile            string              `toml:"session_tls_key_file"`
 	SessionTLSCAFile             string              `toml:"session_tls_ca_file"`
 	GhostManifests               []ghostManifestFile `toml:"ghost_manifests"`
+	CommandMaxAttempts           int                 `toml:"command_max_attempts"`
 }
 
 // ghostManifestFile maps one ghost_manifests TOML table row for remote deploy targets.
@@ -163,6 +164,14 @@ func loadServiceConfig(path string) (mirage.ServiceConfig, error) {
 				"load mirage config: local ghost admin addr is required for mirage admin controller",
 			)
 		}
+	}
+
+	// Command dispatch attempts before retry_exhausted (reliability.toml retry_policy.command).
+	if meta.IsDefined("command_max_attempts") {
+		if raw.CommandMaxAttempts < 1 {
+			return mirage.ServiceConfig{}, fmt.Errorf("command_max_attempts must be >= 1, got %d", raw.CommandMaxAttempts)
+		}
+		cfg.CommandMaxAttempts = raw.CommandMaxAttempts
 	}
 
 	cfg.Session = cfg.Session.WithDefaults()

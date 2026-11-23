@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/danmuck/edgectl/internal/mirage"
 )
 
 func TestLoadServiceConfigDefaultsAndOverrides(t *testing.T) {
@@ -225,5 +227,37 @@ bootstrap_cmd = ["/bin/bash", "-c", "echo bootstrap"]
 	}
 	if m.ConfigTemplatePath != "cmd/ghostctl/pi.tls.config.toml" {
 		t.Fatalf("unexpected config template path: %q", m.ConfigTemplatePath)
+	}
+}
+
+// command_max_attempts defaults to mirage.DefaultCommandMaxAttempts, accepts overrides, rejects < 1.
+func TestLoadServiceConfigCommandMaxAttempts(t *testing.T) {
+	write := func(t *testing.T, content string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "config.toml")
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write config: %v", err)
+		}
+		return path
+	}
+
+	cfg, err := loadServiceConfig(write(t, `id = "mirage.alpha"`))
+	if err != nil {
+		t.Fatalf("load default: %v", err)
+	}
+	if cfg.CommandMaxAttempts != mirage.DefaultCommandMaxAttempts {
+		t.Fatalf("default command_max_attempts = %d, want %d", cfg.CommandMaxAttempts, mirage.DefaultCommandMaxAttempts)
+	}
+
+	cfg, err = loadServiceConfig(write(t, "id = \"mirage.alpha\"\ncommand_max_attempts = 5\n"))
+	if err != nil {
+		t.Fatalf("load override: %v", err)
+	}
+	if cfg.CommandMaxAttempts != 5 {
+		t.Fatalf("override command_max_attempts = %d, want 5", cfg.CommandMaxAttempts)
+	}
+
+	if _, err := loadServiceConfig(write(t, "id = \"mirage.alpha\"\ncommand_max_attempts = 0\n")); err == nil {
+		t.Fatalf("expected error for command_max_attempts = 0")
 	}
 }
