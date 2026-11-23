@@ -43,9 +43,21 @@ type ghostAdminCommand struct {
 }
 
 type ghostControlResponse struct {
-	OK    bool            `json:"ok"`
-	Error string          `json:"error,omitempty"`
-	Data  json.RawMessage `json:"data,omitempty"`
+	OK        bool            `json:"ok"`
+	Error     string          `json:"error,omitempty"`
+	ErrorCode uint32          `json:"error_code,omitempty"`
+	Data      json.RawMessage `json:"data,omitempty"`
+}
+
+// GhostAdminError is a failure reported by a Ghost admin endpoint, carrying its canonical wire code.
+type GhostAdminError struct {
+	Action  string
+	Code    uint32
+	Message string
+}
+
+func (e *GhostAdminError) Error() string {
+	return fmt.Sprintf("mirage: ghost control %s failed: error_code=%d %s", e.Action, e.Code, e.Message)
 }
 
 type ghostEvent struct {
@@ -325,7 +337,7 @@ func (c *GhostControlClient) call(ctx context.Context, req ghostControlRequest, 
 		return err
 	}
 	if !resp.OK {
-		return fmt.Errorf("mirage: ghost control %s failed: %s", req.Action, strings.TrimSpace(resp.Error))
+		return &GhostAdminError{Action: req.Action, Code: resp.ErrorCode, Message: strings.TrimSpace(resp.Error)}
 	}
 	if out == nil || len(resp.Data) == 0 {
 		return nil

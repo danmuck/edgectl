@@ -14,6 +14,11 @@
 //
 // - mismatches get a rejected event.ack (code 1000), are not observed, and close the session
 //
+// Protocol compatibility and errors (framing.md, errors.toml):
+// - session frames failing version/magic/flag/TLV/schema checks are logged with error_code and close the session
+//
+// - failed admin responses carry error_code; Ghost admin codes pass through (GhostAdminError)
+//
 // Command retry and lifecycle (reliability.toml retry_policy.command, [backoff]):
 // - dispatch retries reuse command_id, use contract backoff, and stop once a terminal event is observed
 //

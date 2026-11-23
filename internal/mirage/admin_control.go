@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/protocol/schema"
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	logs "github.com/danmuck/smplog"
 )
@@ -72,7 +73,40 @@ type adminControlRequest struct {
 type adminControlResponse struct {
 	OK    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
-	Data  any    `json:"data,omitempty"`
+	// Canonical wire code (errors.toml 1000-1500) when OK is false.
+	ErrorCode uint32 `json:"error_code,omitempty"`
+	Data      any    `json:"data,omitempty"`
+}
+
+// Admin request is malformed, missing a required parameter, or names no known action.
+var errAdminInvalidRequest = errors.New("mirage.admin: invalid request")
+
+// Canonical wire code for a Mirage admin failure (errors.toml [wire_codes]). Codes reported by a
+// Ghost admin endpoint pass through; orchestration input errors are semantic; protocol errors
+// fall back to session.ErrorCode.
+func adminErrorCode(err error) uint32 {
+	var ghostErr *GhostAdminError
+	if errors.As(err, &ghostErr) && ghostErr.Code != 0 {
+		return ghostErr.Code
+	}
+	switch {
+	case errors.Is(err, errAdminInvalidRequest),
+		errors.Is(err, ErrInvalidIssue),
+		errors.Is(err, ErrIntentNotFound),
+		errors.Is(err, ErrTargetGhostRequired):
+		return schema.ErrCodeSemanticValidation
+	}
+	return session.ErrorCode(err)
+}
+
+// Failure response carrying the error text and its canonical wire code.
+func failAdmin(err error) adminControlResponse {
+	return adminControlResponse{OK: false, Error: err.Error(), ErrorCode: adminErrorCode(err)}
+}
+
+// Failure response for a malformed or incomplete admin request.
+func failAdminRequest(format string, args ...any) adminControlResponse {
+	return failAdmin(fmt.Errorf("%w: "+format, append([]any{errAdminInvalidRequest}, args...)...))
 }
 
 // serveAdminControl exposes a TCP JSON request/response endpoint for Mirage control.
@@ -122,7 +156,7 @@ func (s *Service) handleAdminConn(conn net.Conn) {
 		}
 		var req adminControlRequest
 		if err := json.Unmarshal(line, &req); err != nil {
-			_ = writeAdminControlResponse(conn, adminControlResponse{OK: false, Error: err.Error()})
+			_ = writeAdminControlResponse(conn, failAdminRequest("%v", err))
 			continue
 		}
 		resp := s.handleAdminControlRequest(req)
@@ -143,7 +177,7 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 	case "submit_issue":
 		issue := mapAdminIssue(req.Issue)
 		if err := s.server.SubmitIssue(issue); err != nil {
-			return adminControlResponse{OK: false, Error: err.Error()}
+			return failAdmin(err)
 		}
 		s.persistBuildlog("submit_issue", map[string]any{
 			"intent_id": issue.IntentID,
@@ -153,13 +187,13 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 	case "reconcile_intent":
 		intentID := strings.TrimSpace(req.IntentID)
 		if intentID == "" {
-			return adminControlResponse{OK: false, Error: "intent_id required"}
+			return failAdminRequest("intent_id required")
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		report, err := s.server.ReconcileIntent(ctx, intentID)
 		if err != nil {
-			return adminControlResponse{OK: false, Error: err.Error()}
+			return failAdmin(err)
 		}
 		s.persistBuildlog("reconcile_intent", report)
 		return adminControlResponse{OK: true, Data: report}
@@ -171,7 +205,7 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 			report, err := s.server.ReconcileIntent(ctx, intentID)
 			cancel()
 			if err != nil && !errors.Is(err, ErrIntentNotFound) {
-				return adminControlResponse{OK: false, Error: fmt.Sprintf("intent_id=%s: %v", intentID, err)}
+				return failAdmin(fmt.Errorf("intent_id=%s: %w", intentID, err))
 			}
 			if err == nil {
 				reports = append(reports, report)
@@ -182,7 +216,7 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 	case "snapshot_intent":
 		intentID := strings.TrimSpace(req.IntentID)
 		if intentID == "" {
-			return adminControlResponse{OK: false, Error: "intent_id required"}
+			return failAdminRequest("intent_id required")
 		}
 		snapshot, found := s.server.SnapshotIntent(intentID)
 		return adminControlResponse{OK: true, Data: AdminSnapshotIntentResponse{
@@ -204,11 +238,11 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 	case "attach_ghost_admin":
 		addr := strings.TrimSpace(req.GhostAdminAddr)
 		if addr == "" {
-			return adminControlResponse{OK: false, Error: "ghost_admin_addr required"}
+			return failAdminRequest("ghost_admin_addr required")
 		}
 		out, err := s.attachGhostAdmin("", addr)
 		if err != nil {
-			return adminControlResponse{OK: false, Error: err.Error()}
+			return failAdmin(err)
 		}
 		logs.Warnf("mirage.admin attached ghost route ghost_id=%q addr=%q", out.GhostID, out.AdminAddr)
 		return adminControlResponse{OK: true, Data: out}
@@ -217,10 +251,10 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 		defer cancel()
 		out, err := s.server.SpawnLocalGhost(ctx, req.Spawn)
 		if err != nil {
-			return adminControlResponse{OK: false, Error: err.Error()}
+			return failAdmin(err)
 		}
 		if err := s.bindGhostToMirage(out.GhostID, out.AdminAddr); err != nil {
-			return adminControlResponse{OK: false, Error: err.Error()}
+			return failAdmin(err)
 		}
 		s.bindGhostAdmin(out.GhostID, out.AdminAddr)
 		logs.Warnf("mirage.admin spawned local ghost ghost_id=%q addr=%q", out.GhostID, out.AdminAddr)
@@ -231,7 +265,7 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 		defer cancel()
 		result, err := deployer.Deploy(ctx, req.Deploy)
 		if err != nil {
-			return adminControlResponse{OK: false, Error: err.Error()}
+			return failAdmin(err)
 		}
 		// Auto-attach the newly deployed ghost via admin routing.
 		if result.AdminAddr != "" {
@@ -259,7 +293,7 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 		})
 		return adminControlResponse{OK: true, Data: result}
 	default:
-		return adminControlResponse{OK: false, Error: fmt.Sprintf("unknown action: %s", req.Action)}
+		return failAdminRequest("unknown action: %s", req.Action)
 	}
 }
 

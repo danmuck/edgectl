@@ -1,6 +1,7 @@
 package mirage
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -93,7 +94,7 @@ func TestDuplicateEventAckIsIdempotentByEventID(t *testing.T) {
 	first := srv.IngestEvent("ghost.alpha", event)
 	second := srv.IngestEvent("ghost.alpha", event)
 
-	if second.Ack != first.Ack {
+	if !reflect.DeepEqual(second.Ack, first.Ack) {
 		t.Fatalf("event.ack differs on redelivery:\nfirst=%+v\nsecond=%+v", first.Ack, second.Ack)
 	}
 	if second.Ack.AckStatus != session.AckStatusAccepted {
@@ -131,7 +132,7 @@ func TestEventAckRetainedForDuplicateWindow(t *testing.T) {
 
 	srv.now = func() time.Time { return base.Add(DuplicateWindow - time.Second) }
 	inside := srv.IngestEvent("ghost.alpha", event)
-	if !inside.Duplicate || inside.Ack != first.Ack {
+	if !inside.Duplicate || !reflect.DeepEqual(inside.Ack, first.Ack) {
 		t.Fatalf("ack not retained inside window: %+v", inside)
 	}
 

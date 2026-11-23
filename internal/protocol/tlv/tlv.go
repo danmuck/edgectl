@@ -13,6 +13,8 @@ const HeaderLen = 7
 var (
 	ErrShortFieldHeader = errors.New("tlv: short field header")
 	ErrShortFieldValue  = errors.New("tlv: short field value")
+	// Field value bytes do not decode as the declared type (errors.toml tlv_decode_failure).
+	ErrInvalidFieldValue = errors.New("tlv: invalid field value")
 )
 
 // Type IDs from tlv contract.
@@ -109,7 +111,7 @@ func MustType(f Field, expected uint8) error {
 func U32FromBytes(b []byte) (uint32, error) {
 	if len(b) != 4 {
 		logs.Errf("tlv.U32FromBytes invalid len=%d", len(b))
-		return 0, fmt.Errorf("tlv: invalid u32 length: %d", len(b))
+		return 0, fmt.Errorf("%w: u32 length %d", ErrInvalidFieldValue, len(b))
 	}
 	v := binary.BigEndian.Uint32(b)
 	logs.Debugf("tlv.U32FromBytes value=%d", v)

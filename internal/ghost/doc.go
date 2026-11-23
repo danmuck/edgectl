@@ -34,6 +34,11 @@
 //
 // - Mirage reconnect uses contract backoff with required jitter
 //
+// Admin boundary errors (errors.toml):
+// - failed admin responses carry error_code; execute_envelope frames are version/flag gated (1100)
+//
+// - unknown TLV fields in command frames are ignored for execution
+//
 // Ghost does not own desired state.
 //
 // Canonical references (consult before changes):

@@ -22,7 +22,31 @@ import (
 var (
 	ErrAdminFrameAuthRequired = errors.New("ghost.admin: command_frame auth required")
 	ErrAdminFrameAuthInvalid  = errors.New("ghost.admin: command_frame auth invalid")
+	// Admin request is malformed or names no known action (semantic_validation_failure).
+	errAdminInvalidRequest = errors.New("ghost.admin: invalid request")
 )
+
+// Canonical wire code for an admin failure (errors.toml [wire_codes]). Ghost command-boundary
+// errors are classified here; protocol errors (framing, TLV, schema) fall back to session.ErrorCode.
+func adminErrorCode(err error) uint32 {
+	switch {
+	case errors.Is(err, ErrAdminFrameAuthRequired), errors.Is(err, ErrAdminFrameAuthInvalid):
+		return schema.ErrCodeTransportFailure
+	case errors.Is(err, errAdminInvalidRequest),
+		errors.Is(err, ErrInvalidCommandEnv),
+		errors.Is(err, ErrCommandTargetMismatch),
+		errors.Is(err, ErrDuplicateMessageID):
+		return schema.ErrCodeSemanticValidation
+	case errors.Is(err, ErrNotRadiating), errors.Is(err, ErrDuplicateCommandID):
+		return schema.ErrCodeRuntimeExecFailure
+	}
+	return session.ErrorCode(err)
+}
+
+// Failure response carrying the error text and its canonical wire code.
+func failControl(err error) controlResponse {
+	return controlResponse{OK: false, Error: err.Error(), ErrorCode: adminErrorCode(err)}
+}
 
 // AdminCommand is the external admin execution request payload.
 type AdminCommand struct {
@@ -68,7 +92,9 @@ type controlRequest struct {
 type controlResponse struct {
 	OK    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
-	Data  any    `json:"data,omitempty"`
+	// Canonical wire code (errors.toml 1000-1500) when OK is false.
+	ErrorCode uint32 `json:"error_code,omitempty"`
+	Data      any    `json:"data,omitempty"`
 }
 
 // ExecuteAdminCommand maps one external admin request into Ghost command execution.
@@ -219,7 +245,7 @@ func (s *Service) handleAdminConn(conn net.Conn) {
 		}
 		var req controlRequest
 		if err := json.Unmarshal(line, &req); err != nil {
-			_ = writeControlResponse(conn, controlResponse{OK: false, Error: err.Error()})
+			_ = writeControlResponse(conn, failControl(fmt.Errorf("%w: %v", errAdminInvalidRequest, err)))
 			continue
 		}
 		resp := s.handleControlRequest(req, remote)
@@ -243,7 +269,12 @@ func (s *Service) handleControlRequest(req controlRequest, remoteAddr string) co
 	case "execute_envelope":
 		out, err := s.executeAdminCommandEnvelope(req.CommandFrame)
 		if err != nil {
-			return controlResponse{OK: false, Error: err.Error()}
+			resp := failControl(err)
+			logs.Warnf(
+				"ghost.admin execute_envelope failed component=ghost peer=%q direction=inbound message_type=%d error_code=%d err=%q",
+				remoteAddr, schema.MsgCommand, resp.ErrorCode, err.Error(),
+			)
+			return resp
 		}
 		return controlResponse{OK: true, Data: out}
 	case "execution_by_command_id":
@@ -262,14 +293,14 @@ func (s *Service) handleControlRequest(req controlRequest, remoteAddr string) co
 	case "spawn_ghost":
 		out, err := s.SpawnManagedGhost(req.Spawn)
 		if err != nil {
-			return controlResponse{OK: false, Error: err.Error()}
+			return failControl(err)
 		}
 		return controlResponse{OK: true, Data: out}
 	case "bind_mirage":
 		s.BindMirageAdminRoute(req.MirageID, remoteAddr, req.SessionPort)
 		return controlResponse{OK: true}
 	default:
-		return controlResponse{OK: false, Error: fmt.Sprintf("unknown action: %s", req.Action)}
+		return failControl(fmt.Errorf("%w: unknown action: %s", errAdminInvalidRequest, req.Action))
 	}
 }
 
@@ -280,7 +311,7 @@ type executeEnvelopeResponse struct {
 // executeAdminCommandEnvelope decodes one command frame and returns one terminal event frame.
 func (s *Service) executeAdminCommandEnvelope(commandFrame []byte) (executeEnvelopeResponse, error) {
 	if len(commandFrame) == 0 {
-		return executeEnvelopeResponse{}, fmt.Errorf("ghost.admin: missing command_frame")
+		return executeEnvelopeResponse{}, fmt.Errorf("%w: missing command_frame", errAdminInvalidRequest)
 	}
 	fr, err := frame.ReadFrame(bytes.NewReader(commandFrame), frame.DefaultLimits())
 	if err != nil {

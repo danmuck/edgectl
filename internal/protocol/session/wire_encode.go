@@ -8,6 +8,12 @@ import (
 	"github.com/danmuck/edgectl/internal/protocol/tlv"
 )
 
+// Appends preserved unknown fields after known fields for re-encode (tlv.toml decoder rules).
+// Entries with contract-defined IDs are dropped so they can never shadow or inject semantics.
+func appendUnknown(fields []tlv.Field, unknown []tlv.Field) []tlv.Field {
+	return append(fields, schema.UnknownFields(unknown)...)
+}
+
 // encodeFrameForMessage validates fields and encodes one framed TLV message.
 func encodeFrameForMessage(
 	messageID uint64,

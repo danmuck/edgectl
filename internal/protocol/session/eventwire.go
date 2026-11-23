@@ -20,6 +20,8 @@ type Event struct {
 	SeedID      string
 	Outcome     string
 	TimestampMS uint64
+	// Fields with IDs not defined by the TLV contract; preserved inert, never read for semantics.
+	UnknownFields []tlv.Field
 }
 
 // Session event validator for required payload fields.
@@ -53,6 +55,8 @@ type EventAck struct {
 	AckStatus   string
 	AckCode     uint32
 	TimestampMS uint64
+	// Fields with IDs not defined by the TLV contract; preserved inert, never read for semantics.
+	UnknownFields []tlv.Field
 }
 
 // Session event.ack validator for required payload fields.
@@ -91,6 +95,7 @@ func EncodeEventFrame(messageID uint64, event Event) ([]byte, error) {
 	if event.TimestampMS != 0 {
 		fields = append(fields, tlv.Field{ID: schema.FieldTimestampMS, Type: tlv.TypeU64, Value: putU64(event.TimestampMS)})
 	}
+	fields = appendUnknown(fields, event.UnknownFields)
 	return encodeFrameForMessage(messageID, schema.MsgEvent, 0, fields)
 }
 
@@ -104,12 +109,13 @@ func DecodeEventFrame(f frame.Frame) (Event, error) {
 		return Event{}, err
 	}
 	event := Event{
-		EventID:   getRequiredString(fields, schema.FieldEventID),
-		CommandID: getRequiredString(fields, schema.FieldCommandID),
-		IntentID:  getRequiredString(fields, schema.FieldIntentID),
-		GhostID:   getRequiredString(fields, schema.FieldGhostID),
-		SeedID:    getRequiredString(fields, schema.FieldSeedID),
-		Outcome:   getRequiredString(fields, schema.FieldOutcome),
+		EventID:       getRequiredString(fields, schema.FieldEventID),
+		CommandID:     getRequiredString(fields, schema.FieldCommandID),
+		IntentID:      getRequiredString(fields, schema.FieldIntentID),
+		GhostID:       getRequiredString(fields, schema.FieldGhostID),
+		SeedID:        getRequiredString(fields, schema.FieldSeedID),
+		Outcome:       getRequiredString(fields, schema.FieldOutcome),
+		UnknownFields: schema.UnknownFields(fields),
 	}
 	if tsField, ok := tlv.GetField(fields, schema.FieldTimestampMS); ok {
 		ts, err := u64FromBytes(tsField.Value)
@@ -134,6 +140,7 @@ func EncodeEventAckFrame(messageID uint64, ack EventAck) ([]byte, error) {
 		{ID: schema.FieldAckCode, Type: tlv.TypeU32, Value: putU32(ack.AckCode)},
 		{ID: schema.FieldTimestampMS, Type: tlv.TypeU64, Value: putU64(ack.TimestampMS)},
 	}
+	fields = appendUnknown(fields, ack.UnknownFields)
 	return encodeFrameForMessage(messageID, schema.MsgEventAck, frame.FlagIsResponse, fields)
 }
 
@@ -147,11 +154,12 @@ func DecodeEventAckFrame(f frame.Frame) (EventAck, error) {
 		return EventAck{}, err
 	}
 	ack := EventAck{
-		EventID:     getRequiredString(fields, schema.FieldEventID),
-		CommandID:   getRequiredString(fields, schema.FieldCommandID),
-		GhostID:     getRequiredString(fields, schema.FieldGhostID),
-		AckStatus:   getRequiredString(fields, schema.FieldAckStatus),
-		TimestampMS: getRequiredU64(fields, schema.FieldTimestampMS),
+		EventID:       getRequiredString(fields, schema.FieldEventID),
+		CommandID:     getRequiredString(fields, schema.FieldCommandID),
+		GhostID:       getRequiredString(fields, schema.FieldGhostID),
+		AckStatus:     getRequiredString(fields, schema.FieldAckStatus),
+		TimestampMS:   getRequiredU64(fields, schema.FieldTimestampMS),
+		UnknownFields: schema.UnknownFields(fields),
 	}
 	if ackField, ok := tlv.GetField(fields, schema.FieldAckCode); ok {
 		v, err := tlv.U32FromBytes(ackField.Value)
@@ -198,7 +206,7 @@ func putU64(v uint64) []byte {
 // Session helper decoding network-order uint64 from fixed-length bytes.
 func u64FromBytes(b []byte) (uint64, error) {
 	if len(b) != 8 {
-		return 0, fmt.Errorf("session: invalid u64 length: %d", len(b))
+		return 0, fmt.Errorf("%w: u64 length %d", tlv.ErrInvalidFieldValue, len(b))
 	}
 	return binary.BigEndian.Uint64(b), nil
 }

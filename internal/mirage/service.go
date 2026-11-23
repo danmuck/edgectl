@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/signal"
@@ -657,22 +658,27 @@ func (s *Service) handleConn(conn net.Conn) {
 
 	for {
 		_ = conn.SetReadDeadline(time.Now().Add(s.cfg.Session.ReadTimeout))
+		// Clean disconnect at a frame boundary is not a framing error (ReadFrame reports it as short header).
+		if _, err := reader.Peek(1); err != nil {
+			s.logSessionFrameError(conn, reg.GhostID, 0, 0, session.ErrorCode(err), err)
+			return
+		}
+		// framing.md: unsupported version/magic/flags and malformed frames are stream-unsafe;
+		// log the canonical error fields and close the session.
 		fr, err := session.ReadFrame(reader, frame.DefaultLimits())
 		if err != nil {
+			s.logSessionFrameError(conn, reg.GhostID, 0, 0, session.ErrorCode(err), err)
 			return
 		}
 		if fr.Header.MessageType != schema.MsgEvent {
-			logs.Warnf(
-				"mirage.handleConn unexpected message_type=%d ghost_id=%q",
-				fr.Header.MessageType,
-				reg.GhostID,
-			)
+			s.logSessionFrameError(conn, reg.GhostID, fr.Header.MessageID, fr.Header.MessageType,
+				schema.ErrCodeSemanticValidation, fmt.Errorf("unexpected message_type=%d", fr.Header.MessageType))
 			return
 		}
 
 		event, err := session.DecodeEventFrame(fr)
 		if err != nil {
-			logs.Warnf("mirage.handleConn decode event err=%v", err)
+			s.logSessionFrameError(conn, reg.GhostID, fr.Header.MessageID, fr.Header.MessageType, session.ErrorCode(err), err)
 			return
 		}
 		ingest := s.server.IngestEvent(reg.GhostID, event)
@@ -729,6 +735,25 @@ func (s *Service) handleConn(conn net.Conn) {
 			return
 		}
 	}
+}
+
+// Session receive failure log with errors.toml error_log_fields; message_id/type are 0 when unavailable.
+// Clean peer disconnects (EOF) are not logged as errors.
+func (s *Service) logSessionFrameError(
+	conn net.Conn,
+	ghostID string,
+	messageID uint64,
+	messageType uint32,
+	code uint32,
+	err error,
+) {
+	if errors.Is(err, io.EOF) {
+		return
+	}
+	logs.Warnf(
+		"mirage.session frame error component=mirage peer=%q direction=inbound ghost_id=%q message_id=%d message_type=%d error_code=%d err=%q",
+		conn.RemoteAddr().String(), ghostID, messageID, messageType, code, err.Error(),
+	)
 }
 
 func (s *Service) persistBuildlog(kind string, payload any) {

@@ -12,6 +12,11 @@
 //
 // - outbox entries are pending until accepted; rejected or timed-out acks mark delivery_failed
 //
+// Compatibility and errors (protocol.toml, tlv.toml, errors.toml):
+// - envelopes carry UnknownFields, filled on decode and re-emitted on encode; known IDs are filtered out
+//
+// - ErrorCode classifies framing, tlv_decode, semantic, and transport errors into wire codes
+//
 // Canonical references (consult before changes):
 // - docs/index.md
 //
@@ -26,4 +31,8 @@
 // - docs/architecture/definitions/transport_security.toml
 //
 // - docs/architecture/definitions/protocol.toml
+//
+// - docs/architecture/definitions/tlv.toml
+//
+// - docs/architecture/definitions/errors.toml
 package session

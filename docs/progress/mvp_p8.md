@@ -77,11 +77,20 @@ Slice B implementation notes (2026-11-22):
 
 ### Slice C — Protocol Compatibility and Error Mapping Hardening
 
-- [ ] Enforce protocol version compatibility gates at session boundary and admin boundary.
-- [ ] Verify unknown TLV field preservation remains inert (never executable semantics).
-- [ ] Verify unknown frame flag bits are rejected with canonical framing error behavior.
-- [ ] Ensure wire error codes map to canonical taxonomy (`1000-1500`) for failure responses.
-- [ ] Add compatibility tests for version mismatch and unknown-field/flag handling.
+- [x] Enforce protocol version compatibility gates at session boundary and admin boundary.
+- [x] Verify unknown TLV field preservation remains inert (never executable semantics).
+- [x] Verify unknown frame flag bits are rejected with canonical framing error behavior.
+- [x] Ensure wire error codes map to canonical taxonomy (`1000-1500`) for failure responses.
+- [x] Add compatibility tests for version mismatch and unknown-field/flag handling.
+
+Slice C implementation notes (2026-11-23):
+
+- Version/flag gate: `frame.DecodeHeader` already rejected unsupported magic, version, and flag bits. Mirage's session loop previously closed silently; it now logs `component, peer, direction, message_id, message_type, error_code` (framing.md / errors.toml) and closes. A clean EOF at a frame boundary is not logged as a framing error. Ghost's admin `execute_envelope` returns `error_code=1100` for these frames and does not execute.
+- Unknown TLV fields: previously ignored but discarded, contrary to `protocol.toml` "decode and preserve in raw form" and `tlv.toml` "preserve unknown field_id values for re-encode". `Command`, `Event`, `EventAck`, and `Report` now carry `UnknownFields`, filled on decode via `schema.UnknownFields` and re-emitted on encode. Known IDs are filtered out of `UnknownFields` on encode, so the list cannot inject or shadow semantic fields. Ghost builds executions from known fields only; a test proves an unknown field does not change seed/operation.
+- Error taxonomy: `session.ErrorCode` maps framing (1100, 1101 oversize), TLV decode (1200, including invalid typed values and malformed `args` JSON via `tlv.ErrInvalidFieldValue`), schema/registration validation (1300), transport (1000), else 1500. Ghost maps its own command-boundary errors (1300 semantic, 1400 runtime, 1000 frame auth). Both admin boundaries now return `error_code` on every failure; Mirage passes Ghost codes through via `GhostAdminError`. Registration and event.ack codes were already canonical and are unchanged.
+- Admin "version gate": the admin JSON envelopes and the `seed.register` JSON handshake carry no protocol version in any contract (`handshake.toml` requires only `ghost_id`, `seed_list`). The gate applies to binary frames crossing the admin boundary (`execute_envelope`). Adding a version field to JSON envelopes would be a contract change; left as an open question.
+- Not wired: the `error` envelope (message type 7). `errors.toml` "emit error envelope when safe" remains open; failures surface via acks, admin `error_code`, and logs.
+- Tests: `internal/protocol/session/compat_test.go`, `internal/ghost/compat_test.go`, `internal/mirage/compat_test.go`.
 
 ### Slice D — Structured Observability Completion
 

@@ -18,6 +18,8 @@ type Command struct {
 	SeedSelector string
 	Operation    string
 	Args         map[string]string
+	// Fields with IDs not defined by the TLV contract; preserved inert, never read for semantics.
+	UnknownFields []tlv.Field
 }
 
 // Session command validator for required payload fields.
@@ -51,6 +53,8 @@ type Report struct {
 	EventID         string
 	Outcome         string
 	TimestampMS     uint64
+	// Fields with IDs not defined by the TLV contract; preserved inert, never read for semantics.
+	UnknownFields []tlv.Field
 }
 
 // Session report validator for required payload fields.
@@ -94,6 +98,7 @@ func EncodeCommandFrameWithAuth(messageID uint64, command Command, auth []byte) 
 		}
 		fields = append(fields, tlv.Field{ID: schema.FieldArgs, Type: tlv.TypeBytes, Value: argsPayload})
 	}
+	fields = appendUnknown(fields, command.UnknownFields)
 	return encodeFrameForMessageWithAuth(messageID, schema.MsgCommand, 0, auth, fields)
 }
 
@@ -107,17 +112,18 @@ func DecodeCommandFrame(f frame.Frame) (Command, error) {
 		return Command{}, err
 	}
 	command := Command{
-		CommandID:    getRequiredString(fields, schema.FieldCommandID),
-		IntentID:     getRequiredString(fields, schema.FieldIntentID),
-		GhostID:      getRequiredString(fields, schema.FieldGhostID),
-		SeedSelector: getRequiredString(fields, schema.FieldSeedSelector),
-		Operation:    getRequiredString(fields, schema.FieldOperation),
-		Args:         map[string]string{},
+		CommandID:     getRequiredString(fields, schema.FieldCommandID),
+		IntentID:      getRequiredString(fields, schema.FieldIntentID),
+		GhostID:       getRequiredString(fields, schema.FieldGhostID),
+		SeedSelector:  getRequiredString(fields, schema.FieldSeedSelector),
+		Operation:     getRequiredString(fields, schema.FieldOperation),
+		Args:          map[string]string{},
+		UnknownFields: schema.UnknownFields(fields),
 	}
 	if argsField, ok := tlv.GetField(fields, schema.FieldArgs); ok {
 		var args map[string]string
 		if err := json.Unmarshal(argsField.Value, &args); err != nil {
-			return Command{}, err
+			return Command{}, fmt.Errorf("%w: args: %v", tlv.ErrInvalidFieldValue, err)
 		}
 		command.Args = args
 	}
@@ -150,6 +156,7 @@ func EncodeReportFrame(messageID uint64, report Report) ([]byte, error) {
 	if report.TimestampMS != 0 {
 		fields = append(fields, tlv.Field{ID: schema.FieldTimestampMS, Type: tlv.TypeU64, Value: putU64(report.TimestampMS)})
 	}
+	fields = appendUnknown(fields, report.UnknownFields)
 	return encodeFrameForMessage(messageID, schema.MsgReport, 0, fields)
 }
 
@@ -171,6 +178,7 @@ func DecodeReportFrame(f frame.Frame) (Report, error) {
 		ExecutionID:     getOptionalString(fields, schema.FieldExecutionID),
 		EventID:         getOptionalString(fields, schema.FieldEventID),
 		Outcome:         getOptionalString(fields, schema.FieldOutcome),
+		UnknownFields:   schema.UnknownFields(fields),
 	}
 	if tsField, ok := tlv.GetField(fields, schema.FieldTimestampMS); ok {
 		ts, err := u64FromBytes(tsField.Value)
