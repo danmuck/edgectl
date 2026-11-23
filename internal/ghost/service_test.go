@@ -12,7 +12,6 @@ import (
 
 	"github.com/danmuck/edgectl/internal/mirage"
 	"github.com/danmuck/edgectl/internal/protocol/session"
-	"github.com/danmuck/edgectl/internal/seeds"
 	"github.com/danmuck/edgectl/internal/testutil/testlog"
 )
 
@@ -191,75 +190,27 @@ func TestServiceBootstrapInvalidMiragePolicy(t *testing.T) {
 	}
 }
 
-func TestServiceBootstrapRejectsSeedInstallNotWhitelisted(t *testing.T) {
+// Ghost never installs dependencies on its own at boot, even with installs enabled; plans arrive
+// only from Mirage (install_dependencies).
+func TestServiceBootstrapDoesNotInstallDependencies(t *testing.T) {
 	testlog.Start(t)
 	workspace := t.TempDir()
 	svc := NewServiceWithConfig(ServiceConfig{
 		GhostID:           "ghost.alpha",
-		BuiltinSeedIDs:    []string{"seed.flow"},
+		BuiltinSeedIDs:    []string{"seed.flow", "seed.mongod"},
 		HeartbeatInterval: time.Second,
 		SeedInstall: SeedInstallConfig{
 			Enabled:       true,
 			WorkspaceRoot: workspace,
 			InstallRoot:   filepath.Join("local", "seeds"),
-			Whitelist:     []string{"seed.flow"},
-			Specs: []seeds.InstallSpec{
-				{
-					SeedID:  "seed.mongod",
-					Method:  seeds.InstallMethodGitHub,
-					RepoURL: "https://github.com/example/mongod-seed.git",
-				},
-			},
-		},
-	})
-	err := svc.bootstrap()
-	if !errors.Is(err, seeds.ErrInstallNotWhitelisted) {
-		t.Fatalf("expected ErrInstallNotWhitelisted, got %v", err)
-	}
-}
-
-func TestServiceBootstrapInstallsWorkspaceCopySpec(t *testing.T) {
-	testlog.Start(t)
-	workspace := t.TempDir()
-	srcRel := filepath.Join("local", "buildlogs", "example.toml")
-	srcAbs := filepath.Join(workspace, srcRel)
-	if err := os.MkdirAll(filepath.Dir(srcAbs), 0o755); err != nil {
-		t.Fatalf("mkdir source: %v", err)
-	}
-	if err := os.WriteFile(srcAbs, []byte("seed install copy"), 0o644); err != nil {
-		t.Fatalf("write source: %v", err)
-	}
-
-	svc := NewServiceWithConfig(ServiceConfig{
-		GhostID:           "ghost.alpha",
-		BuiltinSeedIDs:    []string{"seed.flow"},
-		HeartbeatInterval: time.Second,
-		SeedInstall: SeedInstallConfig{
-			Enabled:       true,
-			WorkspaceRoot: workspace,
-			InstallRoot:   filepath.Join("local", "seeds"),
-			Whitelist:     []string{"seed.archive"},
-			Specs: []seeds.InstallSpec{
-				{
-					SeedID:      "seed.archive",
-					Method:      seeds.InstallMethodWorkspaceCopy,
-					SourcePath:  srcRel,
-					Destination: filepath.Join("seed.archive", "buildlog", "example.toml"),
-				},
-			},
+			Whitelist:     []string{"seed.mongod"},
 		},
 	})
 	if err := svc.bootstrap(); err != nil {
 		t.Fatalf("bootstrap failed: %v", err)
 	}
-
-	dstAbs := filepath.Join(workspace, "local", "seeds", "seed.archive", "buildlog", "example.toml")
-	out, err := os.ReadFile(dstAbs)
-	if err != nil {
-		t.Fatalf("read copied file: %v", err)
-	}
-	if string(out) != "seed install copy" {
-		t.Fatalf("unexpected copied content: %q", string(out))
+	if _, err := os.Stat(filepath.Join(workspace, "local", "seeds")); !os.IsNotExist(err) {
+		t.Fatalf("bootstrap must not create install artifacts, stat err=%v", err)
 	}
 }
 

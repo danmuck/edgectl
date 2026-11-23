@@ -1,52 +1,62 @@
 package seeds
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/danmuck/edgectl/internal/tools"
 	logs "github.com/danmuck/smplog"
 )
 
 var (
-	ErrInstallInvalidSpec       = errors.New("seeds: invalid install spec")
-	ErrInstallSandboxViolation  = errors.New("seeds: sandbox violation")
-	ErrInstallNotWhitelisted    = errors.New("seeds: seed not whitelisted for install")
-	ErrInstallUnsupportedMethod = errors.New("seeds: unsupported install method")
-	ErrInstallUnsupportedRepo   = errors.New("seeds: unsupported repository")
-	ErrInstallInvalidRoot       = errors.New("seeds: invalid install root")
-	ErrInstallBrewMissing       = errors.New("seeds: brew not installed")
+	ErrInstallInvalidSpec      = errors.New("seeds: invalid install spec")
+	ErrInstallSandboxViolation = errors.New("seeds: sandbox violation")
+	ErrInstallNotWhitelisted   = errors.New("seeds: seed not whitelisted for install")
+	ErrInstallUnsupportedRepo  = errors.New("seeds: unsupported repository")
+	ErrInstallInvalidRoot      = errors.New("seeds: invalid install root")
+	ErrInstallBrewMissing      = errors.New("seeds: brew not installed")
+	ErrInstallChecksumMismatch = errors.New("seeds: downloaded artifact checksum mismatch")
+	ErrInstallDownloadFailed   = errors.New("seeds: artifact download failed")
 )
 
+// InstallMethod names one allowlisted dependency install channel.
 type InstallMethod string
 
 const (
-	InstallMethodGitHub        InstallMethod = "github"
-	InstallMethodWorkspaceCopy InstallMethod = "workspace_copy"
-	InstallMethodBrew          InstallMethod = "brew"
-	InstallMethodApt           InstallMethod = "apt"
+	InstallMethodGitHub InstallMethod = "github"
+	InstallMethodCurl   InstallMethod = "curl"
+	InstallMethodBrew   InstallMethod = "brew"
+	InstallMethodStream InstallMethod = "stream"
 )
 
-// Seeds package dependency install plan for one seed id.
+// Seeds package dependency install plan for one seed dependency.
 type InstallSpec struct {
-	SeedID             string
-	Method             InstallMethod
-	RepoURL            string
-	Branch             string
-	Ref                string
-	SourcePath         string
-	Destination        string
-	Package            string
-	Tap                string
-	BootstrapIfMissing bool
-	BootstrapCommand   []string
-	InstallToBin       bool
+	SeedID      string        `json:"seed_id"`
+	Method      InstallMethod `json:"method"`
+	RepoURL     string        `json:"repo_url,omitempty"`
+	Branch      string        `json:"branch,omitempty"`
+	Ref         string        `json:"ref,omitempty"`
+	URL         string        `json:"url,omitempty"`
+	Version     string        `json:"version,omitempty"`
+	SHA256      string        `json:"sha256,omitempty"`
+	Destination string        `json:"destination,omitempty"`
+	Package     string        `json:"package,omitempty"`
+	Tap         string        `json:"tap,omitempty"`
+	Binary      string        `json:"binary,omitempty"`
+	Direction   string        `json:"direction,omitempty"`
+	// Host-local bootstrap controls; never decoded from the wire so a plan cannot carry commands.
+	BootstrapIfMissing bool     `json:"-"`
+	BootstrapCommand   []string `json:"-"`
+	InstallToBin       bool     `json:"install_to_bin,omitempty"`
 }
 
 var defaultBrewBootstrapCommand = []string{
@@ -62,18 +72,21 @@ type InstallerConfig struct {
 	BinRoot       string
 	Whitelist     []string
 	Runner        tools.CommandRunner
+	// HTTP client for curl installs; defaults to a 5-minute-timeout client.
+	HTTPClient *http.Client
 }
 
-// Seeds package installer enforcing whitelist and filesystem sandbox boundaries.
+// Seeds package installer enforcing install policy, whitelist, and filesystem sandbox boundaries.
 type Installer struct {
 	workspaceRoot string
 	installRoot   string
 	binRoot       string
 	whitelist     map[string]struct{}
 	runner        tools.CommandRunner
+	httpClient    *http.Client
 }
 
-// Seeds package installer constructor with whitelist and sandbox validation.
+// Seeds package installer constructor; install and bin roots must sit under <workspace>/local.
 func NewInstaller(cfg InstallerConfig) (*Installer, error) {
 	workspaceRoot := strings.TrimSpace(cfg.WorkspaceRoot)
 	if workspaceRoot == "" {
@@ -123,6 +136,10 @@ func NewInstaller(cfg InstallerConfig) (*Installer, error) {
 	if runner == nil {
 		runner = tools.EnvRunner{ExtraPaths: []string{binRoot}}
 	}
+	httpClient := cfg.HTTPClient
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 5 * time.Minute}
+	}
 
 	return &Installer{
 		workspaceRoot: workspaceAbs,
@@ -130,6 +147,7 @@ func NewInstaller(cfg InstallerConfig) (*Installer, error) {
 		binRoot:       binRoot,
 		whitelist:     normalizeWhitelist(cfg.Whitelist),
 		runner:        runner,
+		httpClient:    httpClient,
 	}, nil
 }
 
@@ -143,12 +161,12 @@ func (i *Installer) InstallAll(specs []InstallSpec) error {
 	return nil
 }
 
-// Seeds package installer execution for one install spec.
+// Seeds package installer execution for one install spec: policy, whitelist, then method.
 func (i *Installer) Install(spec InstallSpec) error {
-	seedID := strings.TrimSpace(spec.SeedID)
-	if seedID == "" {
-		return fmt.Errorf("%w: missing seed_id", ErrInstallInvalidSpec)
+	if err := ValidateSpec(spec); err != nil {
+		return err
 	}
+	seedID := strings.TrimSpace(spec.SeedID)
 	if _, ok := i.whitelist[seedID]; !ok {
 		return fmt.Errorf("%w: %s", ErrInstallNotWhitelisted, seedID)
 	}
@@ -162,10 +180,8 @@ func (i *Installer) Install(spec InstallSpec) error {
 	switch method {
 	case InstallMethodGitHub:
 		return i.installGitHub(spec, dest)
-	case InstallMethodWorkspaceCopy:
-		return i.installWorkspaceCopy(spec, dest)
-	case InstallMethodApt:
-		return i.installApt(spec)
+	case InstallMethodCurl:
+		return i.installCurl(spec, dest)
 	case InstallMethodBrew:
 		if err := i.installBrew(spec); err != nil {
 			return err
@@ -174,9 +190,33 @@ func (i *Installer) Install(spec InstallSpec) error {
 			return i.symlinkBrewToBin(spec)
 		}
 		return nil
-	default:
-		return fmt.Errorf("%w: %q", ErrInstallUnsupportedMethod, spec.Method)
+	case InstallMethodStream:
+		return fmt.Errorf("%w: stream transfer is deferred to Phase 9", ErrInstallMethodDeferred)
 	}
+	return fmt.Errorf("%w: %q", ErrInstallMethodNotAllowed, spec.Method)
+}
+
+// Uninstall removes what Install placed under the managed roots for github and curl specs
+// (destination plus its bin symlink). brew and stream are not rolled back; returns false for them.
+func (i *Installer) Uninstall(spec InstallSpec) (bool, error) {
+	method := InstallMethod(strings.ToLower(strings.TrimSpace(string(spec.Method))))
+	if method != InstallMethodGitHub && method != InstallMethodCurl {
+		return false, nil
+	}
+	dest, err := i.resolveDestination(strings.TrimSpace(spec.SeedID), spec.Destination)
+	if err != nil {
+		return false, err
+	}
+	if spec.InstallToBin {
+		link := filepath.Join(i.binRoot, binaryName(spec, dest))
+		if target, err := os.Readlink(link); err == nil && filepath.Clean(target) == dest {
+			_ = os.Remove(link)
+		}
+	}
+	if err := os.RemoveAll(dest); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (i *Installer) resolveDestination(seedID string, destination string) (string, error) {
@@ -196,13 +236,6 @@ func (i *Installer) resolveDestination(seedID string, destination string) (strin
 
 func (i *Installer) installGitHub(spec InstallSpec, dest string) error {
 	repo := strings.TrimSpace(spec.RepoURL)
-	if repo == "" {
-		return fmt.Errorf("%w: missing repo for github install", ErrInstallInvalidSpec)
-	}
-	if err := validateGitHubRepo(repo); err != nil {
-		return err
-	}
-
 	branch := strings.TrimSpace(spec.Branch)
 	ref := strings.TrimSpace(spec.Ref)
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
@@ -218,15 +251,10 @@ func (i *Installer) installGitHub(spec InstallSpec, dest string) error {
 		if err := i.runCommand("git", args...); err != nil {
 			return err
 		}
-		if ref != "" {
-			if err := i.runCommand("git", "-C", dest, "fetch", "origin", ref); err != nil {
-				return err
-			}
-			if err := i.runCommand("git", "-C", dest, "checkout", "FETCH_HEAD"); err != nil {
-				return err
-			}
+		if err := i.runCommand("git", "-C", dest, "fetch", "origin", ref); err != nil {
+			return err
 		}
-		return nil
+		return i.runCommand("git", "-C", dest, "checkout", "FETCH_HEAD")
 	} else if err != nil {
 		return err
 	}
@@ -234,84 +262,68 @@ func (i *Installer) installGitHub(spec InstallSpec, dest string) error {
 	if _, err := os.Stat(filepath.Join(dest, ".git")); err != nil {
 		return fmt.Errorf("%w: destination exists but is not a git repository: %s", ErrInstallInvalidSpec, dest)
 	}
-
-	if err := i.runCommand("git", "-C", dest, "fetch", "--all", "--prune"); err != nil {
+	if err := i.runCommand("git", "-C", dest, "fetch", "origin", ref); err != nil {
 		return err
 	}
-	if branch != "" {
-		if err := i.runCommand("git", "-C", dest, "checkout", branch); err != nil {
-			return err
-		}
-		if err := i.runCommand("git", "-C", dest, "pull", "--ff-only", "origin", branch); err != nil {
-			return err
-		}
+	return i.runCommand("git", "-C", dest, "checkout", "FETCH_HEAD")
+}
+
+// Downloads spec.URL to dest, verifying sha256 before the file becomes visible at dest.
+// With InstallToBin the file is made executable and symlinked into the managed bin root.
+func (i *Installer) installCurl(spec InstallSpec, dest string) error {
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
 	}
-	if ref != "" {
-		if err := i.runCommand("git", "-C", dest, "fetch", "origin", ref); err != nil {
-			return err
-		}
-		if err := i.runCommand("git", "-C", dest, "checkout", "FETCH_HEAD"); err != nil {
-			return err
-		}
+	resp, err := i.httpClient.Get(strings.TrimSpace(spec.URL))
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrInstallDownloadFailed, err)
 	}
-	if branch == "" && ref == "" {
-		if err := i.runCommand("git", "-C", dest, "pull", "--ff-only"); err != nil {
-			return err
-		}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("%w: status %d", ErrInstallDownloadFailed, resp.StatusCode)
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(dest), ".download-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+
+	hasher := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(tmp, hasher), resp.Body); err != nil {
+		tmp.Close()
+		return fmt.Errorf("%w: %v", ErrInstallDownloadFailed, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	got := hex.EncodeToString(hasher.Sum(nil))
+	if want := strings.ToLower(strings.TrimSpace(spec.SHA256)); got != want {
+		return fmt.Errorf("%w: got %s want %s", ErrInstallChecksumMismatch, got, want)
+	}
+
+	perm := os.FileMode(0o644)
+	if spec.InstallToBin {
+		perm = 0o755
+	}
+	if err := os.Chmod(tmpName, perm); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, dest); err != nil {
+		return err
+	}
+	if spec.InstallToBin {
+		link := filepath.Join(i.binRoot, binaryName(spec, dest))
+		_ = os.Remove(link)
+		return os.Symlink(dest, link)
 	}
 	return nil
 }
 
-func (i *Installer) installWorkspaceCopy(spec InstallSpec, dest string) error {
-	source := strings.TrimSpace(spec.SourcePath)
-	if source == "" {
-		return fmt.Errorf("%w: missing source_path for workspace_copy", ErrInstallInvalidSpec)
-	}
-
-	src := source
-	if !filepath.IsAbs(src) {
-		src = filepath.Join(i.workspaceRoot, source)
-	}
-	srcAbs, err := filepath.Abs(src)
-	if err != nil {
-		return err
-	}
-	if !i.allowedWorkspaceSource(srcAbs) {
-		return fmt.Errorf("%w: source=%q", ErrInstallSandboxViolation, source)
-	}
-
-	info, err := os.Lstat(srcAbs)
-	if err != nil {
-		return err
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("%w: symlinks are not allowed for source=%q", ErrInstallSandboxViolation, source)
-	}
-
-	if info.IsDir() {
-		return copyDir(srcAbs, dest)
-	}
-	return copyFile(srcAbs, dest, info.Mode().Perm())
-}
-
-// Seeds package apt installer for seed dependency packages on Ubuntu targets.
-func (i *Installer) installApt(spec InstallSpec) error {
-	pkg := strings.TrimSpace(spec.Package)
-	if pkg == "" {
-		return fmt.Errorf("%w: missing package for apt install", ErrInstallInvalidSpec)
-	}
-	if err := i.runCommand("apt-get", "install", "-y", pkg); err != nil {
-		return err
-	}
-	return nil
-}
-
-// Seeds package brew installer for seed dependency packages on host.
+// Seeds package brew installer; brew is the single allowed host-global exception.
 func (i *Installer) installBrew(spec InstallSpec) error {
 	pkg := strings.TrimSpace(spec.Package)
-	if pkg == "" {
-		return fmt.Errorf("%w: missing package for brew install", ErrInstallInvalidSpec)
-	}
 	if err := i.ensureBrewAvailable(spec); err != nil {
 		return err
 	}
@@ -322,10 +334,7 @@ func (i *Installer) installBrew(spec InstallSpec) error {
 			return err
 		}
 	}
-	if err := i.runCommand("brew", "install", pkg); err != nil {
-		return err
-	}
-	return nil
+	return i.runCommand("brew", "install", pkg)
 }
 
 // Seeds package brew availability guard with optional bootstrap execution.
@@ -383,47 +392,33 @@ func (i *Installer) BinRoot() string {
 	return i.binRoot
 }
 
-// symlinkBrewToBin creates a symlink in binRoot pointing to the brew-installed binary.
+// symlinkBrewToBin exposes the brew-installed binary to Ghost through the managed bin root.
 func (i *Installer) symlinkBrewToBin(spec InstallSpec) error {
 	pkg := strings.TrimSpace(spec.Package)
-	if pkg == "" {
-		return nil
-	}
-	// Resolve brew binary path.
 	stdout, _, _, err := i.runner.Run("brew", "--prefix", pkg)
 	if err != nil {
 		logs.Warnf("seeds.install symlink_brew_to_bin: could not resolve prefix for %q", pkg)
 		return nil
 	}
 	prefix := strings.TrimSpace(string(stdout))
-	binPath := filepath.Join(prefix, "bin", pkg)
+	name := strings.TrimSpace(spec.Binary)
+	if name == "" {
+		name = pkg
+	}
+	binPath := filepath.Join(prefix, "bin", name)
 	if _, err := os.Stat(binPath); err != nil {
-		// Try the package name without path nesting.
-		binPath = filepath.Join(prefix, "bin")
-		entries, dirErr := os.ReadDir(binPath)
+		binDir := filepath.Join(prefix, "bin")
+		entries, dirErr := os.ReadDir(binDir)
 		if dirErr != nil || len(entries) == 0 {
 			logs.Warnf("seeds.install symlink_brew_to_bin: no binaries found under %q", prefix)
 			return nil
 		}
-		binPath = filepath.Join(binPath, entries[0].Name())
+		binPath = filepath.Join(binDir, entries[0].Name())
 	}
 	link := filepath.Join(i.binRoot, filepath.Base(binPath))
 	_ = os.Remove(link)
 	logs.Infof("seeds.install symlink %s -> %s", link, binPath)
 	return os.Symlink(binPath, link)
-}
-
-func (i *Installer) allowedWorkspaceSource(srcAbs string) bool {
-	roots := []string{
-		filepath.Join(i.workspaceRoot, "local"),
-		filepath.Join(i.workspaceRoot, "local", "buildlogs"),
-	}
-	for _, root := range roots {
-		if isWithin(srcAbs, root) {
-			return true
-		}
-	}
-	return false
 }
 
 func (i *Installer) runCommand(name string, args ...string) error {
@@ -441,6 +436,14 @@ func (i *Installer) runCommand(name string, args ...string) error {
 		strings.TrimSpace(string(stderr)),
 		err,
 	)
+}
+
+// Bin symlink name for a managed-root install: explicit Binary, else the destination base name.
+func binaryName(spec InstallSpec, dest string) string {
+	if name := strings.TrimSpace(spec.Binary); name != "" {
+		return filepath.Base(name)
+	}
+	return filepath.Base(dest)
 }
 
 func validateGitHubRepo(repo string) error {
@@ -475,54 +478,4 @@ func isWithin(path string, root string) bool {
 		return false
 	}
 	return rel == "." || (!strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && rel != "..")
-}
-
-func copyDir(src string, dst string) error {
-	return filepath.WalkDir(src, func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if d.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("%w: symlinks are not allowed in source tree: %s", ErrInstallSandboxViolation, path)
-		}
-
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(dst, rel)
-		if d.IsDir() {
-			return os.MkdirAll(target, 0o755)
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		if !info.Mode().IsRegular() {
-			return nil
-		}
-		return copyFile(path, target, info.Mode().Perm())
-	})
-}
-
-func copyFile(src string, dst string, perm os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
-	}
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	if _, err := io.Copy(out, in); err != nil {
-		return err
-	}
-	return nil
 }

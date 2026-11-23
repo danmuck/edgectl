@@ -21,6 +21,7 @@ type fileConfig struct {
 	RootGhostAdminAddr           string              `toml:"root_ghost_admin_addr"`
 	LocalGhostID                 string              `toml:"local_ghost_id"`
 	LocalGhostAdminAddr          string              `toml:"local_ghost_admin_addr"`
+	GhostAdminFrameAuthToken     string              `toml:"ghost_admin_frame_auth_token"`
 	LocalGhostSeeds              []string            `toml:"local_ghost_seeds"`
 	LocalGhostHeartbeat          string              `toml:"local_ghost_heartbeat_interval"`
 	LocalGhostHeartbeatMS        int64               `toml:"local_ghost_heartbeat_interval_ms"`
@@ -42,22 +43,23 @@ type fileConfig struct {
 
 // ghostManifestFile maps one ghost_manifests TOML table row for remote deploy targets.
 type ghostManifestFile struct {
-	GhostID                         string                        `toml:"ghost_id"`
-	Host                            string                        `toml:"host"`
-	User                            string                        `toml:"user"`
-	SSHKey                          string                        `toml:"ssh_key"`
-	SSHPort                         int                           `toml:"ssh_port"`
-	Seeds                           []string                      `toml:"seeds"`
-	AdminListen                     string                        `toml:"admin_listen"`
-	MiragePolicy                    string                        `toml:"mirage_policy"`
-	MirageAddress                   string                        `toml:"mirage_address"`
-	SeedInstallEnabled              bool                          `toml:"seed_install_enabled"`
-	SeedInstallRoot                 string                        `toml:"seed_install_root"`
-	SeedInstallBinRoot              string                        `toml:"seed_install_bin_root"`
-	SeedInstallAllowInternalDefault bool                          `toml:"seed_install_allow_internal_defaults"`
-	SeedInstallWhitelist            []string                      `toml:"seed_install_whitelist"`
-	SeedInstall                     []mirage.GhostSeedInstallSpec `toml:"seed_install"`
-	ConfigTemplatePath              string                        `toml:"config_template_path"`
+	GhostID                         string   `toml:"ghost_id"`
+	Host                            string   `toml:"host"`
+	User                            string   `toml:"user"`
+	SSHKey                          string   `toml:"ssh_key"`
+	SSHPort                         int      `toml:"ssh_port"`
+	Seeds                           []string `toml:"seeds"`
+	AdminListen                     string   `toml:"admin_listen"`
+	MiragePolicy                    string   `toml:"mirage_policy"`
+	MirageAddress                   string   `toml:"mirage_address"`
+	SeedInstallEnabled              bool     `toml:"seed_install_enabled"`
+	SeedInstallRoot                 string   `toml:"seed_install_root"`
+	SeedInstallBinRoot              string   `toml:"seed_install_bin_root"`
+	SeedInstallAllowInternalDefault bool     `toml:"seed_install_allow_internal_defaults"`
+	SeedInstallWhitelist            []string `toml:"seed_install_whitelist"`
+	// Rejected when present; kept only to detect stale configs.
+	SeedInstall        []map[string]any `toml:"seed_install"`
+	ConfigTemplatePath string           `toml:"config_template_path"`
 }
 
 // preloadGhostAdmin maps one preload_ghost_admins TOML table row.
@@ -97,6 +99,10 @@ func loadServiceConfig(path string) (mirage.ServiceConfig, error) {
 	if meta.IsDefined("local_ghost_admin_addr") {
 		cfg.LocalGhostAdminAddr = strings.TrimSpace(raw.LocalGhostAdminAddr)
 	}
+	// Token Mirage presents to Ghost admin endpoints (execute_envelope, install_dependencies).
+	if meta.IsDefined("ghost_admin_frame_auth_token") {
+		cfg.GhostAdminFrameAuthToken = strings.TrimSpace(raw.GhostAdminFrameAuthToken)
+	}
 	if meta.IsDefined("preload_ghost_admins") {
 		targets, normErr := normalizePreloadGhostAdmins(raw.PreloadGhostAdmins)
 		if normErr != nil {
@@ -132,6 +138,15 @@ func loadServiceConfig(path string) (mirage.ServiceConfig, error) {
 		cfg.Session.TLS.CAFile = strings.TrimSpace(raw.SessionTLSCAFile)
 	}
 	if meta.IsDefined("ghost_manifests") {
+		// Install specs come only from Mirage's dependency catalog via approved proposals.
+		for _, m := range raw.GhostManifests {
+			if len(m.SeedInstall) > 0 {
+				return mirage.ServiceConfig{}, fmt.Errorf(
+					"ghost_manifests ghost_id=%q: seed_install specs are no longer accepted; use propose/approve/execute_dependencies",
+					strings.TrimSpace(m.GhostID),
+				)
+			}
+		}
 		cfg.GhostManifests = normalizeGhostManifests(raw.GhostManifests)
 	}
 
@@ -220,6 +235,8 @@ func loadRuntimeConfigs(path string) (mirage.ServiceConfig, ghost.ServiceConfig,
 		cfg.GhostID = ghost.DefaultServiceConfig().GhostID
 	}
 	cfg.AdminListenAddr = strings.TrimSpace(mCfg.LocalGhostAdminAddr)
+	// The managed local Ghost accepts the same token Mirage presents.
+	cfg.AdminFrameAuthToken = mCfg.GhostAdminFrameAuthToken
 	if cfg.AdminListenAddr == "" {
 		cfg.AdminListenAddr = ghost.DefaultServiceConfig().AdminListenAddr
 	}
@@ -272,36 +289,8 @@ func normalizeGhostManifests(raw []ghostManifestFile) []mirage.GhostManifest {
 			SeedInstallBinRoot:               strings.TrimSpace(r.SeedInstallBinRoot),
 			SeedInstallAllowInternalDefaults: r.SeedInstallAllowInternalDefault,
 			SeedInstallWhitelist:             tools.NormalizeNonEmptyList(r.SeedInstallWhitelist),
-			SeedInstall:                      normalizeSeedInstallSpecs(r.SeedInstall),
 			ConfigTemplatePath:               strings.TrimSpace(r.ConfigTemplatePath),
 		})
-	}
-	return out
-}
-
-func normalizeSeedInstallSpecs(in []mirage.GhostSeedInstallSpec) []mirage.GhostSeedInstallSpec {
-	if len(in) == 0 {
-		return []mirage.GhostSeedInstallSpec{}
-	}
-	out := make([]mirage.GhostSeedInstallSpec, 0, len(in))
-	for i := range in {
-		spec := in[i]
-		seedID := strings.TrimSpace(spec.SeedID)
-		method := strings.TrimSpace(spec.Method)
-		if seedID == "" || method == "" {
-			continue
-		}
-		spec.SeedID = seedID
-		spec.Method = method
-		spec.Repo = strings.TrimSpace(spec.Repo)
-		spec.Branch = strings.TrimSpace(spec.Branch)
-		spec.Ref = strings.TrimSpace(spec.Ref)
-		spec.Source = strings.TrimSpace(spec.Source)
-		spec.Destination = strings.TrimSpace(spec.Destination)
-		spec.Package = strings.TrimSpace(spec.Package)
-		spec.Tap = strings.TrimSpace(spec.Tap)
-		spec.BootstrapCmd = tools.NormalizeNonEmptyList(spec.BootstrapCmd)
-		out = append(out, spec)
 	}
 	return out
 }

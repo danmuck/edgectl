@@ -135,6 +135,8 @@ type Service struct {
 
 	adminGhostMu    sync.RWMutex
 	adminGhostAddrs map[string]string
+	// Test seam for dependency plan dispatch; nil uses the Ghost admin client.
+	dependencyInstaller dependencyInstaller
 }
 
 // Mirage service constructor using default configuration.

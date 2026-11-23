@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -69,35 +70,8 @@ func TestLoadServiceConfigDefaultsAndOverrides(t *testing.T) {
 	if cfg.SeedInstall.InstallRoot != "local/seeds" {
 		t.Fatalf("unexpected seed install root: %q", cfg.SeedInstall.InstallRoot)
 	}
-	if len(cfg.SeedInstall.Whitelist) != 2 || cfg.SeedInstall.Whitelist[0] != "seed.mongod" || cfg.SeedInstall.Whitelist[1] != "seed.mongod.pkg" {
+	if len(cfg.SeedInstall.Whitelist) != 2 || cfg.SeedInstall.Whitelist[0] != "seed.docker" || cfg.SeedInstall.Whitelist[1] != "seed.mongod" {
 		t.Fatalf("unexpected seed install whitelist: %+v", cfg.SeedInstall.Whitelist)
-	}
-	if len(cfg.SeedInstall.Specs) != 2 {
-		t.Fatalf("unexpected seed install spec count: %d", len(cfg.SeedInstall.Specs))
-	}
-	if cfg.SeedInstall.Specs[0].SeedID != "seed.mongod" {
-		t.Fatalf("unexpected seed install id: %q", cfg.SeedInstall.Specs[0].SeedID)
-	}
-	if cfg.SeedInstall.Specs[0].Method != "github" {
-		t.Fatalf("unexpected seed install method: %q", cfg.SeedInstall.Specs[0].Method)
-	}
-	if cfg.SeedInstall.Specs[1].SeedID != "seed.mongod.pkg" {
-		t.Fatalf("unexpected seed install id: %q", cfg.SeedInstall.Specs[1].SeedID)
-	}
-	if cfg.SeedInstall.Specs[1].Method != "brew" {
-		t.Fatalf("unexpected seed install method: %q", cfg.SeedInstall.Specs[1].Method)
-	}
-	if cfg.SeedInstall.Specs[1].Package != "mongodb-community@7.0" {
-		t.Fatalf("unexpected seed install package: %q", cfg.SeedInstall.Specs[1].Package)
-	}
-	if cfg.SeedInstall.Specs[1].Tap != "mongodb/brew" {
-		t.Fatalf("unexpected seed install tap: %q", cfg.SeedInstall.Specs[1].Tap)
-	}
-	if !cfg.SeedInstall.Specs[1].BootstrapIfMissing {
-		t.Fatalf("expected bootstrap_if_missing enabled")
-	}
-	if len(cfg.SeedInstall.Specs[1].BootstrapCommand) != 3 {
-		t.Fatalf("unexpected bootstrap command: %+v", cfg.SeedInstall.Specs[1].BootstrapCommand)
 	}
 }
 
@@ -154,13 +128,16 @@ heartbeat_interval = "abc"
 	}
 }
 
-func TestParseSeedInstallSpecsMissingSeedID(t *testing.T) {
-	_, err := parseSeedInstallSpecs([]fileSeedInstall{{
-		Method: "github",
-		Repo:   "https://github.com/example/repo.git",
-	}})
-	if err == nil {
-		t.Fatalf("expected parse error")
+// Ghost config may not carry install specs; installs come only from Mirage-approved proposals.
+func TestLoadServiceConfigRejectsSeedInstallSpecs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := "id = \"ghost.alpha\"\n[[seed_install]]\nseed_id = \"seed.docker\"\nmethod = \"brew\"\npackage = \"docker\"\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	_, err := loadServiceConfig(path)
+	if err == nil || !strings.Contains(err.Error(), "Mirage-approved proposal") {
+		t.Fatalf("expected seed_install rejection, got %v", err)
 	}
 }
 
@@ -177,5 +154,19 @@ func TestResolveWorkspaceRootFallsBackToConfigDir(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("unexpected workspace root fallback: got=%q want=%q", got, want)
+	}
+}
+
+func TestLoadServiceConfigAdminFrameAuthToken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("admin_frame_auth_token = \" s3cret \"\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := loadServiceConfig(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.AdminFrameAuthToken != "s3cret" {
+		t.Fatalf("admin_frame_auth_token = %q", cfg.AdminFrameAuthToken)
 	}
 }

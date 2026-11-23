@@ -10,53 +10,36 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/danmuck/edgectl/internal/ghost"
 	"github.com/danmuck/edgectl/internal/protocol/session"
-	"github.com/danmuck/edgectl/internal/seeds"
 	"github.com/danmuck/edgectl/internal/tools"
 )
 
 // ghostctl config.toml key mapping to Ghost runtime settings.
 type fileConfig struct {
-	ID                   string            `toml:"id"`
-	ProjectRoot          string            `toml:"project_root"`
-	ProjectFetchOnBoot   bool              `toml:"project_fetch_on_boot"`
-	Seeds                []string          `toml:"seeds"`
-	Heartbeat            string            `toml:"heartbeat"`
-	HeartbeatInterval    string            `toml:"heartbeat_interval"`
-	HeartbeatIntervalMS  int64             `toml:"heartbeat_interval_ms"`
-	AdminListen          string            `toml:"admin_listen"`
-	MiragePolicy         string            `toml:"mirage_policy"`
-	MirageAddress        string            `toml:"mirage_address"`
-	MiragePeerIdentity   string            `toml:"mirage_peer_identity"`
-	MirageMaxAttempts    int               `toml:"mirage_max_connect_attempts"`
-	MirageSecurityMode   string            `toml:"mirage_security_mode"`
-	MirageTLSEnabled     bool              `toml:"mirage_tls_enabled"`
-	MirageTLSMutual      bool              `toml:"mirage_tls_mutual"`
-	MirageTLSCertFile    string            `toml:"mirage_tls_cert_file"`
-	MirageTLSKeyFile     string            `toml:"mirage_tls_key_file"`
-	MirageTLSCAFile      string            `toml:"mirage_tls_ca_file"`
-	MirageTLSServerName  string            `toml:"mirage_tls_server_name"`
-	MirageTLSInsecure    bool              `toml:"mirage_tls_insecure_skip_verify"`
-	SeedInstallEnabled   bool              `toml:"seed_install_enabled"`
-	SeedInstallRoot      string            `toml:"seed_install_root"`
-	SeedInstallBinRoot   string            `toml:"seed_install_bin_root"`
-	SeedInstallWhitelist []string          `toml:"seed_install_whitelist"`
-	SeedInstall          []fileSeedInstall `toml:"seed_install"`
-}
-
-// ghostctl seed-install table mapping from config.toml.
-type fileSeedInstall struct {
-	SeedID             string   `toml:"seed_id"`
-	Method             string   `toml:"method"`
-	Repo               string   `toml:"repo"`
-	Branch             string   `toml:"branch"`
-	Ref                string   `toml:"ref"`
-	Source             string   `toml:"source"`
-	Destination        string   `toml:"destination"`
-	Package            string   `toml:"package"`
-	Tap                string   `toml:"tap"`
-	BootstrapIfMissing bool     `toml:"bootstrap_if_missing"`
-	BootstrapCommand   []string `toml:"bootstrap_cmd"`
-	InstallToBin       bool     `toml:"install_to_bin"`
+	ID                   string   `toml:"id"`
+	ProjectRoot          string   `toml:"project_root"`
+	ProjectFetchOnBoot   bool     `toml:"project_fetch_on_boot"`
+	Seeds                []string `toml:"seeds"`
+	Heartbeat            string   `toml:"heartbeat"`
+	HeartbeatInterval    string   `toml:"heartbeat_interval"`
+	HeartbeatIntervalMS  int64    `toml:"heartbeat_interval_ms"`
+	AdminListen          string   `toml:"admin_listen"`
+	AdminFrameAuthToken  string   `toml:"admin_frame_auth_token"`
+	MiragePolicy         string   `toml:"mirage_policy"`
+	MirageAddress        string   `toml:"mirage_address"`
+	MiragePeerIdentity   string   `toml:"mirage_peer_identity"`
+	MirageMaxAttempts    int      `toml:"mirage_max_connect_attempts"`
+	MirageSecurityMode   string   `toml:"mirage_security_mode"`
+	MirageTLSEnabled     bool     `toml:"mirage_tls_enabled"`
+	MirageTLSMutual      bool     `toml:"mirage_tls_mutual"`
+	MirageTLSCertFile    string   `toml:"mirage_tls_cert_file"`
+	MirageTLSKeyFile     string   `toml:"mirage_tls_key_file"`
+	MirageTLSCAFile      string   `toml:"mirage_tls_ca_file"`
+	MirageTLSServerName  string   `toml:"mirage_tls_server_name"`
+	MirageTLSInsecure    bool     `toml:"mirage_tls_insecure_skip_verify"`
+	SeedInstallEnabled   bool     `toml:"seed_install_enabled"`
+	SeedInstallRoot      string   `toml:"seed_install_root"`
+	SeedInstallBinRoot   string   `toml:"seed_install_bin_root"`
+	SeedInstallWhitelist []string `toml:"seed_install_whitelist"`
 }
 
 // ghostctl loader for TOML config with default overlay.
@@ -151,6 +134,10 @@ func loadServiceConfig(path string) (ghost.ServiceConfig, error) {
 	if meta.IsDefined("mirage_tls_insecure_skip_verify") {
 		cfg.Mirage.SessionConfig.TLS.InsecureSkipVerify = raw.MirageTLSInsecure
 	}
+	// Shared secret for admin execute_envelope frames and required for install_dependencies plans.
+	if meta.IsDefined("admin_frame_auth_token") {
+		cfg.AdminFrameAuthToken = strings.TrimSpace(raw.AdminFrameAuthToken)
+	}
 	if meta.IsDefined("seed_install_enabled") {
 		cfg.SeedInstall.Enabled = raw.SeedInstallEnabled
 	}
@@ -163,45 +150,12 @@ func loadServiceConfig(path string) (ghost.ServiceConfig, error) {
 	if meta.IsDefined("seed_install_whitelist") {
 		cfg.SeedInstall.Whitelist = tools.NormalizeNonEmptyList(raw.SeedInstallWhitelist)
 	}
+	// Install plans come only from Mirage-approved proposals (docs/progress/mvp_p8.md Slice F).
 	if meta.IsDefined("seed_install") {
-		specs, err := parseSeedInstallSpecs(raw.SeedInstall)
-		if err != nil {
-			return ghost.ServiceConfig{}, err
-		}
-		cfg.SeedInstall.Specs = specs
+		return ghost.ServiceConfig{}, fmt.Errorf("seed_install specs are no longer accepted in ghost config: dependency installs require a Mirage-approved proposal")
 	}
 
 	return cfg, nil
-}
-
-// ghostctl seed-install parser from config table entries into install specs.
-func parseSeedInstallSpecs(in []fileSeedInstall) ([]seeds.InstallSpec, error) {
-	out := make([]seeds.InstallSpec, 0, len(in))
-	for _, row := range in {
-		seedID := strings.TrimSpace(row.SeedID)
-		method := strings.TrimSpace(row.Method)
-		if seedID == "" {
-			return nil, fmt.Errorf("parse seed_install: missing seed_id")
-		}
-		if method == "" {
-			return nil, fmt.Errorf("parse seed_install seed_id=%q: missing method", seedID)
-		}
-		out = append(out, seeds.InstallSpec{
-			SeedID:             seedID,
-			Method:             seeds.InstallMethod(strings.ToLower(method)),
-			RepoURL:            strings.TrimSpace(row.Repo),
-			Branch:             strings.TrimSpace(row.Branch),
-			Ref:                strings.TrimSpace(row.Ref),
-			SourcePath:         strings.TrimSpace(row.Source),
-			Destination:        strings.TrimSpace(row.Destination),
-			Package:            strings.TrimSpace(row.Package),
-			Tap:                strings.TrimSpace(row.Tap),
-			BootstrapIfMissing: row.BootstrapIfMissing,
-			BootstrapCommand:   tools.NormalizeNonEmptyList(row.BootstrapCommand),
-			InstallToBin:       row.InstallToBin,
-		})
-	}
-	return out, nil
 }
 
 // ghostctl workspace-root resolver using nearest parent directory with go.mod.

@@ -31,7 +31,27 @@ type ghostControlRequest struct {
 	CommandFrame []byte            `json:"command_frame,omitempty"`
 	MirageID     string            `json:"mirage_id,omitempty"`
 	SessionPort  string            `json:"session_port,omitempty"`
+	Install      *ghostInstallPlan `json:"install,omitempty"`
 }
+
+// Wire shape of Ghost's install_dependencies request (ghost.InstallPlanRequest).
+type ghostInstallPlan struct {
+	ProposalID string              `json:"proposal_id"`
+	ApprovedBy string              `json:"approved_by"`
+	Specs      []seeds.InstallSpec `json:"specs"`
+	Auth       string              `json:"auth,omitempty"`
+}
+
+// Wire shape of Ghost's install_dependencies result (ghost.InstallPlanResult).
+type ghostInstallPlanResult struct {
+	ProposalID string                     `json:"proposal_id"`
+	Succeeded  bool                       `json:"succeeded"`
+	Steps      []DependencyStepResult     `json:"steps"`
+	Rollback   []DependencyRollbackResult `json:"rollback"`
+}
+
+// Upper bound for one dependency plan; package installs can take minutes.
+const dependencyInstallTimeout = 15 * time.Minute
 
 type ghostAdminCommand struct {
 	GhostID      string            `json:"ghost_id,omitempty"`
@@ -146,6 +166,26 @@ func (c *GhostControlClient) WithCommandFrameAuthToken(token string) *GhostContr
 	}
 	c.commandFrameAuth = []byte(raw)
 	return c
+}
+
+// InstallDependencies sends an approved proposal's plan to Ghost "install_dependencies" and returns
+// Ghost's per-step result. Uses a long per-call timeout instead of the client default.
+func (c *GhostControlClient) InstallDependencies(ctx context.Context, p DependencyProposal) (DependencyExecution, error) {
+	long := *c
+	long.timeout = dependencyInstallTimeout
+	var out ghostInstallPlanResult
+	if err := long.call(ctx, ghostControlRequest{
+		Action: "install_dependencies",
+		Install: &ghostInstallPlan{
+			ProposalID: p.ID,
+			ApprovedBy: p.ApprovedBy,
+			Specs:      p.Steps,
+			Auth:       string(c.commandFrameAuth),
+		},
+	}, &out); err != nil {
+		return DependencyExecution{}, err
+	}
+	return DependencyExecution{Succeeded: out.Succeeded, Steps: out.Steps, Rollback: out.Rollback}, nil
 }
 
 // SpawnLocalGhost calls root ghost admin "spawn_ghost" for local provisioning.

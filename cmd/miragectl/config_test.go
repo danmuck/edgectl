@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/danmuck/edgectl/internal/mirage"
@@ -180,14 +181,6 @@ seed_install_bin_root = "local/bin"
 seed_install_allow_internal_defaults = true
 seed_install_whitelist = ["seed.host", "seed.mongod", "seed.host"]
 config_template_path = "cmd/ghostctl/pi.tls.config.toml"
-
-[[ghost_manifests.seed_install]]
-seed_id = "seed.mongod.pkg"
-method = "brew"
-package = "mongodb-community@7.0"
-tap = "mongodb/brew"
-bootstrap_if_missing = true
-bootstrap_cmd = ["/bin/bash", "-c", "echo bootstrap"]
 `
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -216,17 +209,30 @@ bootstrap_cmd = ["/bin/bash", "-c", "echo bootstrap"]
 	if len(m.SeedInstallWhitelist) != 3 || m.SeedInstallWhitelist[0] != "seed.host" || m.SeedInstallWhitelist[1] != "seed.mongod" || m.SeedInstallWhitelist[2] != "seed.host" {
 		t.Fatalf("unexpected seed install whitelist: %+v", m.SeedInstallWhitelist)
 	}
-	if len(m.SeedInstall) != 1 {
-		t.Fatalf("unexpected seed install spec count: %d", len(m.SeedInstall))
-	}
-	if m.SeedInstall[0].SeedID != "seed.mongod.pkg" || m.SeedInstall[0].Method != "brew" {
-		t.Fatalf("unexpected seed install spec: %+v", m.SeedInstall[0])
-	}
-	if len(m.SeedInstall[0].BootstrapCmd) != 3 {
-		t.Fatalf("unexpected bootstrap cmd: %+v", m.SeedInstall[0].BootstrapCmd)
-	}
 	if m.ConfigTemplatePath != "cmd/ghostctl/pi.tls.config.toml" {
 		t.Fatalf("unexpected config template path: %q", m.ConfigTemplatePath)
+	}
+}
+
+// Manifest install specs are rejected; installs come only from Mirage-approved proposals.
+func TestLoadServiceConfigRejectsManifestSeedInstallSpecs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := `
+[[ghost_manifests]]
+ghost_id = "ghost.pi"
+host = "pi.local"
+seed_install_enabled = true
+
+[[ghost_manifests.seed_install]]
+seed_id = "seed.docker"
+method = "brew"
+package = "docker"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if _, err := loadServiceConfig(path); err == nil || !strings.Contains(err.Error(), "no longer accepted") {
+		t.Fatalf("expected manifest seed_install rejection, got %v", err)
 	}
 }
 
@@ -259,5 +265,20 @@ func TestLoadServiceConfigCommandMaxAttempts(t *testing.T) {
 
 	if _, err := loadServiceConfig(write(t, "id = \"mirage.alpha\"\ncommand_max_attempts = 0\n")); err == nil {
 		t.Fatalf("expected error for command_max_attempts = 0")
+	}
+}
+
+// Mirage's ghost admin token is loaded and handed to its managed local Ghost.
+func TestLoadRuntimeConfigsGhostAdminFrameAuthToken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("ghost_admin_frame_auth_token = \"s3cret\"\nlocal_ghost_admin_addr = \"127.0.0.1:7010\"\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	mCfg, gCfg, err := loadRuntimeConfigs(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if mCfg.GhostAdminFrameAuthToken != "s3cret" || gCfg.AdminFrameAuthToken != "s3cret" {
+		t.Fatalf("tokens: mirage=%q ghost=%q", mCfg.GhostAdminFrameAuthToken, gCfg.AdminFrameAuthToken)
 	}
 }

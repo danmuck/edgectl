@@ -14,6 +14,13 @@
 //
 // - mismatches get a rejected event.ack (code 1000), are not observed, and close the session
 //
+// Dependency governance (docs/progress/mvp_p8.md Slice F, mvp_p9_dependency_approval_flow.mmd):
+// - internal/depcatalog is the single Mirage-owned source of install paths and methods
+//
+// - propose -> approve -> execute_dependencies; Ghost dispatch only after approval
+//
+// - audit records for proposal, approval, execution start, execution result, rollback
+//
 // Custody logging (observability.toml):
 // - issue in, command out (dispatched|retry|retry_stopped|timed_out|retry_exhausted), event in
 // (outcome|duplicate|rejected), event.ack out, report out; all on trace "trace."+intent_id

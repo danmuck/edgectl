@@ -16,7 +16,6 @@ import (
 
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/seeds"
-	seedcatalog "github.com/danmuck/edgectl/internal/seeds/catalog"
 	seeddocker "github.com/danmuck/edgectl/internal/seeds/docker"
 	seedflow "github.com/danmuck/edgectl/internal/seeds/flow"
 	seedfs "github.com/danmuck/edgectl/internal/seeds/fs"
@@ -51,14 +50,14 @@ type MirageSessionConfig struct {
 	SessionConfig      session.Config
 }
 
-// Ghost seed-install configuration for whitelist-gated dependency installation.
+// Ghost seed-install configuration for executing Mirage-approved dependency plans.
+// Enabled gates whether this Ghost accepts install plans at all; Ghost never installs on its own.
 type SeedInstallConfig struct {
 	Enabled       bool
 	WorkspaceRoot string
 	InstallRoot   string
 	BinRoot       string
 	Whitelist     []string
-	Specs         []seeds.InstallSpec
 }
 
 // ServiceConfig configures Ghost standalone runtime defaults.
@@ -115,6 +114,13 @@ type Service struct {
 	adminFrameAuthValidator CommandFrameAuthValidator
 	adminClientCount        atomic.Int64
 	cluster                 clusterHost
+
+	// Serializes dependency install plans.
+	installMu sync.Mutex
+	// Test seam adjusting installer config (runner, HTTP client) before construction.
+	installerConfigHook func(*seeds.InstallerConfig)
+	// Test seam for catalog membership; nil uses depcatalog.Contains.
+	catalogContains func(seeds.InstallSpec) bool
 }
 
 // CommandFrameAuthValidator validates optional command-frame auth bytes for admin execute_envelope RPCs.
@@ -179,10 +185,6 @@ func (s *Service) bootstrap() error {
 	if err := s.fetchProjectRepoOnBoot(); err != nil {
 		logs.Warnf("ghost.Service.bootstrap project fetch skipped err=%v", err)
 	}
-	if err := s.installSeedDependencies(); err != nil {
-		return err
-	}
-
 	if err := s.server.Appear(GhostConfig{GhostID: s.cfg.GhostID}); err != nil {
 		return err
 	}
@@ -645,63 +647,6 @@ func buildBuiltinRegistry(seedIDs []string, ghostID string) (*seeds.Registry, er
 	}
 
 	return reg, nil
-}
-
-// Ghost bootstrap hook that runs configured seed dependency installations.
-// When no explicit specs are configured, resolves deps from the catalog for
-// each enabled builtin seed — so a Ghost can auto-resolve its seed dependencies.
-func (s *Service) installSeedDependencies() error {
-	cfg := s.cfg.SeedInstall
-	if !cfg.Enabled {
-		return nil
-	}
-
-	specs := cfg.Specs
-	if len(specs) == 0 {
-		specs = s.specsFromCatalog()
-	}
-	if len(specs) == 0 {
-		return nil
-	}
-
-	installer, err := seeds.NewInstaller(seeds.InstallerConfig{
-		WorkspaceRoot: cfg.WorkspaceRoot,
-		InstallRoot:   cfg.InstallRoot,
-		BinRoot:       cfg.BinRoot,
-		Whitelist:     cfg.Whitelist,
-	})
-	if err != nil {
-		return err
-	}
-	if err := installer.InstallAll(specs); err != nil {
-		return err
-	}
-	return nil
-}
-
-// specsFromCatalog derives InstallSpecs from the dependency catalog for each configured builtin seed.
-func (s *Service) specsFromCatalog() []seeds.InstallSpec {
-	catalog := seedcatalog.DependencyCatalog()
-	var specs []seeds.InstallSpec
-	for _, rawID := range s.cfg.BuiltinSeedIDs {
-		seedID := strings.TrimSpace(rawID)
-		// Normalize short IDs to canonical form.
-		if !strings.HasPrefix(seedID, "seed.") {
-			seedID = "seed." + seedID
-		}
-		deps, ok := catalog[seedID]
-		if !ok {
-			continue
-		}
-		for _, dep := range deps {
-			specs = append(specs, seeds.InstallSpec{
-				SeedID:  seedID + ".dep." + dep.Name,
-				Method:  dep.InstallMethod,
-				Package: dep.AptPackage,
-			})
-		}
-	}
-	return specs
 }
 
 // fetchHostSummary queries seed.host status if registered and returns a compact summary string.

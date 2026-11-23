@@ -35,9 +35,18 @@ func adminErrorCode(err error) uint32 {
 	case errors.Is(err, errAdminInvalidRequest),
 		errors.Is(err, ErrInvalidCommandEnv),
 		errors.Is(err, ErrCommandTargetMismatch),
-		errors.Is(err, ErrDuplicateMessageID):
+		errors.Is(err, ErrDuplicateMessageID),
+		errors.Is(err, ErrDependencyPlanUnapproved),
+		errors.Is(err, ErrDependencyNotCataloged),
+		errors.Is(err, seeds.ErrInstallInvalidSpec),
+		errors.Is(err, seeds.ErrInstallMethodNotAllowed),
+		errors.Is(err, seeds.ErrInstallTransferDirection),
+		errors.Is(err, seeds.ErrInstallSandboxViolation),
+		errors.Is(err, seeds.ErrInstallUnsupportedRepo):
 		return schema.ErrCodeSemanticValidation
-	case errors.Is(err, ErrNotRadiating), errors.Is(err, ErrDuplicateCommandID):
+	case errors.Is(err, ErrNotRadiating),
+		errors.Is(err, ErrDuplicateCommandID),
+		errors.Is(err, ErrDependencyInstallDisabled):
 		return schema.ErrCodeRuntimeExecFailure
 	}
 	return session.ErrorCode(err)
@@ -88,6 +97,10 @@ type controlRequest struct {
 	Spawn        SpawnGhostRequest `json:"spawn,omitempty"`
 	MirageID     string            `json:"mirage_id,omitempty"`
 	SessionPort  string            `json:"session_port,omitempty"`
+	// Mirage-approved dependency install plan (install_dependencies).
+	Install InstallPlanRequest `json:"install,omitempty"`
+	// Binaries to check (dependency_status).
+	Binaries []string `json:"binaries,omitempty"`
 }
 
 // controlResponse is one admin action result envelope emitted by ghostctl.
@@ -302,6 +315,14 @@ func (s *Service) handleControlRequest(req controlRequest, remoteAddr string) co
 	case "bind_mirage":
 		s.BindMirageAdminRoute(req.MirageID, remoteAddr, req.SessionPort)
 		return controlResponse{OK: true}
+	case "install_dependencies":
+		out, err := s.ExecuteInstallPlan(req.Install)
+		if err != nil {
+			return failControl(err)
+		}
+		return controlResponse{OK: true, Data: out}
+	case "dependency_status":
+		return controlResponse{OK: true, Data: s.DependencyStatus(req.Binaries)}
 	default:
 		return failControl(fmt.Errorf("%w: unknown action: %s", errAdminInvalidRequest, req.Action))
 	}

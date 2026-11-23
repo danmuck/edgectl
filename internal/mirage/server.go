@@ -75,6 +75,9 @@ type Server struct {
 	reports []session.Report
 	spawner GhostSpawner
 
+	// Dependency install proposals, approvals, and audit trail (Slice F).
+	deps *DependencyLedger
+
 	// Clock for ack timestamps and duplicate-window expiry; replaceable in tests.
 	now func() time.Time
 }
@@ -90,7 +93,13 @@ func NewServer() *Server {
 		loop:     NewOrchestrator(),
 		reports:  make([]session.Report, 0),
 		now:      time.Now,
+		deps:     NewDependencyLedger(),
 	}
+}
+
+// Dependencies returns the dependency proposal ledger.
+func (s *Server) Dependencies() *DependencyLedger {
+	return s.deps
 }
 
 // Appear sets immutable Mirage identity and transitions boot->appeared.

@@ -130,12 +130,23 @@ Slice D implementation notes (2026-11-23):
 
 ### Slice F — Dependency Governance Baseline for Phase 9
 
-- [ ] Define one Mirage-owned dependency catalog source file used for install-policy decisions.
-- [ ] Enforce allowlisted install methods (`github`, `curl`, `brew`, `stream`) at runtime boundaries.
-- [ ] Enforce transfer direction policy: streaming payloads may only flow `mirage -> ghost`.
-- [ ] Enforce Mirage approval requirement before Ghost executes dependency install plans.
-- [ ] Enforce project-managed install roots and disallow unmanaged host-global dependency paths.
-- [ ] Emit audit records for proposal, approval, execution start, execution result, and rollback state.
+- [x] Define one Mirage-owned dependency catalog source file used for install-policy decisions.
+- [x] Enforce allowlisted install methods (`github`, `curl`, `brew`, `stream`) at runtime boundaries.
+- [x] Enforce transfer direction policy: streaming payloads may only flow `mirage -> ghost`.
+- [x] Enforce Mirage approval requirement before Ghost executes dependency install plans.
+- [x] Enforce project-managed install roots and disallow unmanaged host-global dependency paths.
+- [x] Emit audit records for proposal, approval, execution start, execution result, and rollback state.
+
+Slice F implementation notes (2026-11-23):
+
+- Decisions (user, 2026-11-23): remove Ghost boot-time installs (Mirage-only); enforce the allowlist, add `curl` with required sha256, enforce `stream` direction in policy but defer stream byte transfer to Phase 9; `brew` is the single allowed host-global exception (binary exposed only via a managed `local/bin` symlink); approval workflow as Mirage admin actions now, wrapped by Phase 9 HTTP later.
+- Catalog: `internal/depcatalog/catalog.go` is the single source (initially `internal/mirage/dependency_catalog.go`; moved during hardening so Ghost can verify plan steps). It replaced per-seed `Deps()` functions, `seeds.DepSpec`, and `internal/seeds/catalog`. Entries: `seed.docker` -> brew `docker` (CLI only; the Docker daemon must be provisioned out of band), `seed.mongod` -> brew `mongosh`. `mongod` itself has no allowlisted verified source and is reported as unresolved on proposals instead of guessed. Previous entries used `apt`, which is not allowlisted.
+- Policy: `seeds.ValidateSpec` enforces the method allowlist, pinned sources (github requires `ref`; curl requires https, `version`, 64-hex `sha256`, destination), `stream` direction `mirage->ghost`, and relative destinations that cannot escape the install root. Checked by Mirage at proposal time and by Ghost before executing any step. `apt` and `workspace_copy` were removed from the installer.
+- Approval: Mirage admin actions `propose_dependencies`, `approve_dependencies`, `execute_dependencies`, `list_dependency_proposals` over an in-memory ledger (`pending -> approved -> executing -> succeeded|failed`). Ghost `install_dependencies` requires a proposal id and approver, checks the admin auth token when configured, policy-checks the whole plan first, and rolls back this plan's managed-root installs on failure. Ghost no longer installs at boot; `[[seed_install]]` in Ghost config or Mirage ghost manifests is now a load error, and SSH deploy strips any `seed_install` a template carries.
+- Audit: each proposal carries ordered audit records (`proposal`, `approval`, `execution_start`, `execution_result`, `rollback` with `rolled_back n/m` or `partial`), readable via `list_dependency_proposals`, plus a `mirage.dependency.audit` log line per record.
+- Security hardening (review of uncommitted Slice F): the first version let any admin client submit a plan when no admin token was configured, and plans could carry `bootstrap_command`, arbitrary taps/sources, and `-`-prefixed `ref`/`package` values (option injection). Fixes: bootstrap fields are never decoded from JSON; Ghost refuses all plans unless `admin_frame_auth_token` is configured and presented; every step must exactly match an entry of the shared catalog (moved to `internal/depcatalog`, still Mirage-owned; Ghost only verifies membership); git/brew argument values must match a safe charset and cannot start with `-`. Config keys added so the token is actually settable: ghostctl `admin_frame_auth_token`, miragectl `ghost_admin_frame_auth_token` (also applied to the managed local Ghost); SSH deploy writes the token into the remote Ghost config.
+- Limits: Ghost still cannot cryptographically verify that Mirage approved a specific plan; the admin token plus catalog-only steps bound what any token holder can install. The ledger is in memory (lost on Mirage restart). `brew` installs are not rolled back. Plans cannot bootstrap brew; it must already be installed on the host.
+- Tests: `internal/seeds/policy_test.go`, `internal/ghost/dependencies_test.go`, `internal/mirage/dependency_test.go`, updated config/deploy tests.
 
 ## Failure Modes and Behavioral Expectations
 

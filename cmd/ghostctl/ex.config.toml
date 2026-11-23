@@ -20,25 +20,11 @@ mirage_tls_server_name = ""
 mirage_tls_insecure_skip_verify = false
 
 # Seed dependency installation policy.
+# Ghost executes only Mirage-approved plans built from Mirage's dependency catalog
+# (propose_dependencies -> approve_dependencies -> execute_dependencies); [[seed_install]]
+# entries are rejected. The whitelist limits which seed ids a plan may install for.
+# Install plans are refused unless admin_frame_auth_token is set and presented by Mirage
+# (miragectl ghost_admin_frame_auth_token), and every step must be a dependency-catalog entry.
 seed_install_enabled = true
 seed_install_root = "local/seeds"
-seed_install_whitelist = ["seed.mongod", "seed.mongod.pkg"]
-
-# Source-based seed dependency install from GitHub.
-[[seed_install]]
-seed_id = "seed.mongod"
-method = "github"
-repo = "https://github.com/example/mongod-seed.git"
-branch = "main"
-destination = "seed.mongod"
-
-# Package-based seed dependency install via Homebrew.
-# On fresh Ubuntu hosts, this validates `brew --version` first.
-# If brew is missing and bootstrap_if_missing is true, bootstrap_cmd is executed.
-[[seed_install]]
-seed_id = "seed.mongod.pkg"
-method = "brew"
-package = "mongodb-community@7.0"
-tap = "mongodb/brew"
-bootstrap_if_missing = true
-bootstrap_cmd = ["/bin/bash", "-c", "NONINTERACTIVE=1 /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""]
+seed_install_whitelist = ["seed.docker", "seed.mongod"]

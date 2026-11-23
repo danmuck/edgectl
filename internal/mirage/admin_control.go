@@ -68,6 +68,8 @@ type adminControlRequest struct {
 	Spawn          SpawnGhostRequest  `json:"spawn,omitempty"`
 	Deploy         DeployGhostRequest `json:"deploy,omitempty"`
 	GhostAdminAddr string             `json:"ghost_admin_addr,omitempty"`
+	// Dependency proposal parameters (propose/approve/execute/list_dependency_*).
+	Dependency AdminDependencyRequest `json:"dependency,omitempty"`
 }
 
 type adminControlResponse struct {
@@ -91,6 +93,9 @@ func adminErrorCode(err error) uint32 {
 	}
 	switch {
 	case errors.Is(err, errAdminInvalidRequest),
+		errors.Is(err, ErrInvalidDependencyProposal),
+		errors.Is(err, ErrDependencyProposalNotFound),
+		errors.Is(err, ErrDependencyProposalState),
 		errors.Is(err, ErrInvalidIssue),
 		errors.Is(err, ErrIntentNotFound),
 		errors.Is(err, ErrTargetGhostRequired):
@@ -169,6 +174,9 @@ func (s *Service) handleAdminConn(conn net.Conn) {
 
 // handleAdminControlRequest routes one admin action to Mirage runtime methods.
 func (s *Service) handleAdminControlRequest(req adminControlRequest) adminControlResponse {
+	if resp, ok := s.handleDependencyAdminAction(strings.TrimSpace(req.Action), req.Dependency); ok {
+		return resp
+	}
 	switch strings.TrimSpace(req.Action) {
 	case "status":
 		status := s.server.Status()
@@ -261,6 +269,7 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 		return adminControlResponse{OK: true, Data: out}
 	case "deploy_ghost":
 		deployer := NewSSHDeployer()
+		deployer.adminFrameAuthToken = s.cfg.GhostAdminFrameAuthToken
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 		result, err := deployer.Deploy(ctx, req.Deploy)
