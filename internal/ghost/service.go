@@ -429,7 +429,7 @@ func (s *Service) monitorMirageSession(ctx context.Context, conn *MirageSession)
 			return nil
 		case <-ticker.C:
 			probeCtx, cancel := context.WithTimeout(ctx, s.sessionProbeTimeout())
-			_, err := conn.SendEventWithAck(probeCtx, s.sessionProbeEvent())
+			_, err := conn.sendEventWithAck(probeCtx, s.sessionProbeEvent(), false)
 			cancel()
 			if err != nil {
 				return err

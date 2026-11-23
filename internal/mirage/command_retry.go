@@ -3,11 +3,12 @@ package mirage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/observability"
 	"github.com/danmuck/edgectl/internal/protocol/session"
-	logs "github.com/danmuck/smplog"
 )
 
 // CommandState is the per-command lifecycle state Mirage records in observed state.
@@ -118,6 +119,7 @@ func (o *Orchestrator) dispatchWithRetry(
 	intentID string,
 	exec CommandExecutor,
 	cmd session.Command,
+	messageID uint64,
 ) dispatchResult {
 	o.mu.RLock()
 	policy := o.retry
@@ -134,34 +136,30 @@ func (o *Orchestrator) dispatchWithRetry(
 			return dispatchResult{Event: event, HasEvent: true, Status: statusFromEvent(event, attempt, now())}
 		}
 		lastErr = err
-		logs.Warnf(
-			"mirage.command.retry component=mirage intent_id=%s command_id=%s ghost_id=%s attempt=%d max_attempts=%d err=%q",
-			intentID, cmd.CommandID, cmd.GhostID, attempt, policy.MaxAttempts, err.Error(),
-		)
+		emitCommand(messageID, cmd, observability.StatusRetry,
+			fmt.Sprintf("attempt %d/%d: %v", attempt, policy.MaxAttempts, err))
 		if ctx.Err() != nil {
-			return o.nonEventTerminal(intentID, cmd, CommandTimedOut, attempt, lastErr)
+			return o.nonEventTerminal(messageID, cmd, CommandTimedOut, attempt, lastErr)
 		}
 		if attempt >= policy.MaxAttempts {
 			break
 		}
 		if err := sleep(ctx, session.NextBackoffDelay(policy.Backoff, attempt, nil)); err != nil {
-			return o.nonEventTerminal(intentID, cmd, CommandTimedOut, attempt, lastErr)
+			return o.nonEventTerminal(messageID, cmd, CommandTimedOut, attempt, lastErr)
 		}
 		// Retry only when no terminal event has been observed for this command.
 		if o.commandObserved(intentID, cmd.CommandID) {
-			logs.Infof(
-				"mirage.command.retry.stop component=mirage intent_id=%s command_id=%s reason=terminal_event_observed attempt=%d",
-				intentID, cmd.CommandID, attempt,
-			)
+			emitCommand(messageID, cmd, observability.StatusRetryStopped,
+				fmt.Sprintf("terminal event observed after attempt %d", attempt))
 			return dispatchResult{Observed: true}
 		}
 	}
-	return o.nonEventTerminal(intentID, cmd, CommandRetryExhausted, attempt, lastErr)
+	return o.nonEventTerminal(messageID, cmd, CommandRetryExhausted, attempt, lastErr)
 }
 
 // Terminal status for a command that ended without any terminal event.
 func (o *Orchestrator) nonEventTerminal(
-	intentID string,
+	messageID uint64,
 	cmd session.Command,
 	state CommandState,
 	attempts int,
@@ -174,10 +172,7 @@ func (o *Orchestrator) nonEventTerminal(
 			state = CommandTimedOut
 		}
 	}
-	logs.Warnf(
-		"mirage.command.terminal component=mirage intent_id=%s command_id=%s ghost_id=%s state=%s attempts=%d err=%q",
-		intentID, cmd.CommandID, cmd.GhostID, state, attempts, msg,
-	)
+	emitCommand(messageID, cmd, string(state), fmt.Sprintf("attempts=%d: %s", attempts, msg))
 	o.mu.RLock()
 	now := o.now
 	o.mu.RUnlock()

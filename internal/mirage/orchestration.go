@@ -12,9 +12,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/observability"
 	"github.com/danmuck/edgectl/internal/protocol/frame"
 	"github.com/danmuck/edgectl/internal/protocol/session"
-	logs "github.com/danmuck/smplog"
 )
 
 var (
@@ -233,12 +233,6 @@ func (o *Orchestrator) SubmitIssue(issue IssueEnv) error {
 	stages := normalizeIssueToStages(issue)
 	commands := flattenStagesToPlannedCommands(issue.IntentID, stages)
 	issue.SeedDependencies = seedDependenciesForCommands(commands)
-	logs.Infof(
-		"ownership.transition from=user to=mirage intent_id=%s actor=%s target_scope=%s",
-		strings.TrimSpace(issue.IntentID),
-		strings.TrimSpace(issue.Actor),
-		strings.TrimSpace(issue.TargetScope),
-	)
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	// command_id must resolve to exactly one intent; sanitized intent ids can collide ("a/b" vs "a.b").
@@ -254,6 +248,7 @@ func (o *Orchestrator) SubmitIssue(issue IssueEnv) error {
 		ReceivedAt: now,
 	}
 	delete(o.observed, issue.IntentID)
+	emitIssue(o.seq.Add(1), issue)
 	return nil
 }
 
@@ -312,14 +307,7 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context, intentID string) (sess
 	if !hasPending {
 		report := latestReportOrSynthesizeComplete(desired, obs)
 		o.mu.Unlock()
-		logs.Infof(
-			"ownership.transition from=mirage to=user intent_id=%s phase=%s completion=%s command_id=%s event_id=%s",
-			key,
-			report.Phase,
-			report.CompletionState,
-			strings.TrimSpace(report.CommandID),
-			strings.TrimSpace(report.EventID),
-		)
+		emitReport(o.seq.Add(1), desired.Issue.Actor, report)
 		return report, nil
 	}
 
@@ -331,14 +319,7 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context, intentID string) (sess
 				observed.Reports = append(observed.Reports, report)
 				observed.ObservedAt = time.Now()
 				o.mu.Unlock()
-				logs.Infof(
-					"ownership.transition from=mirage to=user intent_id=%s phase=%s completion=%s command_id=%s event_id=%s",
-					key,
-					report.Phase,
-					report.CompletionState,
-					strings.TrimSpace(report.CommandID),
-					strings.TrimSpace(report.EventID),
-				)
+				emitReport(o.seq.Add(1), desired.Issue.Actor, report)
 				return report, nil
 			}
 		} else {
@@ -351,23 +332,16 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context, intentID string) (sess
 	if exec == nil {
 		return session.Report{}, fmt.Errorf("mirage: no executor registered for ghost_id=%q", next.Command.GhostID)
 	}
-	logs.Infof(
-		"ownership.transition from=mirage to=ghost intent_id=%s command_id=%s ghost_id=%s seed_id=%s operation=%s",
-		key,
-		next.Command.CommandID,
-		next.Command.GhostID,
-		next.Command.SeedSelector,
-		next.Command.Operation,
-	)
 
-	wireCommand, err := o.dispatchCommandEnvelope(next.Command)
+	wireCommand, commandMsgID, err := o.dispatchCommandEnvelope(next.Command)
 	if err != nil {
 		if next.Blocking {
 			o.releaseSeedLock(next.SeedKey, key, next.Command.CommandID)
 		}
 		return session.Report{}, err
 	}
-	result := o.dispatchWithRetry(ctx, key, exec, wireCommand)
+	emitCommand(commandMsgID, wireCommand, observability.StatusDispatched, "")
+	result := o.dispatchWithRetry(ctx, key, exec, wireCommand, commandMsgID)
 
 	o.mu.Lock()
 	observed := ensureObservedLocked(o, key)
@@ -390,14 +364,11 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context, intentID string) (sess
 			delete(o.seedLocks, next.SeedKey)
 		}
 		o.mu.Unlock()
-		logs.Infof(
-			"ownership.transition from=mirage to=user intent_id=%s phase=%s completion=%s command_id=%s command_state=%s attempts=%d",
-			key, report.Phase, report.CompletionState, cmdID, result.Status.State, result.Status.Attempts,
-		)
+		emitReport(o.seq.Add(1), desired.Issue.Actor, report)
 		return report, nil
 	}
 
-	report, ingestedEvent, err := o.ingestEventEnvelopeAndBuildReport(desired, observed, result.Event)
+	report, ingestedEvent, eventMsgID, reportMsgID, err := o.ingestEventEnvelopeAndBuildReport(desired, observed, result.Event)
 	if err != nil {
 		o.mu.Unlock()
 		if next.Blocking {
@@ -414,22 +385,8 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context, intentID string) (sess
 		delete(o.seedLocks, next.SeedKey)
 	}
 	o.mu.Unlock()
-	logs.Infof(
-		"ownership.transition from=ghost to=mirage intent_id=%s command_id=%s event_id=%s ghost_id=%s outcome=%s",
-		key,
-		ingestedEvent.CommandID,
-		ingestedEvent.EventID,
-		ingestedEvent.GhostID,
-		ingestedEvent.Outcome,
-	)
-	logs.Infof(
-		"ownership.transition from=mirage to=user intent_id=%s phase=%s completion=%s command_id=%s event_id=%s",
-		key,
-		report.Phase,
-		report.CompletionState,
-		strings.TrimSpace(report.CommandID),
-		strings.TrimSpace(report.EventID),
-	)
+	emitEventIn(eventMsgID, ingestedEvent.GhostID, ingestedEvent, ingestedEvent.Outcome, "")
+	emitReport(reportMsgID, desired.Issue.Actor, report)
 	return report, nil
 }
 
@@ -439,6 +396,12 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context, intentID string) (sess
 // mutation. duplicate=true means the command was already observed; observed state is not
 // re-mutated and the latest report is returned for read-only emission.
 func (o *Orchestrator) IngestObservedEvent(boundGhostID string, event session.Event) (session.Report, bool, bool, error) {
+	return o.ingestObservedEvent(boundGhostID, event, 0)
+}
+
+// ingestObservedEvent is IngestObservedEvent with the inbound event frame message_id (0 when not
+// framed by a session) so the custody event line is logged before the report it produces.
+func (o *Orchestrator) ingestObservedEvent(boundGhostID string, event session.Event, eventMessageID uint64) (session.Report, bool, bool, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
@@ -454,32 +417,15 @@ func (o *Orchestrator) IngestObservedEvent(boundGhostID string, event session.Ev
 	}
 	desired := o.desired[intentID]
 	observed := ensureObservedLocked(o, intentID)
+	// Duplicate observation: no report is emitted; the session boundary logs the duplicate.
 	if _, exists := observed.ByCommandID[event.CommandID]; exists {
 		if len(observed.Reports) == 0 {
-			report := latestReportOrSynthesizeComplete(desired, observed)
-			logs.Infof(
-				"ownership.transition from=mirage to=user intent_id=%s phase=%s completion=%s command_id=%s event_id=%s",
-				intentID,
-				report.Phase,
-				report.CompletionState,
-				strings.TrimSpace(report.CommandID),
-				strings.TrimSpace(report.EventID),
-			)
-			return report, true, true, nil
+			return latestReportOrSynthesizeComplete(desired, observed), true, true, nil
 		}
-		report := observed.Reports[len(observed.Reports)-1]
-		logs.Infof(
-			"ownership.transition from=mirage to=user intent_id=%s phase=%s completion=%s command_id=%s event_id=%s",
-			intentID,
-			report.Phase,
-			report.CompletionState,
-			strings.TrimSpace(report.CommandID),
-			strings.TrimSpace(report.EventID),
-		)
-		return report, true, true, nil
+		return observed.Reports[len(observed.Reports)-1], true, true, nil
 	}
 
-	report, ingestedEvent, err := o.ingestEventEnvelopeAndBuildReport(desired, observed, event)
+	report, ingestedEvent, eventMsgID, reportMsgID, err := o.ingestEventEnvelopeAndBuildReport(desired, observed, event)
 	if err != nil {
 		return session.Report{}, true, false, err
 	}
@@ -493,71 +439,66 @@ func (o *Orchestrator) IngestObservedEvent(boundGhostID string, event session.Ev
 	if plan.Blocking {
 		delete(o.seedLocks, plan.SeedKey)
 	}
-	logs.Infof(
-		"ownership.transition from=ghost to=mirage intent_id=%s command_id=%s event_id=%s ghost_id=%s outcome=%s",
-		intentID,
-		ingestedEvent.CommandID,
-		ingestedEvent.EventID,
-		ingestedEvent.GhostID,
-		ingestedEvent.Outcome,
-	)
-	logs.Infof(
-		"ownership.transition from=mirage to=user intent_id=%s phase=%s completion=%s command_id=%s event_id=%s",
-		intentID,
-		report.Phase,
-		report.CompletionState,
-		strings.TrimSpace(report.CommandID),
-		strings.TrimSpace(report.EventID),
-	)
+	if eventMessageID == 0 {
+		eventMessageID = eventMsgID
+	}
+	emitEventIn(eventMessageID, boundGhostID, ingestedEvent, ingestedEvent.Outcome, "")
+	emitReport(reportMsgID, desired.Issue.Actor, report)
 	return report, true, false, nil
 }
 
-// dispatchCommandEnvelope round-trips command payload through protocol framing.
-func (o *Orchestrator) dispatchCommandEnvelope(command session.Command) (session.Command, error) {
-	payload, err := session.EncodeCommandFrame(o.seq.Add(1), command)
+// dispatchCommandEnvelope round-trips command payload through protocol framing and returns the
+// frame message_id used for custody logging.
+func (o *Orchestrator) dispatchCommandEnvelope(command session.Command) (session.Command, uint64, error) {
+	messageID := o.seq.Add(1)
+	payload, err := session.EncodeCommandFrame(messageID, command)
 	if err != nil {
-		return session.Command{}, err
+		return session.Command{}, 0, err
 	}
 	fr, err := frame.ReadFrame(bytes.NewReader(payload), frame.DefaultLimits())
 	if err != nil {
-		return session.Command{}, err
+		return session.Command{}, 0, err
 	}
-	return session.DecodeCommandFrame(fr)
+	cmd, err := session.DecodeCommandFrame(fr)
+	return cmd, messageID, err
 }
 
-// ingestEventEnvelopeAndBuildReport ingests a framed event and emits a framed report.
+// ingestEventEnvelopeAndBuildReport ingests a framed event and emits a framed report; returns the
+// event and report frame message_ids for custody logging.
 func (o *Orchestrator) ingestEventEnvelopeAndBuildReport(
 	desired DesiredIntent,
 	observed *ObservedIntent,
 	event session.Event,
-) (session.Report, session.Event, error) {
-	eventPayload, err := session.EncodeEventFrame(o.seq.Add(1), event)
+) (session.Report, session.Event, uint64, uint64, error) {
+	eventMsgID := o.seq.Add(1)
+	eventPayload, err := session.EncodeEventFrame(eventMsgID, event)
 	if err != nil {
-		return session.Report{}, session.Event{}, err
+		return session.Report{}, session.Event{}, 0, 0, err
 	}
 	eventFrame, err := frame.ReadFrame(bytes.NewReader(eventPayload), frame.DefaultLimits())
 	if err != nil {
-		return session.Report{}, session.Event{}, err
+		return session.Report{}, session.Event{}, 0, 0, err
 	}
 	ingestedEvent, err := session.DecodeEventFrame(eventFrame)
 	if err != nil {
-		return session.Report{}, session.Event{}, err
+		return session.Report{}, session.Event{}, 0, 0, err
 	}
 
 	report := buildReportFromObserved(desired, observed, ingestedEvent)
-	reportPayload, err := session.EncodeReportFrame(o.seq.Add(1), report)
+	reportMsgID := o.seq.Add(1)
+	reportPayload, err := session.EncodeReportFrame(reportMsgID, report)
 	if err != nil {
-		return session.Report{}, session.Event{}, err
+		return session.Report{}, session.Event{}, 0, 0, err
 	}
 	reportFrame, err := frame.ReadFrame(bytes.NewReader(reportPayload), frame.DefaultLimits())
 	if err != nil {
-		return session.Report{}, session.Event{}, err
+		return session.Report{}, session.Event{}, 0, 0, err
 	}
 	wireReport, err := session.DecodeReportFrame(reportFrame)
 	if err != nil {
-		return session.Report{}, session.Event{}, err
+		return session.Report{}, session.Event{}, 0, 0, err
 	}
-	return wireReport, ingestedEvent, nil
+	return wireReport, ingestedEvent, eventMsgID, reportMsgID, nil
 }
 
 // normalizeIssueToStages assigns default IDs to issue stages.

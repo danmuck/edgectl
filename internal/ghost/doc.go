@@ -34,6 +34,11 @@
 //
 // - Mirage reconnect uses contract backoff with required jitter
 //
+// Custody logging (observability.toml):
+// - command in (accepted|replayed|rejected), seed.execute, seed.result, event out, event.ack in
+//
+// - CommandEnv.Peer is boundary metadata for logging only; heartbeat probes skip custody lines
+//
 // Admin boundary errors (errors.toml):
 // - failed admin responses carry error_code; execute_envelope frames are version/flag gated (1100)
 //
@@ -60,6 +65,8 @@
 // - docs/architecture/definitions/reliability.toml
 //
 // - docs/architecture/definitions/observability.toml
+//
+// - docs/architecture/definitions/errors.toml
 //
 // - docs/glossary/ghost_dispatch.md
 //

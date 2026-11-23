@@ -94,10 +94,22 @@ Slice C implementation notes (2026-11-23):
 
 ### Slice D — Structured Observability Completion
 
-- [ ] Enforce required log fields: `component, peer, direction, trace_id, request_id, message_id, message_type, status, timestamp_ms`.
-- [ ] Propagate correlation IDs across full custody chain: `issue -> command -> seed.execute -> seed.result -> event -> event.ack -> report`.
-- [ ] Add deterministic structured event lines in Mirage and Ghost for timeout/retry/idempotency transitions.
-- [ ] Add verification tests/assertions for required fields and correlation continuity in success and failure flows.
+- [x] Enforce required log fields: `component, peer, direction, trace_id, request_id, message_id, message_type, status, timestamp_ms`.
+- [x] Propagate correlation IDs across full custody chain: `issue -> command -> seed.execute -> seed.result -> event -> event.ack -> report`.
+- [x] Add deterministic structured event lines in Mirage and Ghost for timeout/retry/idempotency transitions.
+- [x] Add verification tests/assertions for required fields and correlation continuity in success and failure flows.
+
+Slice D implementation notes (2026-11-23):
+
+- Decisions (user, 2026-11-23): `trace_id`/`request_id` are derived from existing wire correlation keys, no new TLV fields: `trace_id = "trace." + intent_id`; `request_id` = `intent_id` (issue, report), `command_id` (command, seed.execute, seed.result, event), `event_id` (event.ack), per `observability.toml [correlation_rules]`. The structured format applies to custody-chain lines and retry/timeout/idempotency/delivery transitions; debug and lifecycle logs stay free-form.
+- New package `internal/observability`: `LogEvent` (glossary shape plus `ack_status`), `Validate`/`MissingFields`, deterministic `Line()` (required fields first in contract order), pluggable `Logger`, and `Emit`, which derives trace/request IDs, stamps `timestamp_ms`, and writes incomplete events with an error naming the missing fields rather than dropping them. Lives outside `internal/logging` to avoid a test import cycle (`testlog` -> `logging`).
+- Mirage lines: issue in (accepted); command out (dispatched, retry, retry_stopped, timed_out, retry_exhausted); event in (outcome, duplicate, rejected, error); event.ack out; report out (status = completion_state). The previous free-form `ownership.transition`, `mirage.command.retry`, and `mirage.command.terminal` lines are replaced.
+- Ghost lines: command in (accepted, replayed, rejected); seed.execute out and seed.result in (peer = seed id, execution_id set); event out (outcome, replayed, delivery_failed); event.ack in. `CommandEnv.Peer` carries the admin client address (or `local`) for logging only; it is not a wire field.
+- `message_id` is the protocol frame id for that hop where one exists (Mirage orchestration frames, session event/ack frames) and the Ghost-assigned command message id for Ghost-internal seed steps.
+- Session heartbeat probes and unplanned events are not logged per delivery on either side; their `delivery_failed` is still recorded.
+- Ordering fix found by tests: on the session path the report was logged before the inbound event that produced it; the orchestrator now logs the matched event, then its report, using the session frame `message_id`.
+- Tests: `internal/observability/event_test.go`, `internal/mirage/custody_test.go` (success chain across both runtimes, retry-exhausted failure flow, session event/ack with duplicate), `internal/ghost/custody_test.go` (replay, rejection). Helper: `internal/testutil/custodytest`.
+- Needs approval to update (canonical/read-only): `observability.toml [implementation_status]` still says the phase8 target is pending; `docs/glossary/observability.md` is marked `stub` and its planned `LogEvent` lacks `ack_status`.
 
 ### Slice E — Proxmox Cluster Validation Pass
 

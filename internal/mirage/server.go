@@ -282,7 +282,12 @@ func (s *Server) ListIntentIDs() []string {
 // The command must be planned for boundGhostID (ErrCommandGhostMismatch otherwise, no mutation).
 // Duplicate observations return the latest report without appending to report history.
 func (s *Server) ObserveEvent(boundGhostID string, event session.Event) (session.Report, bool, bool, error) {
-	report, matched, duplicate, err := s.loop.IngestObservedEvent(boundGhostID, event)
+	return s.observeEvent(boundGhostID, event, 0)
+}
+
+// observeEvent is ObserveEvent with the inbound frame message_id for custody logging.
+func (s *Server) observeEvent(boundGhostID string, event session.Event, messageID uint64) (session.Report, bool, bool, error) {
+	report, matched, duplicate, err := s.loop.ingestObservedEvent(boundGhostID, event, messageID)
 	if err != nil || !matched || duplicate {
 		return report, matched, duplicate, err
 	}
@@ -312,6 +317,12 @@ type EventIngest struct {
 // accepted event_id short-circuits to its stored ack with no state mutation; stored acks only
 // exist for events that already passed binding for this same session ghost.
 func (s *Server) IngestEvent(ghostID string, event session.Event) EventIngest {
+	return s.ingestEvent(ghostID, event, 0)
+}
+
+// ingestEvent is IngestEvent with the session frame message_id; the orchestrator logs a matched
+// event (and its report) in causal order, the session loop logs rejected/duplicate/error cases.
+func (s *Server) ingestEvent(ghostID string, event session.Event, messageID uint64) EventIngest {
 	bound := strings.TrimSpace(ghostID)
 	if declared := strings.TrimSpace(event.GhostID); declared != bound {
 		return s.rejectedIngest(bound, event,
@@ -320,7 +331,7 @@ func (s *Server) IngestEvent(ghostID string, event session.Event) EventIngest {
 	if ack, ok := s.acceptedAck(bound, event.EventID); ok {
 		return EventIngest{Ack: ack, Duplicate: true}
 	}
-	report, matched, duplicate, err := s.ObserveEvent(bound, event)
+	report, matched, duplicate, err := s.observeEvent(bound, event, messageID)
 	if errors.Is(err, ErrCommandGhostMismatch) {
 		return s.rejectedIngest(bound, event, err.Error())
 	}

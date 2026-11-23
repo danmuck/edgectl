@@ -55,6 +55,8 @@ type AdminCommand struct {
 	SeedSelector string            `json:"seed_selector"`
 	Operation    string            `json:"operation"`
 	Args         map[string]string `json:"args"`
+	// Admin client address for custody logging; never read from JSON.
+	Peer string `json:"-"`
 }
 
 // VerificationRecord captures command->event custody fields for client verification views.
@@ -121,6 +123,7 @@ func (s *Service) ExecuteAdminCommand(cmd AdminCommand) (ExecutionState, EventEn
 		SeedSelector: strings.TrimSpace(cmd.SeedSelector),
 		Operation:    strings.TrimSpace(cmd.Operation),
 		Args:         cloneArgs(cmd.Args),
+		Peer:         strings.TrimSpace(cmd.Peer),
 	}
 
 	event, err := s.server.HandleCommandAndExecute(env)
@@ -267,7 +270,7 @@ func (s *Service) handleControlRequest(req controlRequest, remoteAddr string) co
 	case "list_seed_catalog":
 		return controlResponse{OK: true, Data: s.SeedCatalog()}
 	case "execute_envelope":
-		out, err := s.executeAdminCommandEnvelope(req.CommandFrame)
+		out, err := s.executeAdminCommandEnvelope(req.CommandFrame, remoteAddr)
 		if err != nil {
 			resp := failControl(err)
 			logs.Warnf(
@@ -309,7 +312,7 @@ type executeEnvelopeResponse struct {
 }
 
 // executeAdminCommandEnvelope decodes one command frame and returns one terminal event frame.
-func (s *Service) executeAdminCommandEnvelope(commandFrame []byte) (executeEnvelopeResponse, error) {
+func (s *Service) executeAdminCommandEnvelope(commandFrame []byte, peer string) (executeEnvelopeResponse, error) {
 	if len(commandFrame) == 0 {
 		return executeEnvelopeResponse{}, fmt.Errorf("%w: missing command_frame", errAdminInvalidRequest)
 	}
@@ -334,6 +337,7 @@ func (s *Service) executeAdminCommandEnvelope(commandFrame []byte) (executeEnvel
 		SeedSelector: strings.TrimSpace(cmd.SeedSelector),
 		Operation:    strings.TrimSpace(cmd.Operation),
 		Args:         cloneArgs(cmd.Args),
+		Peer:         peer,
 	})
 	if err != nil {
 		return executeEnvelopeResponse{}, err

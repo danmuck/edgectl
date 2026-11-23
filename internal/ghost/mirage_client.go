@@ -279,8 +279,15 @@ func (s *MirageSession) OutboxSnapshot() []session.PendingEvent {
 	return s.outbox.List()
 }
 
-// Ghost event delivery with retry-until-accepted-ack or timeout.
+// Ghost event delivery with retry-until-accepted-ack or timeout; emits custody lines for the
+// event and its event.ack (observability.toml).
 func (s *MirageSession) SendEventWithAck(ctx context.Context, event EventEnv) (session.EventAck, error) {
+	return s.sendEventWithAck(ctx, event, true)
+}
+
+// Delivery loop shared by custody events and session heartbeat probes; probes (custody=false)
+// skip per-delivery custody lines but still record delivery_failed.
+func (s *MirageSession) sendEventWithAck(ctx context.Context, event EventEnv, custody bool) (session.EventAck, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.conn == nil {
@@ -313,12 +320,17 @@ func (s *MirageSession) SendEventWithAck(ctx context.Context, event EventEnv) (s
 		AckDeadlineAt: deadline,
 	})
 
+	peer := s.conn.RemoteAddr().String()
 	attempt := 0
 	for {
 		attempt++
 		_, _ = s.outbox.MarkAttempt(wireEvent.EventID, time.Now(), "")
-		ack, err := s.sendEventOnce(ctx, wireEvent)
+		ack, messageID, err := s.sendEventOnce(ctx, wireEvent)
 		if err == nil {
+			if custody {
+				emitEventOut(messageID, peer, event, "", wireEvent.Outcome, "")
+				emitEventAckIn(messageID, peer, ack, wireEvent.IntentID)
+			}
 			if ack.AckStatus == session.AckStatusAccepted {
 				s.outbox.Remove(wireEvent.EventID)
 				return ack, nil
@@ -332,7 +344,12 @@ func (s *MirageSession) SendEventWithAck(ctx context.Context, event EventEnv) (s
 		_, _ = s.outbox.MarkAttempt(wireEvent.EventID, time.Now(), err.Error())
 		if time.Now().After(deadline) {
 			// ack_timeout_ms exceeded without an accepted ack: terminal delivery failure.
-			s.markDeliveryFailed(wireEvent, attempt, fmt.Errorf("%w: last_err=%v", ErrAckTimeout, err))
+			timeoutErr := fmt.Errorf("%w: last_err=%v", ErrAckTimeout, err)
+			s.markDeliveryFailed(wireEvent, attempt, timeoutErr)
+			if custody {
+				emitEventOut(messageID, peer, event, "", string(session.DeliveryFailed),
+					fmt.Sprintf("attempts=%d: %v", attempt, timeoutErr))
+			}
 			return session.EventAck{}, ErrAckTimeout
 		}
 		delay := session.NextBackoffDelay(s.cfg.Backoff, attempt, s.rng)
@@ -347,34 +364,36 @@ func (s *MirageSession) SendEventWithAck(ctx context.Context, event EventEnv) (s
 }
 
 // Ghost one-shot event send/read for a matching event.ack.
-func (s *MirageSession) sendEventOnce(ctx context.Context, event session.Event) (session.EventAck, error) {
-	payload, err := session.EncodeEventFrame(s.nextMessageID.Add(1), event)
+// One send/ack round trip; returns the event frame message_id used for this attempt.
+func (s *MirageSession) sendEventOnce(ctx context.Context, event session.Event) (session.EventAck, uint64, error) {
+	messageID := s.nextMessageID.Add(1)
+	payload, err := session.EncodeEventFrame(messageID, event)
 	if err != nil {
-		return session.EventAck{}, err
+		return session.EventAck{}, messageID, err
 	}
 
 	if err := s.setWriteDeadline(ctx); err != nil {
-		return session.EventAck{}, err
+		return session.EventAck{}, messageID, err
 	}
 	if _, err := s.conn.Write(payload); err != nil {
-		return session.EventAck{}, err
+		return session.EventAck{}, messageID, err
 	}
 
 	if err := s.setReadDeadline(ctx); err != nil {
-		return session.EventAck{}, err
+		return session.EventAck{}, messageID, err
 	}
 	fr, err := session.ReadFrame(s.reader, frame.DefaultLimits())
 	if err != nil {
-		return session.EventAck{}, err
+		return session.EventAck{}, messageID, err
 	}
 	ack, err := session.DecodeEventAckFrame(fr)
 	if err != nil {
-		return session.EventAck{}, err
+		return session.EventAck{}, messageID, err
 	}
 	if ack.EventID != event.EventID {
-		return session.EventAck{}, fmt.Errorf("ghost: ack/event mismatch event_id=%q ack_event_id=%q", event.EventID, ack.EventID)
+		return session.EventAck{}, messageID, fmt.Errorf("ghost: ack/event mismatch event_id=%q ack_event_id=%q", event.EventID, ack.EventID)
 	}
-	return ack, nil
+	return ack, messageID, nil
 }
 
 // Ghost write-deadline helper using stricter timeout vs context deadline.

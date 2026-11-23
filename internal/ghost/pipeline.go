@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/observability"
 	"github.com/danmuck/edgectl/internal/seeds"
 	logs "github.com/danmuck/smplog"
 )
@@ -19,35 +20,35 @@ func (s *Server) HandleCommandAndExecute(cmd CommandEnv) (EventEnv, error) {
 		cmd.CommandID,
 	)
 	if err := cmd.Validate(); err != nil {
+		emitCommandIn(cmd, observability.StatusRejected, err.Error())
 		return EventEnv{}, err
 	}
 	// Replay boundary: a completed command_id (and its derived execution_id) returns the prior
 	// terminal event; the seed is not re-executed and the stored seed.result is unchanged.
 	if prior, ok := s.completedByCommandID(cmd.CommandID); ok {
-		logs.Infof(
-			"ghost.Server.HandleCommandAndExecute replay command_id=%q execution_id=%q event_id=%q message_id=%d",
-			prior.CommandID,
-			prior.ExecutionID,
-			prior.Event.EventID,
-			cmd.MessageID,
-		)
+		emitCommandIn(cmd, observability.StatusReplayed, "")
+		emitEventOut(cmd.MessageID, cmd.Peer, prior.Event, prior.ExecutionID, observability.StatusReplayed, "")
 		return prior.Event, nil
 	}
 
 	state, err := s.HandleCommand(cmd)
 	if err != nil {
+		emitCommandIn(cmd, observability.StatusRejected, err.Error())
 		return EventEnv{}, err
 	}
+	emitCommandIn(cmd, observability.StatusAccepted, "")
 
 	seedExec := buildSeedExecute(state)
 	if err := seedExec.Validate(); err != nil {
 		return EventEnv{}, err
 	}
+	emitSeedExecute(state, seedExec)
 
 	seedResult := s.executeSeed(seedExec)
 	if err := seedResult.Validate(); err != nil {
 		return EventEnv{}, err
 	}
+	emitSeedResult(state, seedResult)
 
 	event := buildEvent(state, seedResult)
 	if err := event.Validate(); err != nil {
@@ -55,12 +56,7 @@ func (s *Server) HandleCommandAndExecute(cmd CommandEnv) (EventEnv, error) {
 	}
 
 	s.completeExecution(state.ExecutionID, seedExec, seedResult, event)
-	logs.Infof(
-		"ghost.Server.HandleCommandAndExecute complete command_id=%q execution_id=%q outcome=%q",
-		state.CommandID,
-		state.ExecutionID,
-		event.Outcome,
-	)
+	emitEventOut(state.MessageID, cmd.Peer, event, state.ExecutionID, event.Outcome, "")
 	return event, nil
 }
 

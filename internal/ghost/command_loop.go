@@ -157,6 +157,9 @@ func normalizeSubmittedCommand(cmd CommandEnv, requestID string, msgSeq uint64) 
 	if strings.TrimSpace(out.CommandID) == "" {
 		out.CommandID = fmt.Sprintf("cmd.%s.%d", requestID, msgSeq)
 	}
+	if strings.TrimSpace(out.Peer) == "" {
+		out.Peer = "local"
+	}
 	if err := out.Validate(); err != nil {
 		return CommandEnv{}, fmt.Errorf("%w: %s", ErrInvalidCommandRequest, err)
 	}

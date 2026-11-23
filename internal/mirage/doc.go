@@ -14,6 +14,12 @@
 //
 // - mismatches get a rejected event.ack (code 1000), are not observed, and close the session
 //
+// Custody logging (observability.toml):
+// - issue in, command out (dispatched|retry|retry_stopped|timed_out|retry_exhausted), event in
+// (outcome|duplicate|rejected), event.ack out, report out; all on trace "trace."+intent_id
+//
+// - matched session events are logged by the orchestrator before their report (causal order)
+//
 // Protocol compatibility and errors (framing.md, errors.toml):
 // - session frames failing version/magic/flag/TLV/schema checks are logged with error_code and close the session
 //

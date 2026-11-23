@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/observability"
 	"github.com/danmuck/edgectl/internal/protocol/frame"
 	"github.com/danmuck/edgectl/internal/protocol/schema"
 	"github.com/danmuck/edgectl/internal/protocol/session"
@@ -681,37 +682,21 @@ func (s *Service) handleConn(conn net.Conn) {
 			s.logSessionFrameError(conn, reg.GhostID, fr.Header.MessageID, fr.Header.MessageType, session.ErrorCode(err), err)
 			return
 		}
-		ingest := s.server.IngestEvent(reg.GhostID, event)
+		ingest := s.server.ingestEvent(reg.GhostID, event, fr.Header.MessageID)
 		report := ingest.Report
-		if ingest.Rejected {
-			logs.Warnf(
-				"mirage.handleConn identity binding mismatch component=mirage peer=%q message_id=%d message_type=%d error_code=%d ghost_id=%q event_id=%q reason=%q",
-				conn.RemoteAddr().String(),
-				fr.Header.MessageID,
-				fr.Header.MessageType,
-				ingest.Ack.AckCode,
-				reg.GhostID,
-				event.EventID,
-				ingest.RejectReason,
-			)
-		} else if ingest.ObserveErr != nil {
-			logs.Warnf("mirage.handleConn observe event err=%v", ingest.ObserveErr)
-		} else if ingest.Duplicate {
-			logs.Infof(
-				"mirage.handleConn duplicate event dedupe event_id=%q command_id=%q ghost_id=%q",
-				event.EventID,
-				event.CommandID,
-				reg.GhostID,
-			)
-		} else if ingest.Matched {
-			logs.Warnf(
-				"mirage.handleConn report intent_id=%q phase=%q completion_state=%q command_id=%q event_id=%q",
-				report.IntentID,
-				report.Phase,
-				report.CompletionState,
-				report.CommandID,
-				report.EventID,
-			)
+		// Custody lines cover events in an intent's chain (matched, duplicate, rejected);
+		// unplanned session events such as heartbeat probes are not logged per delivery.
+		custody := ingest.Matched || ingest.Duplicate || ingest.Rejected
+		switch {
+		case ingest.Rejected:
+			emitEventIn(fr.Header.MessageID, reg.GhostID, event, observability.StatusRejected,
+				fmt.Sprintf("error_code=%d %s", ingest.Ack.AckCode, ingest.RejectReason))
+		case ingest.ObserveErr != nil:
+			emitEventIn(fr.Header.MessageID, reg.GhostID, event, "error", ingest.ObserveErr.Error())
+		case ingest.Duplicate:
+			emitEventIn(fr.Header.MessageID, reg.GhostID, event, observability.StatusDuplicate, "")
+		case ingest.Matched:
+			// Matched event and report lines were emitted by the orchestrator in causal order.
 			s.persistBuildlog("event_report", map[string]any{
 				"intent_id":        report.IntentID,
 				"phase":            report.Phase,
@@ -729,6 +714,9 @@ func (s *Service) handleConn(conn net.Conn) {
 		if _, err := conn.Write(ackPayload); err != nil {
 			logs.Warnf("mirage.handleConn write event.ack err=%v", err)
 			return
+		}
+		if custody {
+			emitEventAckOut(fr.Header.MessageID, ingest.Ack, event.IntentID)
 		}
 		// transport_security.toml binding_mismatch: reject the session after the rejected ack.
 		if ingest.Rejected {
