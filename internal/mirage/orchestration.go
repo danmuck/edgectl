@@ -708,6 +708,17 @@ func (o *Orchestrator) findPlannedCommandByCommandID(commandID string) (string, 
 	return "", PlannedCommand{}, false
 }
 
+// PlannedGhostID returns the ghost a planned command_id targets; false when desired state does not know it.
+func (o *Orchestrator) PlannedGhostID(commandID string) (string, bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	_, planned, ok := o.findPlannedCommandByCommandID(commandID)
+	if !ok {
+		return "", false
+	}
+	return strings.TrimSpace(planned.Command.GhostID), true
+}
+
 // releaseSeedLock clears a held lock only when owner matches to avoid stomping newer owners.
 func (o *Orchestrator) releaseSeedLock(seedKey, intentID, commandID string) {
 	o.mu.Lock()

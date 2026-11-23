@@ -47,6 +47,14 @@ Slice A implementation notes (2026-11-22):
 - Tests: `internal/ghost/idempotency_test.go`, `internal/mirage/idempotency_test.go`.
 - Open question: replay does not compare payloads; a reused `command_id` with different seed/operation/args returns the original event. Contract is silent on conflict handling.
 
+Slice A security follow-up — event identity binding (2026-11-22):
+
+- Finding: Mirage observed session events without checking them against the session's bound `ghost_id`. Any authenticated ghost could report a result for another ghost's `command_id`; Slice A dedupe then discarded the real result as a duplicate. Gap pre-dated Slice A.
+- Contract: `transport_security.toml` `ghost_id_binding = "required before command/event flow"`, `binding_mismatch = "reject session"`; `errors.toml` `declared_peer_mismatch = "1000"`.
+- Fix: `Server.IngestEvent` rejects, before dedupe or observation, any event whose declared `ghost_id` differs from the session, or whose `command_id` is planned for a different ghost. Rejected `event.ack` carries `ack_code=1000`; nothing is observed or stored; `handleConn` closes the session after writing the ack.
+- Tests: `internal/mirage/binding_test.go` (declared mismatch, planned-ghost mismatch with real result still accepted afterwards, unplanned command from bound ghost accepted, session closed end to end).
+- Not covered: the direct reconcile path (`ReconcileOnce` -> executor) trusts the event returned by the executor registered for that `ghost_id`; it is not a session boundary.
+
 ### Slice B — Timeout, Retry, Backoff, Terminal States
 
 - [ ] Normalize runtime defaults to reliability contract values (`connect`, `handshake`, `read`, `write`, `ack_timeout`).

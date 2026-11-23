@@ -670,7 +670,18 @@ func (s *Service) handleConn(conn net.Conn) {
 		}
 		ingest := s.server.IngestEvent(reg.GhostID, event)
 		report := ingest.Report
-		if ingest.ObserveErr != nil {
+		if ingest.Rejected {
+			logs.Warnf(
+				"mirage.handleConn identity binding mismatch component=mirage peer=%q message_id=%d message_type=%d error_code=%d ghost_id=%q event_id=%q reason=%q",
+				conn.RemoteAddr().String(),
+				fr.Header.MessageID,
+				fr.Header.MessageType,
+				ingest.Ack.AckCode,
+				reg.GhostID,
+				event.EventID,
+				ingest.RejectReason,
+			)
+		} else if ingest.ObserveErr != nil {
 			logs.Warnf("mirage.handleConn observe event err=%v", ingest.ObserveErr)
 		} else if ingest.Duplicate {
 			logs.Infof(
@@ -704,6 +715,10 @@ func (s *Service) handleConn(conn net.Conn) {
 		_ = conn.SetWriteDeadline(time.Now().Add(s.cfg.Session.WriteTimeout))
 		if _, err := conn.Write(ackPayload); err != nil {
 			logs.Warnf("mirage.handleConn write event.ack err=%v", err)
+			return
+		}
+		// transport_security.toml binding_mismatch: reject the session after the rejected ack.
+		if ingest.Rejected {
 			return
 		}
 	}

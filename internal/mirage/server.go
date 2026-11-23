@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/protocol/schema"
 	"github.com/danmuck/edgectl/internal/protocol/session"
 )
 
@@ -286,6 +287,10 @@ func (s *Server) ObserveEvent(event session.Event) (session.Report, bool, bool, 
 // EventIngest is the outcome of one session event delivery at the Mirage boundary.
 type EventIngest struct {
 	Ack session.EventAck
+	// Rejected is true when the event does not match the session's bound ghost_id;
+	// nothing was observed or recorded and the session must be closed.
+	Rejected     bool
+	RejectReason string
 	// Duplicate is true when event_id was already accepted; nothing was re-observed.
 	Duplicate bool
 	Report    session.Report
@@ -294,9 +299,25 @@ type EventIngest struct {
 	ObserveErr error
 }
 
-// IngestEvent applies event_id dedupe before observation, then returns the idempotent ack.
-// A previously accepted event_id short-circuits to its stored ack with no state mutation.
+// IngestEvent applies identity binding, then event_id dedupe, then observation, and returns the ack.
+// A binding mismatch is rejected before any dedupe or state mutation (transport_security.toml
+// identity_binding; errors.toml declared_peer_mismatch=1000). A previously accepted event_id
+// short-circuits to its stored ack with no state mutation.
 func (s *Server) IngestEvent(ghostID string, event session.Event) EventIngest {
+	if reason := s.bindingMismatch(ghostID, event); reason != "" {
+		return EventIngest{
+			Ack: session.EventAck{
+				EventID:     event.EventID,
+				CommandID:   event.CommandID,
+				GhostID:     ghostID,
+				AckStatus:   session.AckStatusRejected,
+				AckCode:     schema.ErrCodeTransportFailure,
+				TimestampMS: uint64(s.now().UnixMilli()),
+			},
+			Rejected:     true,
+			RejectReason: reason,
+		}
+	}
 	if ack, ok := s.acceptedAck(ghostID, event.EventID); ok {
 		return EventIngest{Ack: ack, Duplicate: true}
 	}
@@ -308,6 +329,19 @@ func (s *Server) IngestEvent(ghostID string, event session.Event) EventIngest {
 		Matched:    matched,
 		ObserveErr: err,
 	}
+}
+
+// Non-empty reason when an event's declared ghost_id, or the ghost its command_id was planned for,
+// differs from the session's bound ghost_id. Events for unknown command_ids are checked on ghost_id only.
+func (s *Server) bindingMismatch(sessionGhostID string, event session.Event) string {
+	bound := strings.TrimSpace(sessionGhostID)
+	if declared := strings.TrimSpace(event.GhostID); declared != bound {
+		return fmt.Sprintf("event ghost_id=%q does not match session ghost_id=%q", declared, bound)
+	}
+	if planned, ok := s.loop.PlannedGhostID(event.CommandID); ok && planned != bound {
+		return fmt.Sprintf("command_id=%q is planned for ghost_id=%q, not session ghost_id=%q", event.CommandID, planned, bound)
+	}
+	return ""
 }
 
 // Stored ack for an event_id accepted inside the duplicate window.
