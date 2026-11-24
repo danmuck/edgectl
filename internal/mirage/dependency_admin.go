@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/danmuck/edgectl/internal/approval"
+	"github.com/danmuck/edgectl/internal/identity"
 )
 
 // AdminDependencyRequest carries dependency proposal admin parameters.
@@ -17,6 +18,8 @@ type AdminDependencyRequest struct {
 	GhostID    string   `json:"ghost_id,omitempty"`
 	SeedIDs    []string `json:"seed_ids,omitempty"`
 	Actor      string   `json:"actor,omitempty"`
+	// Proposer-signed intent (propose_dependencies); its ghost_id and seed_ids define the proposal.
+	Intent *approval.SignedIntent `json:"intent,omitempty"`
 	// Operator-signed approval (approve_dependencies).
 	Approval *approval.Signed `json:"approval,omitempty"`
 }
@@ -58,42 +61,68 @@ func (s *Service) ExecuteDependencyProposal(ctx context.Context, id string, acto
 	return ledger.CompleteExecution(p.ID, exec)
 }
 
-// ApproveDependencyProposal verifies an operator-signed approval against the admin root and records
-// it (admin_security.toml [install_approval] mirage_verification). The signer must be the calling
-// operator (actor is already bound to the caller principal) and must differ from the proposer.
+// ProposeDependencyProposal verifies a proposer-signed intent and records a pending proposal whose
+// steps come only from the catalog (admin_security.toml [install_approval] mirage_verification). The
+// intent signer must be the calling operator; actor is already bound to the caller principal.
+func (s *Service) ProposeDependencyProposal(actor string, intent *approval.SignedIntent) (DependencyProposal, error) {
+	if intent == nil {
+		return DependencyProposal{}, fmt.Errorf("%w: signed proposer intent required", approval.ErrInvalidApproval)
+	}
+	tr, err := s.approvalTrust()
+	if err != nil {
+		return DependencyProposal{}, err
+	}
+	proposer, err := approval.VerifyIntent(*intent, tr)
+	if err != nil {
+		return DependencyProposal{}, err
+	}
+	if a := strings.TrimSpace(actor); a != "" && a != proposer.String() {
+		return DependencyProposal{}, fmt.Errorf("%w: intent signed by %s but submitted by %s", approval.ErrInvalidApproval, proposer, a)
+	}
+	return s.server.Dependencies().Propose(*intent, proposer.String())
+}
+
+// ApproveDependencyProposal verifies an operator-signed approval (both signatures, separation,
+// expiry, catalog steps) and records it. The approver must be the calling operator; the ledger then
+// requires the payload to match the stored proposal and intent exactly.
 func (s *Service) ApproveDependencyProposal(id string, actor string, signed *approval.Signed) (DependencyProposal, error) {
 	if signed == nil {
 		return DependencyProposal{}, fmt.Errorf("%w: signed approval required", approval.ErrInvalidApproval)
 	}
-	roots, err := s.approvalRoots()
+	tr, err := s.approvalTrust()
 	if err != nil {
 		return DependencyProposal{}, err
 	}
-	approver, err := approval.Verify(*signed, roots, time.Now())
+	res, err := approval.Verify(*signed, tr)
 	if err != nil {
 		return DependencyProposal{}, err
 	}
-	if a := strings.TrimSpace(actor); a != "" && a != approver.String() {
-		return DependencyProposal{}, fmt.Errorf("%w: approval signed by %s but submitted by %s", approval.ErrInvalidApproval, approver, a)
+	if a := strings.TrimSpace(actor); a != "" && a != res.Approver.String() {
+		return DependencyProposal{}, fmt.Errorf("%w: approval signed by %s but submitted by %s", approval.ErrInvalidApproval, res.Approver, a)
 	}
-	return s.server.Dependencies().Approve(id, approver.String(), *signed)
+	return s.server.Dependencies().Approve(id, res.Approver.String(), *signed)
 }
 
-// Root pool for approval verification: the admin CA. Approvals require admin TLS to be configured.
-func (s *Service) approvalRoots() (*x509.CertPool, error) {
+// Trust for signature verification: the admin CA plus admin denied serials. Fails closed when admin
+// TLS is not configured or the denied list does not parse.
+func (s *Service) approvalTrust() (approval.Trust, error) {
 	caFile := strings.TrimSpace(s.cfg.AdminTLS.CAFile)
 	if caFile == "" {
-		return nil, fmt.Errorf("%w: admin_tls_ca_file required to verify approvals", approval.ErrInvalidApproval)
+		return approval.Trust{}, fmt.Errorf("%w: admin_tls_ca_file required to verify approvals", approval.ErrInvalidApproval)
 	}
 	pemBytes, err := os.ReadFile(caFile)
 	if err != nil {
-		return nil, err
+		return approval.Trust{}, err
 	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(pemBytes) {
-		return nil, fmt.Errorf("%w: no certificates in %s", approval.ErrInvalidApproval, caFile)
+		return approval.Trust{}, fmt.Errorf("%w: no certificates in %s", approval.ErrInvalidApproval, caFile)
 	}
-	return pool, nil
+	denied, err := identity.ParseDeniedSerials(s.cfg.AdminTLS.DeniedSerials)
+	if err != nil {
+		return approval.Trust{}, err
+	}
+	return approval.Trust{Roots: pool, Denied: denied, Now: time.Now()}, nil
 }
 
 // Routes dependency admin actions; ok=false when action is not a dependency action.
@@ -101,7 +130,7 @@ func (s *Service) handleDependencyAdminAction(action string, req AdminDependency
 	ledger := s.server.Dependencies()
 	switch action {
 	case "propose_dependencies":
-		p, err := ledger.Propose(req.GhostID, req.SeedIDs, req.Actor)
+		p, err := s.ProposeDependencyProposal(req.Actor, req.Intent)
 		if err != nil {
 			return failAdmin(err), true
 		}

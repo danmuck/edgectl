@@ -32,7 +32,7 @@ type MirageAdmin interface {
 	RegisteredGhosts() ([]mirage.RegisteredGhost, error)
 	RoutingTable() ([]MirageRoute, error)
 	AvailableServices() ([]MirageAvailableService, error)
-	ProposeDependencies(ghostID string, seedIDs []string) (mirage.DependencyProposal, error)
+	ProposeDependencies(intent approval.SignedIntent) (mirage.DependencyProposal, error)
 	ListDependencyProposals(proposalID string) ([]mirage.DependencyProposal, error)
 	ApproveDependencies(proposalID string, signed approval.Signed) (mirage.DependencyProposal, error)
 	ExecuteDependencies(proposalID string) (mirage.DependencyProposal, error)
@@ -131,11 +131,11 @@ func (c *RemoteMirageAdmin) AttachGhostAdmin(addr string) (MirageAttachGhostResp
 	return out, nil
 }
 
-// ProposeDependencies asks Mirage to build a catalog install proposal for ghostID.
-func (c *RemoteMirageAdmin) ProposeDependencies(ghostID string, seedIDs []string) (mirage.DependencyProposal, error) {
+// ProposeDependencies submits a proposer-signed intent; Mirage builds the catalog install proposal.
+func (c *RemoteMirageAdmin) ProposeDependencies(intent approval.SignedIntent) (mirage.DependencyProposal, error) {
 	var out mirage.DependencyProposal
 	err := c.call(mirageControlRequest{Action: "propose_dependencies", Dependency: mirage.AdminDependencyRequest{
-		GhostID: strings.TrimSpace(ghostID), SeedIDs: seedIDs,
+		Intent: &intent,
 	}}, &out)
 	return out, err
 }

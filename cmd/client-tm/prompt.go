@@ -21,6 +21,20 @@ func (a *App) promptLine(label string) (string, error) {
 	return strings.TrimRight(line, "\r\n"), nil
 }
 
+// promptConfirm asks a y/N question; only "y" or "yes" confirms, anything else (including empty) declines.
+func (a *App) promptConfirm(label string) (bool, error) {
+	line, err := a.promptLine(label + " [y/N]")
+	if err != nil {
+		return false, err
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		return true, nil
+	}
+	fmt.Println("Not signed.")
+	return false, nil
+}
+
 // promptMultiline captures multi-line text until a sentinel line is entered.
 func (a *App) promptMultiline(header string, terminator string) (string, error) {
 	term := strings.TrimSpace(terminator)

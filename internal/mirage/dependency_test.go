@@ -5,13 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/danmuck/edgectl/internal/approval"
-	"github.com/danmuck/edgectl/internal/depcatalog"
-	"github.com/danmuck/edgectl/internal/identity"
 	"net"
 	"testing"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/approval"
+	"github.com/danmuck/edgectl/internal/depcatalog"
+	"github.com/danmuck/edgectl/internal/identity"
 	"github.com/danmuck/edgectl/internal/protocol/schema"
 	"github.com/danmuck/edgectl/internal/seeds"
 	"github.com/danmuck/edgectl/internal/testutil/testlog"
@@ -46,14 +46,66 @@ func auditKinds(p DependencyProposal) []DependencyAuditKind {
 	return out
 }
 
+// Proposing (ops) and approving (lead) operators under one test root.
+type operators struct {
+	pki       *tlstest.PKI
+	ops, lead *approval.Signer
+	opsSerial string
+}
+
+func newOperators(t *testing.T) operators {
+	t.Helper()
+	p := tlstest.NewPKI(t)
+	ops, opsSerial := operatorSigner(t, p, "ops")
+	lead, _ := operatorSigner(t, p, "lead")
+	return operators{pki: p, ops: ops, lead: lead, opsSerial: opsSerial}
+}
+
+func operatorSigner(t *testing.T, p *tlstest.PKI, id string) (*approval.Signer, string) {
+	t.Helper()
+	cert, key, serial := p.Issue(t, identity.RoleOperator, id)
+	s, err := approval.LoadSigner(cert, key)
+	if err != nil {
+		t.Fatalf("load signer: %v", err)
+	}
+	return s, serial
+}
+
+// Proposer-signed intent for ghostID and seedIDs, proposed now.
+func intentFor(t *testing.T, s *approval.Signer, ghostID string, seedIDs ...string) approval.SignedIntent {
+	t.Helper()
+	nonce, _ := approval.NewNonce()
+	si, err := s.SignIntent(approval.Intent{GhostID: ghostID, SeedIDs: seedIDs, ProposedAtMS: uint64(time.Now().UnixMilli()), Nonce: nonce})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return si
+}
+
+// Operator approval over exactly the proposal content and its intent, valid for ten minutes.
+func signedFor(t *testing.T, s *approval.Signer, p DependencyProposal) approval.Signed {
+	t.Helper()
+	nonce, _ := approval.NewNonce()
+	signed, err := s.Sign(approval.Payload{
+		ProposalID: p.ID, GhostID: p.GhostID, ProposerIntent: p.Intent, Steps: p.Steps,
+		ExpiresAtMS: uint64(time.Now().Add(10 * time.Minute).UnixMilli()), Nonce: nonce,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return signed
+}
+
 func TestDependencyProposalBuiltFromCatalogWithUnresolved(t *testing.T) {
 	testlog.Start(t)
+	op := newOperators(t)
 	l := NewDependencyLedger()
-	p, err := l.Propose("ghost.alpha", []string{"seed.docker", "seed.mongod"}, "user:ops")
+	intent := intentFor(t, op.ops, "ghost.alpha", "seed.docker", "seed.mongod")
+	p, err := l.Propose(intent, "edgectl://operator/ops")
 	if err != nil {
 		t.Fatalf("propose: %v", err)
 	}
-	if p.State != ProposalPending || len(p.Steps) != 2 {
+	if p.State != ProposalPending || len(p.Steps) != 2 || p.GhostID != "ghost.alpha" || p.ProposedBy != "edgectl://operator/ops" {
 		t.Fatalf("unexpected proposal: %+v", p)
 	}
 	if len(p.Unresolved) != 1 || p.Unresolved[0] != "seed.mongod:mongod" {
@@ -62,8 +114,10 @@ func TestDependencyProposalBuiltFromCatalogWithUnresolved(t *testing.T) {
 	if k := auditKinds(p); len(k) != 1 || k[0] != AuditProposal {
 		t.Fatalf("audit = %v", k)
 	}
-
-	if _, err := l.Propose("ghost.alpha", []string{"seed.flow"}, "user:ops"); !errors.Is(err, ErrInvalidDependencyProposal) {
+	if _, err := l.Propose(intent, "edgectl://operator/ops"); !errors.Is(err, ErrInvalidDependencyProposal) {
+		t.Fatalf("reused intent: expected ErrInvalidDependencyProposal, got %v", err)
+	}
+	if _, err := l.Propose(intentFor(t, op.ops, "ghost.alpha", "seed.flow"), "edgectl://operator/ops"); !errors.Is(err, ErrInvalidDependencyProposal) {
 		t.Fatalf("seed without catalog sources: expected ErrInvalidDependencyProposal, got %v", err)
 	}
 }
@@ -71,23 +125,25 @@ func TestDependencyProposalBuiltFromCatalogWithUnresolved(t *testing.T) {
 // Execution requires approval first; states cannot be skipped or replayed.
 func TestDependencyProposalStateMachine(t *testing.T) {
 	testlog.Start(t)
+	op := newOperators(t)
 	l := NewDependencyLedger()
-	p, _ := l.Propose("ghost.alpha", []string{"seed.docker"}, "user:ops")
+	p, _ := l.Propose(intentFor(t, op.ops, "ghost.alpha", "seed.docker"), "edgectl://operator/ops")
 
-	if _, err := l.BeginExecution(p.ID, "user:ops"); !errors.Is(err, ErrDependencyProposalState) {
+	if _, err := l.BeginExecution(p.ID, "edgectl://operator/ops"); !errors.Is(err, ErrDependencyProposalState) {
 		t.Fatalf("execute before approval: expected ErrDependencyProposalState, got %v", err)
 	}
-	signed := signedFor(t, operatorSigner(t, tlstest.NewPKI(t), "lead"), p)
+	signed := signedFor(t, op.lead, p)
 	if _, err := l.Approve(p.ID, "", signed); !errors.Is(err, ErrInvalidDependencyProposal) {
 		t.Fatalf("approval without approver: expected ErrInvalidDependencyProposal, got %v", err)
 	}
-	if _, err := l.Approve(p.ID, "user:ops", signed); !errors.Is(err, ErrInvalidDependencyProposal) {
+	if _, err := l.Approve(p.ID, "edgectl://operator/ops", signed); !errors.Is(err, ErrInvalidDependencyProposal) {
 		t.Fatalf("proposer approving own proposal: expected ErrInvalidDependencyProposal, got %v", err)
 	}
+	// Approval embedding a different (validly signed) intent than the stored proposal.
 	mismatch := signed
-	mismatch.Payload.ProposedBy = "user:someone"
+	mismatch.Payload.ProposerIntent = intentFor(t, op.ops, "ghost.alpha", "seed.docker")
 	if _, err := l.Approve(p.ID, "edgectl://operator/lead", mismatch); !errors.Is(err, ErrInvalidDependencyProposal) {
-		t.Fatalf("payload not matching proposal: expected ErrInvalidDependencyProposal, got %v", err)
+		t.Fatalf("payload intent not matching proposal: expected ErrInvalidDependencyProposal, got %v", err)
 	}
 	approved, err := l.Approve(p.ID, "edgectl://operator/lead", signed)
 	if err != nil {
@@ -104,30 +160,6 @@ func TestDependencyProposalStateMachine(t *testing.T) {
 	}
 }
 
-func operatorSigner(t *testing.T, p *tlstest.PKI, id string) *approval.Signer {
-	t.Helper()
-	cert, key, _ := p.Issue(t, identity.RoleOperator, id)
-	s, err := approval.LoadSigner(cert, key)
-	if err != nil {
-		t.Fatalf("load signer: %v", err)
-	}
-	return s
-}
-
-// Operator approval over exactly the proposal content, valid for ten minutes.
-func signedFor(t *testing.T, s *approval.Signer, p DependencyProposal) approval.Signed {
-	t.Helper()
-	nonce, _ := approval.NewNonce()
-	signed, err := s.Sign(approval.Payload{
-		ProposalID: p.ID, GhostID: p.GhostID, ProposedBy: p.ProposedBy, Steps: p.Steps,
-		ExpiresAtMS: uint64(time.Now().Add(10 * time.Minute).UnixMilli()), Nonce: nonce,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return signed
-}
-
 // Mirage service with a ghost admin route and a scripted plan dispatcher.
 func newDependencyService(t *testing.T, install dependencyInstaller) *Service {
 	t.Helper()
@@ -139,12 +171,13 @@ func newDependencyService(t *testing.T, install dependencyInstaller) *Service {
 
 func proposeAndApprove(t *testing.T, svc *Service) DependencyProposal {
 	t.Helper()
+	op := newOperators(t)
 	l := svc.server.Dependencies()
-	p, err := l.Propose("ghost.alpha", []string{"seed.docker"}, "user:ops")
+	p, err := l.Propose(intentFor(t, op.ops, "ghost.alpha", "seed.docker"), "edgectl://operator/ops")
 	if err != nil {
 		t.Fatalf("propose: %v", err)
 	}
-	if _, err := l.Approve(p.ID, "edgectl://operator/lead", signedFor(t, operatorSigner(t, tlstest.NewPKI(t), "lead"), p)); err != nil {
+	if _, err := l.Approve(p.ID, "edgectl://operator/lead", signedFor(t, op.lead, p)); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
 	return p
@@ -159,7 +192,7 @@ func TestExecuteDependencyProposalSuccessAudits(t *testing.T) {
 	})
 	p := proposeAndApprove(t, svc)
 
-	done, err := svc.ExecuteDependencyProposal(context.Background(), p.ID, "user:ops")
+	done, err := svc.ExecuteDependencyProposal(context.Background(), p.ID, "edgectl://operator/ops")
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -179,7 +212,7 @@ func TestExecuteDependencyProposalSuccessAudits(t *testing.T) {
 			t.Fatalf("audit = %v, want %v", got, want)
 		}
 	}
-	if _, err := svc.ExecuteDependencyProposal(context.Background(), p.ID, "user:ops"); !errors.Is(err, ErrDependencyProposalState) {
+	if _, err := svc.ExecuteDependencyProposal(context.Background(), p.ID, "edgectl://operator/ops"); !errors.Is(err, ErrDependencyProposalState) {
 		t.Fatalf("re-execution: expected ErrDependencyProposalState, got %v", err)
 	}
 }
@@ -195,7 +228,7 @@ func TestExecuteDependencyProposalFailureAuditsRollback(t *testing.T) {
 	})
 	p := proposeAndApprove(t, svc)
 
-	done, err := svc.ExecuteDependencyProposal(context.Background(), p.ID, "user:ops")
+	done, err := svc.ExecuteDependencyProposal(context.Background(), p.ID, "edgectl://operator/ops")
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -216,7 +249,7 @@ func TestExecuteDependencyProposalWithoutRouteFails(t *testing.T) {
 		return DependencyExecution{}, nil
 	}
 	p := proposeAndApprove(t, svc)
-	done, err := svc.ExecuteDependencyProposal(context.Background(), p.ID, "user:ops")
+	done, err := svc.ExecuteDependencyProposal(context.Background(), p.ID, "edgectl://operator/ops")
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -232,28 +265,45 @@ func TestDependencyAdminActionsAndCodes(t *testing.T) {
 		dispatched = p
 		return DependencyExecution{Succeeded: true}, nil
 	})
-	pki := tlstest.NewPKI(t)
-	svc.cfg.AdminTLS.CAFile = pki.CAFile()
-	lead := operatorSigner(t, pki, "lead")
+	op := newOperators(t)
+	svc.cfg.AdminTLS.CAFile = op.pki.CAFile()
+	propose := func(actor string, intent *approval.SignedIntent) adminControlResponse {
+		return svc.handleAdminControlRequest(adminControlRequest{Action: "propose_dependencies", Dependency: AdminDependencyRequest{Actor: actor, Intent: intent}})
+	}
 
-	resp := svc.handleAdminControlRequest(adminControlRequest{Action: "propose_dependencies", Dependency: AdminDependencyRequest{
-		GhostID: "ghost.alpha", SeedIDs: []string{"seed.docker"}, Actor: "user:ops",
-	}})
+	// Proposals need a proposer-signed intent from the calling operator (1300 otherwise).
+	if resp := propose("edgectl://operator/ops", nil); resp.OK || resp.ErrorCode != schema.ErrCodeSemanticValidation {
+		t.Fatalf("unsigned proposal: ok=%v code=%d %s", resp.OK, resp.ErrorCode, resp.Error)
+	}
+	intent := intentFor(t, op.ops, "ghost.alpha", "seed.docker")
+	if resp := propose("edgectl://operator/lead", &intent); resp.OK || resp.ErrorCode != schema.ErrCodeSemanticValidation {
+		t.Fatalf("intent submitted by a different operator: ok=%v code=%d %s", resp.OK, resp.ErrorCode, resp.Error)
+	}
+	resp := propose("edgectl://operator/ops", &intent)
 	if !resp.OK {
 		t.Fatalf("propose: %s", resp.Error)
 	}
 	p := resp.Data.(DependencyProposal)
+	if p.ProposedBy != "edgectl://operator/ops" {
+		t.Fatalf("proposed_by = %q, want signer principal", p.ProposedBy)
+	}
 
-	resp = svc.handleAdminControlRequest(adminControlRequest{Action: "execute_dependencies", Dependency: AdminDependencyRequest{ProposalID: p.ID, Actor: "user:ops"}})
+	resp = svc.handleAdminControlRequest(adminControlRequest{Action: "execute_dependencies", Dependency: AdminDependencyRequest{ProposalID: p.ID, Actor: "edgectl://operator/ops"}})
 	if resp.OK || resp.ErrorCode != schema.ErrCodeSemanticValidation {
 		t.Fatalf("execute before approve: ok=%v code=%d", resp.OK, resp.ErrorCode)
+	}
+	// The proposer cannot approve their own proposal, even with a valid signature.
+	selfSigned := signedFor(t, op.ops, p)
+	resp = svc.handleAdminControlRequest(adminControlRequest{Action: "approve_dependencies", Dependency: AdminDependencyRequest{ProposalID: p.ID, Actor: "edgectl://operator/ops", Approval: &selfSigned}})
+	if resp.OK || resp.ErrorCode != schema.ErrCodeSemanticValidation {
+		t.Fatalf("self approval: ok=%v code=%d %s", resp.OK, resp.ErrorCode, resp.Error)
 	}
 	// Approval needs a signature; an unsigned or wrongly-attributed approval is refused (1300).
 	resp = svc.handleAdminControlRequest(adminControlRequest{Action: "approve_dependencies", Dependency: AdminDependencyRequest{ProposalID: p.ID, Actor: "edgectl://operator/lead"}})
 	if resp.OK || resp.ErrorCode != schema.ErrCodeSemanticValidation {
 		t.Fatalf("unsigned approval: ok=%v code=%d %s", resp.OK, resp.ErrorCode, resp.Error)
 	}
-	signed := signedFor(t, lead, p)
+	signed := signedFor(t, op.lead, p)
 	resp = svc.handleAdminControlRequest(adminControlRequest{Action: "approve_dependencies", Dependency: AdminDependencyRequest{ProposalID: p.ID, Actor: "edgectl://operator/other", Approval: &signed}})
 	if resp.OK || resp.ErrorCode != schema.ErrCodeSemanticValidation {
 		t.Fatalf("approval submitted by a different operator: ok=%v code=%d %s", resp.OK, resp.ErrorCode, resp.Error)
@@ -273,6 +323,13 @@ func TestDependencyAdminActionsAndCodes(t *testing.T) {
 	list, _ := resp.Data.([]DependencyProposal)
 	if !resp.OK || len(list) != 1 || list[0].State != ProposalSucceeded {
 		t.Fatalf("list: ok=%v data=%+v", resp.OK, resp.Data)
+	}
+
+	// A denied proposer certificate cannot open new proposals.
+	svc.cfg.AdminTLS.DeniedSerials = []string{op.opsSerial}
+	fresh := intentFor(t, op.ops, "ghost.alpha", "seed.docker")
+	if resp := propose("edgectl://operator/ops", &fresh); resp.OK || resp.ErrorCode != schema.ErrCodeSemanticValidation {
+		t.Fatalf("denied proposer: ok=%v code=%d %s", resp.OK, resp.ErrorCode, resp.Error)
 	}
 }
 
@@ -303,10 +360,12 @@ func TestGhostControlClientInstallDependencies(t *testing.T) {
 
 	client := NewGhostControlClient(ln.Addr().String())
 	proposal := DependencyProposal{
-		ID: "depprop.ghost.alpha.9", GhostID: "ghost.alpha", ProposedBy: "user:ops", ApprovedBy: "edgectl://operator/lead",
+		ID: "depprop.ghost.alpha.9", GhostID: "ghost.alpha", ProposedBy: "edgectl://operator/ops", ApprovedBy: "edgectl://operator/lead",
 		Steps: []seeds.InstallSpec{depcatalog.CatalogFor("seed.docker")[0].Spec},
 	}
-	signed := signedFor(t, operatorSigner(t, tlstest.NewPKI(t), "lead"), proposal)
+	op := newOperators(t)
+	proposal.Intent = intentFor(t, op.ops, "ghost.alpha", "seed.docker")
+	signed := signedFor(t, op.lead, proposal)
 	proposal.Approval = &signed
 	exec, err := client.InstallDependencies(context.Background(), proposal)
 	if err != nil {

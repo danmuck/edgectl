@@ -123,14 +123,21 @@ rule = "require mTLS in every security mode, including development"
 [install_approval]
 
 [install_approval.rules]
-approval_signer = "operator principal private key"
-signed_payload = "sha256 over canonical JSON of {proposal_id, ghost_id, proposed_by, steps, expires_at_ms, nonce}"
+amended = "2026-11-23, user-approved: proposer-signed intents so every Ghost enforces separation of duties itself"
+proposer_signer = "proposer operator principal private key"
+proposer_intent = "sha256 over canonical JSON of {ghost_id, seed_ids, proposed_at_ms, nonce}, signed by the proposer"
+proposer_intent_max_age_hours = 24
+proposal_steps = "derived only from depcatalog for the intent seed_ids, in order; never supplied by the proposer or Mirage"
+approval_signer = "approver operator principal private key"
+signed_payload = "sha256 over canonical JSON of {proposal_id, ghost_id, proposer_intent, steps, expires_at_ms, nonce}"
 signature_algorithm = "ECDSA P-256 over the payload digest"
 approver_certificate = "carried with the approval; MUST chain to the edgectl root and carry role operator"
-separation_of_duties = "approver principal MUST differ from proposer principal; no single-operator override"
+proposer_certificate = "carried with the intent; MUST chain to the edgectl root and carry role operator"
+separation_of_duties = "approver principal (approval signature) MUST differ from proposer principal (intent signature); no single-operator override"
 expiry_max_minutes = 15
-mirage_verification = "verify signature, role, separation, expiry before recording approval"
-ghost_verification = "verify signature, role, separation, expiry, ghost_id == self, every step in depcatalog, nonce unused"
+mirage_verification = "verify intent (proposer == caller) before recording a proposal; verify both signatures, separation, expiry, intent and steps match the stored proposal, approver == caller before recording approval"
+ghost_verification = "verify both signatures and roles, separation, expiry, intent age, ghost_id == self in intent and payload, steps == depcatalog steps for intent seed_ids, nonce unused"
+operator_confirmation = "operator tooling shows the content and payload digest and requires explicit confirmation before signing; only pending proposals are approved"
 replay = "Ghost records used nonces for at least expiry_max_minutes; reuse is rejected"
 failure = "reject plan; no step runs"
 
@@ -163,5 +170,5 @@ approval_invalid = "1300 (semantic_validation_failure)"
 
 [audit.rules]
 admin_request_fields = "component, peer, principal, role, action, decision, error_code, timestamp_ms"
-approval_fields = "proposal_id, proposer, approver, signature digest, decision"
+approval_fields = "proposal_id, proposer, approver, intent signature digest, approval signature digest, decision"
 secret_material = "never logged"

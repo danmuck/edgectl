@@ -45,6 +45,7 @@ func adminErrorCode(err error) uint32 {
 		errors.Is(err, approval.ErrInvalidApproval),
 		errors.Is(err, approval.ErrApprovalExpired),
 		errors.Is(err, approval.ErrSeparationOfDuties),
+		errors.Is(err, approval.ErrStepsMismatch),
 		errors.Is(err, ErrDependencyNotCataloged),
 		errors.Is(err, seeds.ErrInstallInvalidSpec),
 		errors.Is(err, seeds.ErrInstallMethodNotAllowed),

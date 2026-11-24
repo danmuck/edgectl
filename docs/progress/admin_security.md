@@ -16,7 +16,7 @@ The goal is to replace the shared token with certificate identities end to end, 
 - Both admin endpoints require TLS 1.3 with verified client certificates. Plaintext is allowed only on loopback in development, and never for privileged actions.
 - Default-deny authorization matrix per action. The acting identity is the TLS principal; request-body `actor` fields cannot override it.
 - Each Ghost pins exactly one Mirage principal.
-- Install approvals are signed by the approving operator's key (not Mirage's), bound to the proposal, ghost, steps, expiry, and a nonce. Approver must differ from proposer. Ghost verifies the signature, role, separation, expiry, nonce, and catalog membership.
+- Install proposals start as an intent (`ghost_id, seed_ids, proposed_at_ms, nonce`) signed by the proposing operator. Approvals are signed by a different approving operator (not Mirage), embed that signed intent, and bind the proposal, ghost, catalog steps, expiry, and a nonce. Ghost verifies both signatures, roles, separation (from the two signatures), expiry, intent age, nonce, and recomputes the steps from its own catalog.
 - `deploy_ghost` deploys only manifest-configured targets with pinned SSH host keys, delivering only that Ghost's own key and certificate. No shared secrets remain.
 - The root CA key stays offline; runtimes never mint certificates.
 
@@ -88,6 +88,16 @@ Slice D notes (2026-11-23):
 - `client-tm`: Mirage console > Dependencies (list, propose, approve, execute). Approve fetches the stored proposal, shows it, and signs exactly its content with the operator key (10-minute expiry, random nonce).
 - A compromised Mirage can no longer forge an approval: it lacks any operator key, and Ghost verifies independently.
 
+Slice D amendment — proposer signatures (2026-11-23, user: "Add proposer signatures"):
+
+- Finding fixed: separation of duties compared the approver to a free-text `proposed_by` that the approver signed, so one operator could approve their own install by writing another name; Ghost could not tell. Contract `[install_approval]` amended (marked `amended` there) so every Ghost enforces two-person control itself.
+- [x] `internal/approval`: `Intent` / `SignedIntent` signed by the proposer (`SignIntent`); `VerifyIntent` checks chain, operator role, signature, not denied, and age <= 24 h (not in the future). `Payload` embeds `proposer_intent` in place of `proposed_by`. `Verify(signed, Trust)` verifies both signatures, requires distinct principals, intent ghost == payload ghost, steps == `CatalogSteps(intent seed_ids)` (`ErrStepsMismatch`), and expiry. Returns both principals.
+- [x] Revocation (security review finding): `Trust.Denied` rejects signer certificates whose serial is in `admin_tls_denied_serials`, for proposer and approver, at Mirage and Ghost. Applies `trust.revocation` to signatures as well as handshakes.
+- [x] Mirage: `propose_dependencies` requires a signed intent; signer must be the calling operator; `proposed_by` is the verified principal; steps come only from the catalog for the intent seeds; a signed intent can open at most one proposal. `approve_dependencies` requires the embedded intent to equal the stored one. Audit records carry the intent and approval signature digests.
+- [x] Ghost: verifies with its own CA, denied serials, and compiled catalog; logs proposer, approver, and both signature digests on acceptance. Step mismatch reports `ErrDependencyNotCataloged` (`1300`).
+- [x] `client-tm`: propose shows ghost, seeds, catalog steps, and intent digest, then asks `[y/N]` before signing. Approve refuses non-pending proposals, verifies the intent under the operator CA, refuses self-approval, recomputes steps from its own catalog, shows the full steps, proposer, expiry, and payload digest, then asks `[y/N]` before signing. A compromised Mirage cannot get an operator to sign content other than what is shown.
+- Wire change: `propose_dependencies` no longer accepts bare `ghost_id`/`seed_ids`; approvals signed before this change no longer verify (none are long-lived: 15-minute maximum).
+
 ### Slice E — Deploy hardening and token removal
 
 - [ ] `deploy_ghost` takes a ghost_id only; host/user/port come from configured manifests; unknown targets rejected.
@@ -98,7 +108,7 @@ Slice D notes (2026-11-23):
 ### Slice F — Verification
 
 - [ ] Negative tests per endpoint: no cert, wrong CA, expired, revoked serial, wrong role, wrong pinned Mirage, multiple URI SANs, plaintext on non-loopback.
-- [ ] Approval tests: forged signature, Mirage-signed instead of operator, approver == proposer, expired, replayed nonce, ghost_id mismatch, uncataloged step.
+- [ ] Approval tests: forged signature, Mirage-signed instead of operator, approver == proposer, expired, replayed nonce, ghost_id mismatch, uncataloged step. (Unit coverage for these plus denied signer, stale intent, re-wrapped intent, and catalog-step mismatch landed with the proposer-signature amendment; Slice F adds the cross-process end-to-end run.)
 - [ ] Deploy tests: unknown target rejected, request-supplied host ignored, no token or other Ghost's key in generated config.
 - [ ] End-to-end over real TLS sockets for both endpoints.
 

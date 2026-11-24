@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/danmuck/edgectl/internal/approval"
-	"github.com/danmuck/edgectl/internal/depcatalog"
+	"github.com/danmuck/edgectl/internal/identity"
 	"github.com/danmuck/edgectl/internal/seeds"
 	logs "github.com/danmuck/smplog"
 )
@@ -22,27 +22,32 @@ var (
 	ErrDependencyInstallDisabled = errors.New("ghost: dependency installs disabled")
 	// Plan lacks the Mirage proposal and approval it must carry.
 	ErrDependencyPlanUnapproved = errors.New("ghost: dependency plan lacks mirage approval")
-	// Plan step is not an exact entry of the compiled-in dependency catalog.
+	// Signed steps are not exactly this Ghost's compiled-in catalog steps for the proposer's seeds.
 	ErrDependencyNotCataloged = errors.New("ghost: dependency plan step not in catalog")
 	// Approval nonce was already used (admin_security.toml install_approval.replay).
 	ErrApprovalReplayed = errors.New("ghost: approval nonce already used")
 )
 
-// Root pool for approval verification: this Ghost's admin CA.
-func (s *Service) approvalRoots() (*x509.CertPool, error) {
+// Trust for approval verification: this Ghost's admin CA, admin denied serials, the approval clock,
+// and catalog step derivation. Fails closed when the CA is missing or the denied list does not parse.
+func (s *Service) approvalTrust() (approval.Trust, error) {
 	caFile := strings.TrimSpace(s.cfg.AdminTLS.CAFile)
 	if caFile == "" {
-		return nil, fmt.Errorf("admin_tls_ca_file required to verify approvals")
+		return approval.Trust{}, fmt.Errorf("admin_tls_ca_file required to verify approvals")
 	}
 	pemBytes, err := os.ReadFile(caFile)
 	if err != nil {
-		return nil, err
+		return approval.Trust{}, err
 	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(pemBytes) {
-		return nil, fmt.Errorf("no certificates in %s", caFile)
+		return approval.Trust{}, fmt.Errorf("no certificates in %s", caFile)
 	}
-	return pool, nil
+	denied, err := identity.ParseDeniedSerials(s.cfg.AdminTLS.DeniedSerials)
+	if err != nil {
+		return approval.Trust{}, err
+	}
+	return approval.Trust{Roots: pool, Denied: denied, Now: s.approvalClock(), StepsFor: s.approvalStepsFor}, nil
 }
 
 func (s *Service) approvalClock() time.Time {
@@ -127,16 +132,19 @@ func (s *Service) newInstaller() (*seeds.Installer, error) {
 	return seeds.NewInstaller(cfg)
 }
 
-// ExecuteInstallPlan runs a Mirage-approved plan. The caller must present the configured admin token,
-// and every spec is policy-checked and matched against the catalog before any step runs, so a
-// non-compliant or uncataloged plan installs nothing. Steps run in order; on the first failure, steps this
-// plan already installed under the managed roots are rolled back in reverse order.
+// ExecuteInstallPlan runs a plan carrying a two-operator approval (admin_security.toml
+// [install_approval] ghost_verification). This Ghost verifies the proposer intent and the approval
+// itself: both operator signatures under its root and not denied, two different principals, expiry
+// and intent age, both naming this Ghost, and steps exactly equal to its own catalog steps for the
+// intent seeds. Every step is policy-checked before any runs, so a rejected plan installs nothing.
+// Steps run in order; on the first failure, steps this plan already installed under the managed roots
+// are rolled back in reverse order.
 func (s *Service) ExecuteInstallPlan(req InstallPlanRequest) (InstallPlanResult, error) {
 	if !s.cfg.SeedInstall.Enabled {
 		return InstallPlanResult{}, ErrDependencyInstallDisabled
 	}
 	// Fail closed: approvals can only be verified against a configured admin root.
-	roots, err := s.approvalRoots()
+	tr, err := s.approvalTrust()
 	if err != nil {
 		return InstallPlanResult{}, fmt.Errorf("%w: %v", ErrDependencyInstallDisabled, err)
 	}
@@ -144,34 +152,32 @@ func (s *Service) ExecuteInstallPlan(req InstallPlanRequest) (InstallPlanResult,
 		return InstallPlanResult{}, fmt.Errorf("%w: proposal_id and signed approval required", ErrDependencyPlanUnapproved)
 	}
 	signed := *req.Approval
-	approver, err := approval.Verify(signed, roots, s.approvalClock())
-	if err != nil {
-		return InstallPlanResult{}, err
-	}
 	pl := signed.Payload
 	if pl.ProposalID != strings.TrimSpace(req.ProposalID) || pl.GhostID != strings.TrimSpace(s.cfg.GhostID) {
 		return InstallPlanResult{}, fmt.Errorf("%w: approval is for %s on %s", ErrDependencyPlanUnapproved, pl.ProposalID, pl.GhostID)
 	}
-	if a := strings.TrimSpace(req.ApprovedBy); a != "" && a != approver.String() {
-		return InstallPlanResult{}, fmt.Errorf("%w: approved_by %q is not the signer %s", ErrDependencyPlanUnapproved, a, approver)
+	res, err := approval.Verify(signed, tr)
+	if errors.Is(err, approval.ErrStepsMismatch) {
+		return InstallPlanResult{}, fmt.Errorf("%w: %w", ErrDependencyNotCataloged, err)
+	}
+	if err != nil {
+		return InstallPlanResult{}, err
+	}
+	if a := strings.TrimSpace(req.ApprovedBy); a != "" && a != res.Approver.String() {
+		return InstallPlanResult{}, fmt.Errorf("%w: approved_by %q is not the signer %s", ErrDependencyPlanUnapproved, a, res.Approver)
 	}
 	// Only the signed steps run; a plan that lists different steps is refused.
 	specs := pl.Steps
 	if len(req.Specs) > 0 && !reflect.DeepEqual(req.Specs, specs) {
 		return InstallPlanResult{}, fmt.Errorf("%w: plan steps differ from the signed steps", ErrDependencyPlanUnapproved)
 	}
-	inCatalog := s.catalogContains
-	if inCatalog == nil {
-		inCatalog = depcatalog.Contains
-	}
 	for i, spec := range specs {
 		if err := seeds.ValidateSpec(spec); err != nil {
 			return InstallPlanResult{}, fmt.Errorf("specs[%d]: %w", i, err)
 		}
-		if !inCatalog(spec) {
-			return InstallPlanResult{}, fmt.Errorf("specs[%d] seed_id=%q: %w", i, spec.SeedID, ErrDependencyNotCataloged)
-		}
 	}
+	logs.Infof("ghost.dependency.approval component=ghost ghost_id=%q proposal_id=%q proposer=%q approver=%q intent_signature=%s signature=%s decision=accepted",
+		s.cfg.GhostID, pl.ProposalID, res.Proposer, res.Approver, pl.ProposerIntent.SignatureDigest(), signed.SignatureDigest())
 
 	s.installMu.Lock()
 	defer s.installMu.Unlock()

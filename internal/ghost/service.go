@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/danmuck/edgectl/internal/adminauth"
+	"github.com/danmuck/edgectl/internal/approval"
 	"github.com/danmuck/edgectl/internal/identity"
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/seeds"
@@ -127,8 +128,8 @@ type Service struct {
 	installMu sync.Mutex
 	// Test seam adjusting installer config (runner, HTTP client) before construction.
 	installerConfigHook func(*seeds.InstallerConfig)
-	// Test seam for catalog membership; nil uses depcatalog.Contains.
-	catalogContains func(seeds.InstallSpec) bool
+	// Test seam for deriving approved steps from intent seed ids; nil uses approval.CatalogSteps.
+	approvalStepsFor approval.StepsFunc
 	// Approval nonces seen until their expiry (replay protection; guarded by installMu).
 	usedNonces map[string]time.Time
 	// Test seam for the approval clock; nil uses time.Now.

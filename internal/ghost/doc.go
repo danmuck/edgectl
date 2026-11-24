@@ -37,10 +37,12 @@
 // Dependency installs (docs/progress/mvp_p8.md Slice F):
 // - Ghost never installs on its own (no boot-time installs; seed_install config specs rejected)
 //
-// - install_dependencies runs only plans carrying an operator-signed approval (internal/approval) that
-// this Ghost verifies itself against its admin CA: operator role, approver != proposer, unexpired,
-// for this ghost_id, nonce unused; only the signed steps run, each an exact depcatalog entry, and a
-// failed step rolls back this plan's managed-root installs
+// - install_dependencies runs only plans carrying a two-operator approval (internal/approval;
+// admin_security.toml [install_approval] ghost_verification) that this Ghost verifies itself against
+// its admin CA and denied serials: proposer intent and approval signed by two different operators,
+// unexpired, intent not stale, both for this ghost_id, nonce unused, and steps exactly equal to this
+// Ghost's compiled catalog steps for the intent seeds; a failed step rolls back this plan's
+// managed-root installs
 //
 // - brew bootstrap commands are host-local only; plans cannot carry them
 //

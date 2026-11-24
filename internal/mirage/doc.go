@@ -34,8 +34,10 @@
 // Dependency governance (docs/progress/mvp_p8.md Slice F, mvp_p9_dependency_approval_flow.mmd):
 // - internal/depcatalog is the single Mirage-owned source of install paths and methods
 //
-// - propose -> approve -> execute_dependencies; approvals are operator-signed (internal/approval),
-// verified against the admin CA, bound to the caller, approver != proposer; Ghost re-verifies
+// - propose -> approve -> execute_dependencies (admin_security.toml [install_approval]): proposals
+// require a proposer-signed intent from the caller, steps derived only from the catalog for its
+// seeds; approvals are signed by a different operator, embed the stored intent, and are verified
+// against the admin CA and denied serials (internal/approval); Ghost re-verifies everything
 //
 // - audit records for proposal, approval, execution start, execution result, rollback
 //

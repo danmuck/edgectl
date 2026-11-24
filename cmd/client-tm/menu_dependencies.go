@@ -1,16 +1,24 @@
 package main
 
-// menu_dependencies.go drives dependency install proposals: propose, review, sign-and-approve,
-// execute (admin_security.toml [install_approval]; docs/progress/mvp_p9_dependency_approval_flow.mmd).
+// menu_dependencies.go drives dependency install proposals: sign-and-propose, review,
+// sign-and-approve, execute (admin_security.toml [install_approval];
+// docs/progress/mvp_p9_dependency_approval_flow.mmd). Nothing is signed without explicit confirmation
+// (install_approval.operator_confirmation).
 
 import (
+	"crypto/x509"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"reflect"
 	"strings"
 	"time"
 
 	"github.com/danmuck/edgectl/internal/approval"
 	"github.com/danmuck/edgectl/internal/mirage"
+	"github.com/danmuck/edgectl/internal/seeds"
 	logs "github.com/danmuck/smplog"
 )
 
@@ -50,12 +58,9 @@ func (a *App) runMirageDependencyConsole(target MirageTarget) error {
 			if err != nil {
 				return err
 			}
-			p, err := target.Admin.ProposeDependencies(ghostID, splitComma(seedLine))
-			if err != nil {
+			if err := a.proposeInstall(target, ghostID, splitComma(seedLine)); err != nil {
 				logs.Errf("propose failed: %v", err)
-				continue
 			}
-			printProposal(p)
 		case 3:
 			id, err := a.promptLine("Proposal id")
 			if err != nil {
@@ -81,7 +86,56 @@ func (a *App) runMirageDependencyConsole(target MirageTarget) error {
 	}
 }
 
-// Fetches the stored proposal, signs exactly its content, and submits the approval.
+// Signs a proposer intent after confirmation and submits it; Mirage derives the steps from its catalog.
+func (a *App) proposeInstall(target MirageTarget, ghostID string, seedIDs []string) error {
+	signer, _, err := a.operatorSigner()
+	if err != nil {
+		return err
+	}
+	intent, err := newIntent(ghostID, seedIDs, time.Now())
+	if err != nil {
+		return err
+	}
+	digest, err := intent.Digest()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("\nPropose as %s\n  ghost: %s\n  seeds: %s\n", signer.Principal, intent.GhostID, strings.Join(intent.SeedIDs, ", "))
+	for _, st := range approval.CatalogSteps(intent.SeedIDs) {
+		fmt.Printf("  catalog step: %s\n", describeStep(st))
+	}
+	fmt.Printf("  intent digest: %s\n", hex.EncodeToString(digest[:]))
+	ok, err := a.promptConfirm("Sign this proposal intent")
+	if err != nil || !ok {
+		return err
+	}
+	signed, err := signer.SignIntent(intent)
+	if err != nil {
+		return err
+	}
+	p, err := target.Admin.ProposeDependencies(signed)
+	if err != nil {
+		return err
+	}
+	printProposal(p)
+	return nil
+}
+
+// Builds an intent; ghost id and at least one seed id are required.
+func newIntent(ghostID string, seedIDs []string, now time.Time) (approval.Intent, error) {
+	ghostID = strings.TrimSpace(ghostID)
+	if ghostID == "" || len(seedIDs) == 0 {
+		return approval.Intent{}, errors.New("ghost id and at least one seed id required")
+	}
+	nonce, err := approval.NewNonce()
+	if err != nil {
+		return approval.Intent{}, err
+	}
+	return approval.Intent{GhostID: ghostID, SeedIDs: seedIDs, ProposedAtMS: uint64(now.UnixMilli()), Nonce: nonce}, nil
+}
+
+// Fetches the stored proposal, checks it independently, shows exactly what will be signed, and signs
+// only after explicit confirmation.
 func (a *App) approveProposal(target MirageTarget, id string) error {
 	list, err := target.Admin.ListDependencyProposals(id)
 	if err != nil {
@@ -91,8 +145,26 @@ func (a *App) approveProposal(target MirageTarget, id string) error {
 		return fmt.Errorf("proposal %q not found", id)
 	}
 	p := list[0]
+	signer, roots, err := a.operatorSigner()
+	if err != nil {
+		return err
+	}
+	payload, err := approvalPayload(p, signer, roots, time.Now())
+	if err != nil {
+		return err
+	}
+	digest, err := payload.Digest()
+	if err != nil {
+		return err
+	}
 	printProposal(p)
-	signed, err := a.signProposal(p, time.Now())
+	fmt.Printf("\nApprove as %s\n  proposer (verified intent signature): %s\n  expires: %s\n  payload digest: %s\n",
+		signer.Principal, p.ProposedBy, time.UnixMilli(int64(payload.ExpiresAtMS)).Format(time.RFC3339), hex.EncodeToString(digest[:]))
+	ok, err := a.promptConfirm("Sign this approval")
+	if err != nil || !ok {
+		return err
+	}
+	signed, err := signer.Sign(payload)
 	if err != nil {
 		return err
 	}
@@ -104,28 +176,71 @@ func (a *App) approveProposal(target MirageTarget, id string) error {
 	return nil
 }
 
-// signProposal signs the proposal content with the configured operator key.
-func (a *App) signProposal(p mirage.DependencyProposal, now time.Time) (approval.Signed, error) {
-	creds, ok := a.operatorCredentials(true)
-	if !ok {
-		return approval.Signed{}, errors.New("approving requires operator_cert_file and operator_key_file")
+// Builds the approval payload for p without trusting Mirage's view of it: p must be pending, its
+// intent must verify under the operator CA from a different operator, name p's ghost, and p's steps
+// must equal this binary's catalog steps for the intent seeds.
+func approvalPayload(p mirage.DependencyProposal, signer *approval.Signer, roots *x509.CertPool, now time.Time) (approval.Payload, error) {
+	if p.State != mirage.ProposalPending {
+		return approval.Payload{}, fmt.Errorf("proposal %s is %s; only pending proposals can be approved", p.ID, p.State)
 	}
-	signer, err := approval.LoadSigner(creds.CertFile, creds.KeyFile)
+	proposer, err := approval.VerifyIntent(p.Intent, approval.Trust{Roots: roots, Now: now})
 	if err != nil {
-		return approval.Signed{}, err
+		return approval.Payload{}, fmt.Errorf("proposer intent: %w", err)
+	}
+	if proposer == signer.Principal {
+		return approval.Payload{}, approval.ErrSeparationOfDuties
+	}
+	if proposer.String() != p.ProposedBy || p.Intent.Intent.GhostID != p.GhostID {
+		return approval.Payload{}, fmt.Errorf("proposal %s does not match its signed intent", p.ID)
+	}
+	if !reflect.DeepEqual(p.Steps, approval.CatalogSteps(p.Intent.Intent.SeedIDs)) {
+		return approval.Payload{}, fmt.Errorf("proposal %s: %w", p.ID, approval.ErrStepsMismatch)
 	}
 	nonce, err := approval.NewNonce()
 	if err != nil {
-		return approval.Signed{}, err
+		return approval.Payload{}, err
 	}
-	return signer.Sign(approval.Payload{
-		ProposalID:  p.ID,
-		GhostID:     p.GhostID,
-		ProposedBy:  p.ProposedBy,
-		Steps:       p.Steps,
-		ExpiresAtMS: uint64(now.Add(approvalLifetime).UnixMilli()),
-		Nonce:       nonce,
-	})
+	return approval.Payload{
+		ProposalID:     p.ID,
+		GhostID:        p.GhostID,
+		ProposerIntent: p.Intent,
+		Steps:          p.Steps,
+		ExpiresAtMS:    uint64(now.Add(approvalLifetime).UnixMilli()),
+		Nonce:          nonce,
+	}, nil
+}
+
+// Loads the operator signing key and the root used to check other operators' signatures.
+func (a *App) operatorSigner() (*approval.Signer, *x509.CertPool, error) {
+	creds, ok := a.operatorCredentials(true)
+	if !ok {
+		return nil, nil, errors.New("signing requires operator_cert_file and operator_key_file")
+	}
+	signer, err := approval.LoadSigner(creds.CertFile, creds.KeyFile)
+	if err != nil {
+		return nil, nil, err
+	}
+	if creds.CAFile == "" {
+		return nil, nil, errors.New("signing requires admin_tls_ca_file to verify proposals")
+	}
+	raw, err := os.ReadFile(creds.CAFile)
+	if err != nil {
+		return nil, nil, err
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(raw) {
+		return nil, nil, fmt.Errorf("no certificates in %s", creds.CAFile)
+	}
+	return signer, roots, nil
+}
+
+// Full JSON of a step: every signed field is shown, so confirmation covers exactly what the digest covers.
+func describeStep(s seeds.InstallSpec) string {
+	raw, err := json.Marshal(s)
+	if err != nil {
+		return fmt.Sprintf("%+v", s)
+	}
+	return string(raw)
 }
 
 func printProposal(p mirage.DependencyProposal) {
@@ -134,8 +249,8 @@ func printProposal(p mirage.DependencyProposal) {
 		fmt.Printf("  approved_by=%s", p.ApprovedBy)
 	}
 	fmt.Println()
-	for _, s := range p.Steps {
-		fmt.Printf("  step: %s %s %s%s\n", s.SeedID, s.Method, s.Package, s.URL)
+	for _, st := range p.Steps {
+		fmt.Printf("  step: %s\n", describeStep(st))
 	}
 	if len(p.Unresolved) > 0 {
 		fmt.Printf("  unresolved: %s\n", strings.Join(p.Unresolved, ", "))

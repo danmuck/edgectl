@@ -1,15 +1,17 @@
-// Package approval implements operator-signed dependency install approvals
+// Package approval implements two-person, operator-signed dependency install approvals
 // (docs/architecture/definitions/admin_security.toml [install_approval]).
 //
 // Ownership boundary:
-// - canonical approval payload and its sha256 digest
+// - proposer intent: {ghost_id, seed_ids, proposed_at_ms, nonce} signed by the proposing operator
 //
-// - ECDSA P-256 signing with an operator key (operator tooling only)
+// - approval payload: {proposal_id, ghost_id, proposer_intent, steps, expires_at_ms, nonce} signed by a
+// different approving operator
 //
-// - verification: chain to the root, operator role, signature, expiry, separation of duties
+// - verification of both signatures, roles, separation of duties, expiry, intent age, and that the
+// steps are exactly the dependency-catalog steps for the intent's seed ids
 //
-// Mirage verifies before recording an approval; Ghost verifies again before installing, so a
-// compromised Mirage cannot forge an approval.
+// Mirage verifies before recording; every Ghost verifies again before installing, so neither a
+// compromised Mirage nor a single operator can produce an installable plan.
 //
 // Canonical references (consult before changes):
 // - docs/index.md
@@ -30,9 +32,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/depcatalog"
 	"github.com/danmuck/edgectl/internal/identity"
 	"github.com/danmuck/edgectl/internal/seeds"
 )
@@ -40,50 +44,108 @@ import (
 // MaxLifetime caps approval validity (admin_security.toml install_approval.expiry_max_minutes).
 const MaxLifetime = 15 * time.Minute
 
+// MaxIntentAge caps how long a proposer intent stays approvable (proposer_intent_max_age_hours).
+const MaxIntentAge = 24 * time.Hour
+
 // clockSkew tolerates small clock differences between operator, Mirage, and Ghost hosts.
 const clockSkew = time.Minute
 
 var (
-	// Approval is malformed, does not verify, or is not from an operator under the root.
+	// Approval or intent is malformed, does not verify, or is not from an operator under the root.
 	ErrInvalidApproval = errors.New("approval: invalid approval")
-	// Approval is past expires_at_ms or claims a lifetime beyond MaxLifetime.
+	// Approval is past expires_at_ms, claims a lifetime beyond MaxLifetime, or the intent is too old.
 	ErrApprovalExpired = errors.New("approval: expired or lifetime too long")
 	// Approver is the proposer (admin_security.toml install_approval.separation_of_duties).
 	ErrSeparationOfDuties = errors.New("approval: approver must differ from proposer")
+	// Approved steps are not exactly the catalog steps for the intent's seed ids.
+	ErrStepsMismatch = errors.New("approval: steps do not match the catalog for the proposed seeds")
 )
 
-// Payload is the signed content (install_approval.signed_payload). Field order is fixed, so its
-// JSON encoding is canonical for the digest.
-type Payload struct {
-	ProposalID  string              `json:"proposal_id"`
-	GhostID     string              `json:"ghost_id"`
-	ProposedBy  string              `json:"proposed_by"`
-	Steps       []seeds.InstallSpec `json:"steps"`
-	ExpiresAtMS uint64              `json:"expires_at_ms"`
-	Nonce       string              `json:"nonce"`
+// Intent is what the proposer signs: the target ghost and the seeds whose catalog dependencies to install.
+type Intent struct {
+	GhostID      string   `json:"ghost_id"`
+	SeedIDs      []string `json:"seed_ids"`
+	ProposedAtMS uint64   `json:"proposed_at_ms"`
+	Nonce        string   `json:"nonce"`
 }
 
-// Digest is sha256 over the canonical JSON encoding of p.
-func (p Payload) Digest() ([32]byte, error) {
-	raw, err := json.Marshal(p)
+// SignedIntent is an intent with the proposer's signature and certificate.
+type SignedIntent struct {
+	Intent       Intent `json:"intent"`
+	Signature    []byte `json:"signature"`
+	ProposerCert []byte `json:"proposer_cert"`
+}
+
+// Payload is what the approver signs (install_approval.signed_payload). Field order is fixed, so its
+// JSON encoding is canonical for the digest.
+type Payload struct {
+	ProposalID     string              `json:"proposal_id"`
+	GhostID        string              `json:"ghost_id"`
+	ProposerIntent SignedIntent        `json:"proposer_intent"`
+	Steps          []seeds.InstallSpec `json:"steps"`
+	ExpiresAtMS    uint64              `json:"expires_at_ms"`
+	Nonce          string              `json:"nonce"`
+}
+
+// Signed is a payload with the approver's signature and certificate.
+type Signed struct {
+	Payload      Payload `json:"payload"`
+	Signature    []byte  `json:"signature"`
+	ApproverCert []byte  `json:"approver_cert"`
+}
+
+// Result names both verified principals.
+type Result struct {
+	Proposer identity.Principal
+	Approver identity.Principal
+}
+
+// StepsFunc derives install steps for seed ids; nil means CatalogSteps.
+type StepsFunc func(seedIDs []string) []seeds.InstallSpec
+
+// Trust is what a verifier checks signatures against.
+// Roots is the edgectl root; Denied revokes signer certificates by serial (trust.revocation);
+// Now is the verification clock; StepsFor derives the expected steps (nil means CatalogSteps).
+type Trust struct {
+	Roots    *x509.CertPool
+	Denied   identity.DeniedSerials
+	Now      time.Time
+	StepsFor StepsFunc
+}
+
+// CatalogSteps returns depcatalog steps for seedIDs in order, exactly as Mirage builds proposals.
+func CatalogSteps(seedIDs []string) []seeds.InstallSpec {
+	var out []seeds.InstallSpec
+	for _, id := range seedIDs {
+		for _, e := range depcatalog.CatalogFor(strings.TrimSpace(id)) {
+			out = append(out, e.Spec)
+		}
+	}
+	return out
+}
+
+func digestJSON(v any) ([32]byte, error) {
+	raw, err := json.Marshal(v)
 	if err != nil {
 		return [32]byte{}, err
 	}
 	return sha256.Sum256(raw), nil
 }
 
-// Signed is a payload with the approver's signature and certificate.
-type Signed struct {
-	Payload Payload `json:"payload"`
-	// ASN.1 ECDSA signature over Payload.Digest().
-	Signature []byte `json:"signature"`
-	// Approver leaf certificate (DER).
-	ApproverCert []byte `json:"approver_cert"`
-}
+// Digest is sha256 over the canonical JSON encoding of i.
+func (i Intent) Digest() ([32]byte, error) { return digestJSON(i) }
 
-// SignatureDigest is a short audit identifier for the signature (hex sha256, first 16 chars).
-func (s Signed) SignatureDigest() string {
-	sum := sha256.Sum256(s.Signature)
+// Digest is sha256 over the canonical JSON encoding of p.
+func (p Payload) Digest() ([32]byte, error) { return digestJSON(p) }
+
+// SignatureDigest is a short audit identifier for the approval signature.
+func (s Signed) SignatureDigest() string { return shortDigest(s.Signature) }
+
+// SignatureDigest is a short audit identifier for the intent signature.
+func (s SignedIntent) SignatureDigest() string { return shortDigest(s.Signature) }
+
+func shortDigest(b []byte) string {
+	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])[:16]
 }
 
@@ -139,62 +201,130 @@ func NewNonce() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// Sign signs p; the caller sets ExpiresAtMS (at most MaxLifetime ahead) and Nonce.
+func (s *Signer) sign(digest [32]byte) ([]byte, error) {
+	return ecdsa.SignASN1(rand.Reader, s.key, digest[:])
+}
+
+// SignIntent signs a proposer intent.
+func (s *Signer) SignIntent(i Intent) (SignedIntent, error) {
+	d, err := i.Digest()
+	if err != nil {
+		return SignedIntent{}, err
+	}
+	sig, err := s.sign(d)
+	if err != nil {
+		return SignedIntent{}, err
+	}
+	return SignedIntent{Intent: i, Signature: sig, ProposerCert: append([]byte{}, s.certDER...)}, nil
+}
+
+// Sign signs an approval payload; the caller sets ExpiresAtMS (at most MaxLifetime ahead) and Nonce.
 func (s *Signer) Sign(p Payload) (Signed, error) {
-	digest, err := p.Digest()
+	d, err := p.Digest()
 	if err != nil {
 		return Signed{}, err
 	}
-	sig, err := ecdsa.SignASN1(rand.Reader, s.key, digest[:])
+	sig, err := s.sign(d)
 	if err != nil {
 		return Signed{}, err
 	}
 	return Signed{Payload: p, Signature: sig, ApproverCert: append([]byte{}, s.certDER...)}, nil
 }
 
-// Verify checks the approver certificate chains to roots and is an operator, the signature is
-// valid over the payload digest, the approval is unexpired with lifetime <= MaxLifetime, and the
-// approver differs from the proposer. Returns the approver principal.
-func Verify(s Signed, roots *x509.CertPool, now time.Time) (identity.Principal, error) {
-	if strings.TrimSpace(s.Payload.ProposalID) == "" || strings.TrimSpace(s.Payload.GhostID) == "" ||
-		strings.TrimSpace(s.Payload.Nonce) == "" || len(s.Payload.Steps) == 0 {
-		return identity.Principal{}, fmt.Errorf("%w: incomplete payload", ErrInvalidApproval)
-	}
-	cert, err := x509.ParseCertificate(s.ApproverCert)
+// Verifies certDER chains to the root for clientAuth at tr.Now, is not a denied serial, carries an
+// operator principal, and signed digest.
+func verifyOperatorSignature(certDER []byte, tr Trust, digest [32]byte, sig []byte) (identity.Principal, error) {
+	cert, err := x509.ParseCertificate(certDER)
 	if err != nil {
-		return identity.Principal{}, fmt.Errorf("%w: approver certificate: %v", ErrInvalidApproval, err)
+		return identity.Principal{}, fmt.Errorf("%w: certificate: %v", ErrInvalidApproval, err)
 	}
 	if _, err := cert.Verify(x509.VerifyOptions{
-		Roots:       roots,
-		CurrentTime: now,
+		Roots:       tr.Roots,
+		CurrentTime: tr.Now,
 		KeyUsages:   []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}); err != nil {
-		return identity.Principal{}, fmt.Errorf("%w: approver certificate: %v", ErrInvalidApproval, err)
+		return identity.Principal{}, fmt.Errorf("%w: certificate: %v", ErrInvalidApproval, err)
 	}
-	approver, err := identity.RequireRole(cert, identity.RoleOperator)
+	if tr.Denied.Contains(cert.SerialNumber) {
+		return identity.Principal{}, fmt.Errorf("%w: signer certificate serial is denied", ErrInvalidApproval)
+	}
+	p, err := identity.RequireRole(cert, identity.RoleOperator)
 	if err != nil {
 		return identity.Principal{}, fmt.Errorf("%w: %v", ErrInvalidApproval, err)
 	}
 	pub, ok := cert.PublicKey.(*ecdsa.PublicKey)
 	if !ok {
-		return identity.Principal{}, fmt.Errorf("%w: approver key is not ECDSA", ErrInvalidApproval)
+		return identity.Principal{}, fmt.Errorf("%w: key is not ECDSA", ErrInvalidApproval)
 	}
-	digest, err := s.Payload.Digest()
+	if !ecdsa.VerifyASN1(pub, digest[:], sig) {
+		return identity.Principal{}, fmt.Errorf("%w: signature does not verify", ErrInvalidApproval)
+	}
+	return p, nil
+}
+
+// VerifyIntent checks the proposer's signature and role and that the intent is complete and not
+// older than MaxIntentAge (or from the future). Returns the proposer principal.
+func VerifyIntent(si SignedIntent, tr Trust) (identity.Principal, error) {
+	i := si.Intent
+	if strings.TrimSpace(i.GhostID) == "" || len(i.SeedIDs) == 0 || strings.TrimSpace(i.Nonce) == "" || i.ProposedAtMS == 0 {
+		return identity.Principal{}, fmt.Errorf("%w: incomplete intent", ErrInvalidApproval)
+	}
+	d, err := i.Digest()
 	if err != nil {
 		return identity.Principal{}, err
 	}
-	if !ecdsa.VerifyASN1(pub, digest[:], s.Signature) {
-		return identity.Principal{}, fmt.Errorf("%w: signature does not verify", ErrInvalidApproval)
+	proposer, err := verifyOperatorSignature(si.ProposerCert, tr, d, si.Signature)
+	if err != nil {
+		return identity.Principal{}, err
 	}
-	expires := time.UnixMilli(int64(s.Payload.ExpiresAtMS))
+	at := time.UnixMilli(int64(i.ProposedAtMS))
+	if at.After(tr.Now.Add(clockSkew)) || tr.Now.Sub(at) > MaxIntentAge {
+		return identity.Principal{}, fmt.Errorf("%w: intent proposed at %s", ErrApprovalExpired, at.Format(time.RFC3339))
+	}
+	return proposer, nil
+}
+
+// Verify checks the proposer intent and the approval: both operator signatures under tr (root and
+// denied serials), two different principals, intent and payload name the same ghost, steps are
+// exactly tr.StepsFor(intent seed ids), and the approval is unexpired with lifetime <= MaxLifetime.
+func Verify(s Signed, tr Trust) (Result, error) {
+	pl := s.Payload
+	if strings.TrimSpace(pl.ProposalID) == "" || strings.TrimSpace(pl.GhostID) == "" ||
+		strings.TrimSpace(pl.Nonce) == "" || len(pl.Steps) == 0 {
+		return Result{}, fmt.Errorf("%w: incomplete payload", ErrInvalidApproval)
+	}
+	proposer, err := VerifyIntent(pl.ProposerIntent, tr)
+	if err != nil {
+		return Result{}, err
+	}
+	d, err := pl.Digest()
+	if err != nil {
+		return Result{}, err
+	}
+	approver, err := verifyOperatorSignature(s.ApproverCert, tr, d, s.Signature)
+	if err != nil {
+		return Result{}, err
+	}
+	if approver == proposer {
+		return Result{}, ErrSeparationOfDuties
+	}
+	if pl.ProposerIntent.Intent.GhostID != pl.GhostID {
+		return Result{}, fmt.Errorf("%w: intent ghost %s, approval ghost %s", ErrInvalidApproval, pl.ProposerIntent.Intent.GhostID, pl.GhostID)
+	}
+	stepsFor := tr.StepsFor
+	if stepsFor == nil {
+		stepsFor = CatalogSteps
+	}
+	if !reflect.DeepEqual(pl.Steps, stepsFor(pl.ProposerIntent.Intent.SeedIDs)) {
+		return Result{}, ErrStepsMismatch
+	}
+	expires := time.UnixMilli(int64(pl.ExpiresAtMS))
+	now := tr.Now
 	if !now.Before(expires) {
-		return identity.Principal{}, fmt.Errorf("%w: expired at %s", ErrApprovalExpired, expires.Format(time.RFC3339))
+		return Result{}, fmt.Errorf("%w: expired at %s", ErrApprovalExpired, expires.Format(time.RFC3339))
 	}
 	if expires.Sub(now) > MaxLifetime+clockSkew {
-		return identity.Principal{}, fmt.Errorf("%w: lifetime exceeds %s", ErrApprovalExpired, MaxLifetime)
+		return Result{}, fmt.Errorf("%w: lifetime exceeds %s", ErrApprovalExpired, MaxLifetime)
 	}
-	if approver.String() == strings.TrimSpace(s.Payload.ProposedBy) {
-		return identity.Principal{}, ErrSeparationOfDuties
-	}
-	return approver, nil
+	return Result{Proposer: proposer, Approver: approver}, nil
 }

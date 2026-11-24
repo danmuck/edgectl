@@ -3,14 +3,14 @@ package mirage
 import (
 	"errors"
 	"fmt"
-	"github.com/danmuck/edgectl/internal/approval"
-	"github.com/danmuck/edgectl/internal/depcatalog"
 	"reflect"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/approval"
+	"github.com/danmuck/edgectl/internal/depcatalog"
 	"github.com/danmuck/edgectl/internal/seeds"
 	logs "github.com/danmuck/smplog"
 )
@@ -90,7 +90,9 @@ type DependencyProposal struct {
 	Unresolved []string                `json:"unresolved,omitempty"`
 	State      DependencyProposalState `json:"state"`
 	ProposedBy string                  `json:"proposed_by"`
-	ApprovedBy string                  `json:"approved_by,omitempty"`
+	// Proposer-signed intent; approvals must embed it unchanged so Ghosts can verify the proposer.
+	Intent     approval.SignedIntent `json:"intent"`
+	ApprovedBy string                `json:"approved_by,omitempty"`
 	// Operator-signed approval forwarded to the Ghost, which re-verifies it before installing.
 	Approval   *approval.Signed        `json:"approval,omitempty"`
 	ExecutedBy string                  `json:"executed_by,omitempty"`
@@ -103,66 +105,69 @@ type DependencyLedger struct {
 	mu        sync.Mutex
 	seq       uint64
 	proposals map[string]*DependencyProposal
-	now       func() time.Time
+	// Intent signatures already recorded; a signed intent creates at most one proposal.
+	intents map[string]struct{}
+	now     func() time.Time
 }
 
 // NewDependencyLedger returns an empty ledger.
 func NewDependencyLedger() *DependencyLedger {
-	return &DependencyLedger{proposals: make(map[string]*DependencyProposal), now: time.Now}
+	return &DependencyLedger{proposals: make(map[string]*DependencyProposal), intents: make(map[string]struct{}), now: time.Now}
 }
 
-// Propose builds a pending proposal from catalog entries for the requested seeds. Every step is
-// re-validated against install policy. Dependencies without a catalog source are listed as
-// unresolved; a proposal with no installable step is rejected.
-func (l *DependencyLedger) Propose(ghostID string, seedIDs []string, actor string) (DependencyProposal, error) {
-	ghostID = strings.TrimSpace(ghostID)
-	actor = strings.TrimSpace(actor)
-	if ghostID == "" || actor == "" || len(seedIDs) == 0 {
-		return DependencyProposal{}, fmt.Errorf("%w: ghost_id, seed_ids, and actor required", ErrInvalidDependencyProposal)
+// Propose builds a pending proposal for a verified proposer intent (caller ran approval.VerifyIntent).
+// Steps are approval.CatalogSteps for the intent seeds, so they match what every Ghost recomputes;
+// each is re-validated against install policy. Dependencies without a catalog source are listed as
+// unresolved; a proposal with no installable step, or a reused intent, is rejected.
+func (l *DependencyLedger) Propose(intent approval.SignedIntent, proposer string) (DependencyProposal, error) {
+	ghostID := intent.Intent.GhostID
+	proposer = strings.TrimSpace(proposer)
+	if strings.TrimSpace(ghostID) == "" || proposer == "" || len(intent.Intent.SeedIDs) == 0 {
+		return DependencyProposal{}, fmt.Errorf("%w: ghost_id, seed_ids, and proposer required", ErrInvalidDependencyProposal)
 	}
-	var steps []seeds.InstallSpec
+	steps := approval.CatalogSteps(intent.Intent.SeedIDs)
+	for _, spec := range steps {
+		if err := seeds.ValidateSpec(spec); err != nil {
+			return DependencyProposal{}, fmt.Errorf("%w: catalog entry %s/%s: %v", ErrInvalidDependencyProposal, spec.SeedID, spec.Package, err)
+		}
+	}
 	var unresolved []string
-	var normSeeds []string
-	for _, raw := range seedIDs {
+	for _, raw := range intent.Intent.SeedIDs {
 		seedID := strings.TrimSpace(raw)
-		if seedID == "" {
-			continue
-		}
-		normSeeds = append(normSeeds, seedID)
-		for _, entry := range depcatalog.CatalogFor(seedID) {
-			if err := seeds.ValidateSpec(entry.Spec); err != nil {
-				return DependencyProposal{}, fmt.Errorf("%w: catalog entry %s/%s: %v", ErrInvalidDependencyProposal, seedID, entry.Name, err)
-			}
-			steps = append(steps, entry.Spec)
-		}
 		for _, name := range depcatalog.UncatalogedDependencies(seedID) {
 			unresolved = append(unresolved, seedID+":"+name)
 		}
 	}
 	if len(steps) == 0 {
-		return DependencyProposal{}, fmt.Errorf("%w: no catalog install sources for seeds %v (unresolved: %v)", ErrInvalidDependencyProposal, normSeeds, unresolved)
+		return DependencyProposal{}, fmt.Errorf("%w: no catalog install sources for seeds %v (unresolved: %v)", ErrInvalidDependencyProposal, intent.Intent.SeedIDs, unresolved)
 	}
 
+	key := intent.SignatureDigest()
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if _, used := l.intents[key]; used {
+		return DependencyProposal{}, fmt.Errorf("%w: intent already proposed", ErrInvalidDependencyProposal)
+	}
+	l.intents[key] = struct{}{}
 	l.seq++
 	p := &DependencyProposal{
 		ID:         fmt.Sprintf("depprop.%s.%d", ghostID, l.seq),
 		GhostID:    ghostID,
-		SeedIDs:    normSeeds,
+		SeedIDs:    append([]string{}, intent.Intent.SeedIDs...),
 		Steps:      steps,
 		Unresolved: unresolved,
 		State:      ProposalPending,
-		ProposedBy: actor,
+		ProposedBy: proposer,
+		Intent:     cloneIntent(intent),
 	}
-	l.auditLocked(p, AuditProposal, actor, fmt.Sprintf("steps=%d unresolved=%v", len(steps), unresolved))
+	l.auditLocked(p, AuditProposal, proposer, fmt.Sprintf("steps=%d unresolved=%v intent_signature=%s", len(steps), unresolved, key))
 	l.proposals[p.ID] = p
 	return cloneProposal(p), nil
 }
 
 // Approve records an operator-signed approval on a pending proposal. The caller has already verified
-// the signature (approval.Verify); here the signed payload must match the stored proposal exactly
-// (id, ghost, proposer, steps) and the approver must differ from the proposer.
+// both signatures (approval.Verify); here the signed payload must match the stored proposal exactly
+// (id, ghost, proposer intent, steps) and the approver must differ from the proposer.
 func (l *DependencyLedger) Approve(id string, approver string, signed approval.Signed) (DependencyProposal, error) {
 	approver = strings.TrimSpace(approver)
 	if approver == "" {
@@ -178,7 +183,7 @@ func (l *DependencyLedger) Approve(id string, approver string, signed approval.S
 		return DependencyProposal{}, fmt.Errorf("%w: %s is %s, want %s", ErrDependencyProposalState, p.ID, p.State, ProposalPending)
 	}
 	pl := signed.Payload
-	if pl.ProposalID != p.ID || pl.GhostID != p.GhostID || pl.ProposedBy != p.ProposedBy || !reflect.DeepEqual(pl.Steps, p.Steps) {
+	if pl.ProposalID != p.ID || pl.GhostID != p.GhostID || !reflect.DeepEqual(pl.ProposerIntent, p.Intent) || !reflect.DeepEqual(pl.Steps, p.Steps) {
 		return DependencyProposal{}, fmt.Errorf("%w: signed payload does not match proposal %s", ErrInvalidDependencyProposal, p.ID)
 	}
 	if approver == p.ProposedBy {
@@ -188,7 +193,8 @@ func (l *DependencyLedger) Approve(id string, approver string, signed approval.S
 	p.ApprovedBy = approver
 	signedCopy := signed
 	p.Approval = &signedCopy
-	l.auditLocked(p, AuditApproval, approver, fmt.Sprintf("proposer=%s approver=%s signature=%s", p.ProposedBy, approver, signed.SignatureDigest()))
+	l.auditLocked(p, AuditApproval, approver, fmt.Sprintf("proposer=%s approver=%s intent_signature=%s signature=%s decision=approved",
+		p.ProposedBy, approver, p.Intent.SignatureDigest(), signed.SignatureDigest()))
 	return cloneProposal(p), nil
 }
 
@@ -306,11 +312,13 @@ func cloneProposal(p *DependencyProposal) DependencyProposal {
 	out.Steps = append([]seeds.InstallSpec{}, p.Steps...)
 	out.Unresolved = append([]string{}, p.Unresolved...)
 	out.Audit = append([]DependencyAuditRecord{}, p.Audit...)
+	out.Intent = cloneIntent(p.Intent)
 	if p.Approval != nil {
 		a := *p.Approval
 		a.Signature = append([]byte{}, p.Approval.Signature...)
 		a.ApproverCert = append([]byte{}, p.Approval.ApproverCert...)
 		a.Payload.Steps = append([]seeds.InstallSpec{}, p.Approval.Payload.Steps...)
+		a.Payload.ProposerIntent = cloneIntent(p.Approval.Payload.ProposerIntent)
 		out.Approval = &a
 	}
 	if p.Execution != nil {
@@ -319,5 +327,14 @@ func cloneProposal(p *DependencyProposal) DependencyProposal {
 		exec.Rollback = append([]DependencyRollbackResult{}, p.Execution.Rollback...)
 		out.Execution = &exec
 	}
+	return out
+}
+
+// Deep copy so callers cannot mutate the ledger's stored intent.
+func cloneIntent(si approval.SignedIntent) approval.SignedIntent {
+	out := si
+	out.Intent.SeedIDs = append([]string{}, si.Intent.SeedIDs...)
+	out.Signature = append([]byte{}, si.Signature...)
+	out.ProposerCert = append([]byte{}, si.ProposerCert...)
 	return out
 }
