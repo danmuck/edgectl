@@ -54,7 +54,7 @@ Key Ghost config capabilities already wired:
 
 - `project_fetch_on_boot` for repo refresh on startup
 - Mirage session policy (`headless|auto|required`) and transport security fields
-- seed-install enablement, managed roots, and seed whitelist; Ghost installs only Mirage-approved plans (`propose_dependencies` -> `approve_dependencies` -> `execute_dependencies`) built from Mirage's dependency catalog (`internal/depcatalog`); Ghost requires the admin auth token and refuses any step not in the catalog
+- seed-install enablement, managed roots, and seed whitelist; Ghost installs only Mirage-approved plans (`propose_dependencies` -> `approve_dependencies` -> `execute_dependencies`) built from Mirage's dependency catalog (`internal/depcatalog`); an operator signs each approval (client-tm Mirage console > Dependencies) and Ghost verifies the signature itself before installing only the signed catalog steps
 - install methods allowlisted: `github` (pinned ref), `curl` (https + sha256), `brew`, `stream` (Mirage -> Ghost, transfer deferred)
 
 ## Local Development

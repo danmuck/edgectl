@@ -37,9 +37,10 @@
 // Dependency installs (docs/progress/mvp_p8.md Slice F):
 // - Ghost never installs on its own (no boot-time installs; seed_install config specs rejected)
 //
-// - install_dependencies executes only Mirage-approved plans: requires the admin auth token (refused
-// when none is configured), every step must pass policy and exactly match internal/depcatalog
-// before any step runs, and a failed step rolls back this plan's managed-root installs
+// - install_dependencies runs only plans carrying an operator-signed approval (internal/approval) that
+// this Ghost verifies itself against its admin CA: operator role, approver != proposer, unexpired,
+// for this ghost_id, nonce unused; only the signed steps run, each an exact depcatalog entry, and a
+// failed step rolls back this plan's managed-root installs
 //
 // - brew bootstrap commands are host-local only; plans cannot carry them
 //

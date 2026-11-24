@@ -3,7 +3,9 @@ package mirage
 import (
 	"errors"
 	"fmt"
+	"github.com/danmuck/edgectl/internal/approval"
 	"github.com/danmuck/edgectl/internal/depcatalog"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -89,6 +91,8 @@ type DependencyProposal struct {
 	State      DependencyProposalState `json:"state"`
 	ProposedBy string                  `json:"proposed_by"`
 	ApprovedBy string                  `json:"approved_by,omitempty"`
+	// Operator-signed approval forwarded to the Ghost, which re-verifies it before installing.
+	Approval   *approval.Signed        `json:"approval,omitempty"`
 	ExecutedBy string                  `json:"executed_by,omitempty"`
 	Execution  *DependencyExecution    `json:"execution,omitempty"`
 	Audit      []DependencyAuditRecord `json:"audit"`
@@ -156,11 +160,36 @@ func (l *DependencyLedger) Propose(ghostID string, seedIDs []string, actor strin
 	return cloneProposal(p), nil
 }
 
-// Approve records manual approval; only pending proposals can be approved.
-func (l *DependencyLedger) Approve(id string, actor string) (DependencyProposal, error) {
-	return l.transition(id, actor, ProposalPending, ProposalApproved, AuditApproval, "", func(p *DependencyProposal) {
-		p.ApprovedBy = strings.TrimSpace(actor)
-	})
+// Approve records an operator-signed approval on a pending proposal. The caller has already verified
+// the signature (approval.Verify); here the signed payload must match the stored proposal exactly
+// (id, ghost, proposer, steps) and the approver must differ from the proposer.
+func (l *DependencyLedger) Approve(id string, approver string, signed approval.Signed) (DependencyProposal, error) {
+	approver = strings.TrimSpace(approver)
+	if approver == "" {
+		return DependencyProposal{}, fmt.Errorf("%w: approver required", ErrInvalidDependencyProposal)
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	p, ok := l.proposals[strings.TrimSpace(id)]
+	if !ok {
+		return DependencyProposal{}, fmt.Errorf("%w: %s", ErrDependencyProposalNotFound, id)
+	}
+	if p.State != ProposalPending {
+		return DependencyProposal{}, fmt.Errorf("%w: %s is %s, want %s", ErrDependencyProposalState, p.ID, p.State, ProposalPending)
+	}
+	pl := signed.Payload
+	if pl.ProposalID != p.ID || pl.GhostID != p.GhostID || pl.ProposedBy != p.ProposedBy || !reflect.DeepEqual(pl.Steps, p.Steps) {
+		return DependencyProposal{}, fmt.Errorf("%w: signed payload does not match proposal %s", ErrInvalidDependencyProposal, p.ID)
+	}
+	if approver == p.ProposedBy {
+		return DependencyProposal{}, fmt.Errorf("%w: %v", ErrInvalidDependencyProposal, approval.ErrSeparationOfDuties)
+	}
+	p.State = ProposalApproved
+	p.ApprovedBy = approver
+	signedCopy := signed
+	p.Approval = &signedCopy
+	l.auditLocked(p, AuditApproval, approver, fmt.Sprintf("proposer=%s approver=%s signature=%s", p.ProposedBy, approver, signed.SignatureDigest()))
+	return cloneProposal(p), nil
 }
 
 // BeginExecution moves an approved proposal to executing; Ghost dispatch happens only after this.
@@ -277,6 +306,13 @@ func cloneProposal(p *DependencyProposal) DependencyProposal {
 	out.Steps = append([]seeds.InstallSpec{}, p.Steps...)
 	out.Unresolved = append([]string{}, p.Unresolved...)
 	out.Audit = append([]DependencyAuditRecord{}, p.Audit...)
+	if p.Approval != nil {
+		a := *p.Approval
+		a.Signature = append([]byte{}, p.Approval.Signature...)
+		a.ApproverCert = append([]byte{}, p.Approval.ApproverCert...)
+		a.Payload.Steps = append([]seeds.InstallSpec{}, p.Approval.Payload.Steps...)
+		out.Approval = &a
+	}
 	if p.Execution != nil {
 		exec := *p.Execution
 		exec.Steps = append([]DependencyStepResult{}, p.Execution.Steps...)

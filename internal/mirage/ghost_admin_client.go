@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/danmuck/edgectl/internal/adminauth"
+	"github.com/danmuck/edgectl/internal/approval"
 	"github.com/danmuck/edgectl/internal/identity"
 	"github.com/danmuck/edgectl/internal/protocol/frame"
 	"github.com/danmuck/edgectl/internal/protocol/session"
@@ -42,7 +43,7 @@ type ghostInstallPlan struct {
 	ProposalID string              `json:"proposal_id"`
 	ApprovedBy string              `json:"approved_by"`
 	Specs      []seeds.InstallSpec `json:"specs"`
-	Auth       string              `json:"auth,omitempty"`
+	Approval   *approval.Signed    `json:"approval,omitempty"`
 }
 
 // Wire shape of Ghost's install_dependencies result (ghost.InstallPlanResult).
@@ -208,7 +209,7 @@ func (c *GhostControlClient) InstallDependencies(ctx context.Context, p Dependen
 			ProposalID: p.ID,
 			ApprovedBy: p.ApprovedBy,
 			Specs:      p.Steps,
-			Auth:       string(c.commandFrameAuth),
+			Approval:   p.Approval,
 		},
 	}, &out); err != nil {
 		return DependencyExecution{}, err

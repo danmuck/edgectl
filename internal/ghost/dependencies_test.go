@@ -10,18 +10,32 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/danmuck/edgectl/internal/adminauth"
+	"github.com/danmuck/edgectl/internal/approval"
+	"github.com/danmuck/edgectl/internal/identity"
 	"github.com/danmuck/edgectl/internal/protocol/schema"
 	"github.com/danmuck/edgectl/internal/seeds"
 	"github.com/danmuck/edgectl/internal/testutil/testlog"
+	"github.com/danmuck/edgectl/internal/testutil/tlstest"
 )
 
-// Ghost with installs enabled, a temp workspace, and installer HTTP pointed at a TLS test server.
-func newInstallGhost(t *testing.T, server *httptest.Server) (*Service, string) {
+// installHarness is a Ghost that accepts install plans plus an operator who signs approvals.
+type installHarness struct {
+	svc       *Service
+	workspace string
+	pki       *tlstest.PKI
+	signer    *approval.Signer
+}
+
+// Ghost with installs enabled, its admin CA set to a temp root, and installer HTTP pointed at server.
+func newInstallGhost(t *testing.T, server *httptest.Server) *installHarness {
 	t.Helper()
+	p := tlstest.NewPKI(t)
 	workspace := t.TempDir()
 	cfg := DefaultServiceConfig()
-	cfg.AdminFrameAuthToken = testInstallToken
+	cfg.AdminTLS = adminauth.Credentials{CAFile: p.CAFile()}
 	cfg.SeedInstall = SeedInstallConfig{
 		Enabled:       true,
 		WorkspaceRoot: workspace,
@@ -35,7 +49,17 @@ func newInstallGhost(t *testing.T, server *httptest.Server) (*Service, string) {
 	if server != nil {
 		svc.installerConfigHook = func(c *seeds.InstallerConfig) { c.HTTPClient = server.Client() }
 	}
-	return svc, workspace
+	return &installHarness{svc: svc, workspace: workspace, pki: p, signer: operatorSigner(t, p, "lead")}
+}
+
+func operatorSigner(t *testing.T, p *tlstest.PKI, id string) *approval.Signer {
+	t.Helper()
+	cert, key, _ := p.Issue(t, identity.RoleOperator, id)
+	s, err := approval.LoadSigner(cert, key)
+	if err != nil {
+		t.Fatalf("load signer: %v", err)
+	}
+	return s
 }
 
 func toolServer(t *testing.T, payload []byte) (*httptest.Server, string) {
@@ -53,53 +77,77 @@ func toolSpec(url, sum, dest string) seeds.InstallSpec {
 	}
 }
 
-const testInstallToken = "install-secret"
-
-func approvedPlan(specs ...seeds.InstallSpec) InstallPlanRequest {
-	return InstallPlanRequest{ProposalID: "depprop.ghost.alpha.1", ApprovedBy: "user:approver", Specs: specs, Auth: testInstallToken}
+// Plan carrying an operator-signed approval for this Ghost over exactly specs.
+func (h *installHarness) plan(t *testing.T, specs ...seeds.InstallSpec) InstallPlanRequest {
+	t.Helper()
+	return h.planSignedBy(t, h.signer, h.svc.cfg.GhostID, time.Now().Add(10*time.Minute), specs...)
 }
 
-func TestInstallPlanRequiresEnabledAndApproval(t *testing.T) {
+func (h *installHarness) planSignedBy(t *testing.T, s *approval.Signer, ghostID string, expires time.Time, specs ...seeds.InstallSpec) InstallPlanRequest {
+	t.Helper()
+	nonce, _ := approval.NewNonce()
+	signed, err := s.Sign(approval.Payload{
+		ProposalID: "depprop.1", GhostID: ghostID, ProposedBy: "edgectl://operator/ops",
+		Steps: specs, ExpiresAtMS: uint64(expires.UnixMilli()), Nonce: nonce,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return InstallPlanRequest{ProposalID: "depprop.1", ApprovedBy: s.Principal.String(), Specs: specs, Approval: &signed}
+}
+
+func (h *installHarness) installed(name string) bool {
+	_, err := os.Stat(filepath.Join(h.workspace, "local", "seeds", "seed.tool", name))
+	return err == nil
+}
+
+func TestInstallPlanRequiresEnabledCAAndApproval(t *testing.T) {
 	testlog.Start(t)
 	disabled := NewServiceWithConfig(DefaultServiceConfig())
-	if _, err := disabled.ExecuteInstallPlan(approvedPlan()); !errors.Is(err, ErrDependencyInstallDisabled) {
-		t.Fatalf("expected ErrDependencyInstallDisabled, got %v", err)
+	if _, err := disabled.ExecuteInstallPlan(InstallPlanRequest{}); !errors.Is(err, ErrDependencyInstallDisabled) {
+		t.Fatalf("installs disabled: expected ErrDependencyInstallDisabled, got %v", err)
 	}
 
-	svc, _ := newInstallGhost(t, nil)
-	resp := svc.handleControlRequest(controlRequest{Action: "install_dependencies", Install: InstallPlanRequest{
-		Specs: []seeds.InstallSpec{{SeedID: "seed.tool", Method: seeds.InstallMethodBrew, Package: "x"}},
-		Auth:  testInstallToken,
+	h := newInstallGhost(t, nil)
+	resp := h.svc.handleControlRequest(controlRequest{Action: "install_dependencies", Install: InstallPlanRequest{
+		ProposalID: "depprop.1",
+		Specs:      []seeds.InstallSpec{{SeedID: "seed.tool", Method: seeds.InstallMethodBrew, Package: "x"}},
 	}}, "")
 	if resp.OK || resp.ErrorCode != schema.ErrCodeSemanticValidation {
-		t.Fatalf("unapproved plan: ok=%v code=%d err=%s", resp.OK, resp.ErrorCode, resp.Error)
+		t.Fatalf("unsigned plan: ok=%v code=%d err=%s", resp.OK, resp.ErrorCode, resp.Error)
+	}
+
+	// Fail closed: without an admin CA, approvals cannot be verified and no plan is accepted.
+	h.svc.cfg.AdminTLS.CAFile = ""
+	if _, err := h.svc.ExecuteInstallPlan(h.plan(t, seeds.InstallSpec{SeedID: "seed.tool", Method: seeds.InstallMethodBrew, Package: "x"})); !errors.Is(err, ErrDependencyInstallDisabled) {
+		t.Fatalf("no admin CA: expected ErrDependencyInstallDisabled, got %v", err)
 	}
 }
 
-// A plan with any non-compliant step installs nothing.
+// A signed plan with any non-compliant step installs nothing.
 func TestInstallPlanPolicyViolationInstallsNothing(t *testing.T) {
 	testlog.Start(t)
 	server, sum := toolServer(t, []byte("tool"))
-	svc, workspace := newInstallGhost(t, server)
+	h := newInstallGhost(t, server)
 
-	resp := svc.handleControlRequest(controlRequest{Action: "install_dependencies", Install: approvedPlan(
+	resp := h.svc.handleControlRequest(controlRequest{Action: "install_dependencies", Install: h.plan(t,
 		toolSpec(server.URL, sum, "seed.tool/tool"),
 		seeds.InstallSpec{SeedID: "seed.tool", Method: "apt", Package: "docker.io"},
 	)}, "")
 	if resp.OK || resp.ErrorCode != schema.ErrCodeSemanticValidation {
 		t.Fatalf("expected semantic rejection, got ok=%v code=%d err=%s", resp.OK, resp.ErrorCode, resp.Error)
 	}
-	if _, err := os.Stat(filepath.Join(workspace, "local", "seeds", "seed.tool", "tool")); !os.IsNotExist(err) {
-		t.Fatalf("no step may run when the plan violates policy, stat err=%v", err)
+	if h.installed("tool") {
+		t.Fatalf("no step may run when the plan violates policy")
 	}
 }
 
 func TestInstallPlanSuccessViaAdminAction(t *testing.T) {
 	testlog.Start(t)
 	server, sum := toolServer(t, []byte("tool-binary"))
-	svc, workspace := newInstallGhost(t, server)
+	h := newInstallGhost(t, server)
 
-	resp := svc.handleControlRequest(controlRequest{Action: "install_dependencies", Install: approvedPlan(toolSpec(server.URL, sum, "seed.tool/tool"))}, "")
+	resp := h.svc.handleControlRequest(controlRequest{Action: "install_dependencies", Install: h.plan(t, toolSpec(server.URL, sum, "seed.tool/tool"))}, "")
 	if !resp.OK {
 		t.Fatalf("install failed: %s", resp.Error)
 	}
@@ -112,8 +160,8 @@ func TestInstallPlanSuccessViaAdminAction(t *testing.T) {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 
-	status := svc.DependencyStatus([]string{"tool", "definitely-not-installed-xyz"})
-	if len(status) != 2 || !status[0].Present || status[0].Path != filepath.Join(workspace, "local", "bin", "tool") || status[1].Present {
+	status := h.svc.DependencyStatus([]string{"tool", "definitely-not-installed-xyz"})
+	if len(status) != 2 || !status[0].Present || status[0].Path != filepath.Join(h.workspace, "local", "bin", "tool") || status[1].Present {
 		t.Fatalf("unexpected dependency status: %+v", status)
 	}
 }
@@ -122,9 +170,9 @@ func TestInstallPlanSuccessViaAdminAction(t *testing.T) {
 func TestInstallPlanFailureRollsBackPriorSteps(t *testing.T) {
 	testlog.Start(t)
 	server, sum := toolServer(t, []byte("tool-binary"))
-	svc, workspace := newInstallGhost(t, server)
+	h := newInstallGhost(t, server)
 
-	result, err := svc.ExecuteInstallPlan(approvedPlan(
+	result, err := h.svc.ExecuteInstallPlan(h.plan(t,
 		toolSpec(server.URL, sum, "seed.tool/first"),
 		toolSpec(server.URL, "1111111111111111111111111111111111111111111111111111111111111111", "seed.tool/second"),
 		toolSpec(server.URL, sum, "seed.tool/third"),
@@ -142,51 +190,67 @@ func TestInstallPlanFailureRollsBackPriorSteps(t *testing.T) {
 	if len(result.Rollback) != 1 || !result.Rollback[0].RolledBack {
 		t.Fatalf("expected first step rolled back, got %+v", result.Rollback)
 	}
-	if _, err := os.Stat(filepath.Join(workspace, "local", "seeds", "seed.tool", "first")); !os.IsNotExist(err) {
-		t.Fatalf("rolled-back artifact still present, stat err=%v", err)
+	if h.installed("first") {
+		t.Fatalf("rolled-back artifact still present")
 	}
 }
 
-// Fail closed: with installs enabled but no admin token configured, no plan is accepted.
-func TestInstallPlanRefusedWithoutConfiguredToken(t *testing.T) {
+// Ghost verifies approvals itself: foreign roots, other ghosts, changed steps, expiry, and replays fail.
+func TestInstallPlanVerifiesApprovalIndependently(t *testing.T) {
 	testlog.Start(t)
-	svc, _ := newInstallGhost(t, nil)
-	svc.cfg.AdminFrameAuthToken = ""
-	_, err := svc.ExecuteInstallPlan(approvedPlan(seeds.InstallSpec{SeedID: "seed.tool", Method: seeds.InstallMethodBrew, Package: "x"}))
-	if !errors.Is(err, ErrDependencyInstallDisabled) {
-		t.Fatalf("expected ErrDependencyInstallDisabled without token, got %v", err)
+	server, sum := toolServer(t, []byte("tool-binary"))
+	h := newInstallGhost(t, server)
+	spec := toolSpec(server.URL, sum, "seed.tool/tool")
+	future := time.Now().Add(10 * time.Minute)
+
+	foreign := operatorSigner(t, tlstest.NewPKI(t), "lead")
+	if _, err := h.svc.ExecuteInstallPlan(h.planSignedBy(t, foreign, h.svc.cfg.GhostID, future, spec)); !errors.Is(err, approval.ErrInvalidApproval) {
+		t.Errorf("foreign root: expected ErrInvalidApproval, got %v", err)
+	}
+	if _, err := h.svc.ExecuteInstallPlan(h.planSignedBy(t, h.signer, "ghost.other", future, spec)); !errors.Is(err, ErrDependencyPlanUnapproved) {
+		t.Errorf("other ghost: expected ErrDependencyPlanUnapproved, got %v", err)
+	}
+	changed := h.plan(t, spec)
+	changed.Specs = []seeds.InstallSpec{toolSpec(server.URL, sum, "seed.tool/other")}
+	if _, err := h.svc.ExecuteInstallPlan(changed); !errors.Is(err, ErrDependencyPlanUnapproved) {
+		t.Errorf("changed steps: expected ErrDependencyPlanUnapproved, got %v", err)
+	}
+	h.svc.approvalNow = func() time.Time { return future.Add(time.Minute) }
+	if _, err := h.svc.ExecuteInstallPlan(h.planSignedBy(t, h.signer, h.svc.cfg.GhostID, future, spec)); !errors.Is(err, approval.ErrApprovalExpired) {
+		t.Errorf("expired: expected ErrApprovalExpired, got %v", err)
+	}
+	h.svc.approvalNow = nil
+	if h.installed("tool") || h.installed("other") {
+		t.Fatalf("rejected approvals must not install")
+	}
+
+	once := h.plan(t, spec)
+	if _, err := h.svc.ExecuteInstallPlan(once); err != nil {
+		t.Fatalf("first use: %v", err)
+	}
+	if _, err := h.svc.ExecuteInstallPlan(once); !errors.Is(err, ErrApprovalReplayed) {
+		t.Fatalf("replay: expected ErrApprovalReplayed, got %v", err)
 	}
 }
 
-func TestInstallPlanRejectsWrongToken(t *testing.T) {
-	testlog.Start(t)
-	svc, _ := newInstallGhost(t, nil)
-	plan := approvedPlan(seeds.InstallSpec{SeedID: "seed.tool", Method: seeds.InstallMethodBrew, Package: "x"})
-	plan.Auth = "guess"
-	resp := svc.handleControlRequest(controlRequest{Action: "install_dependencies", Install: plan}, "")
-	if resp.OK || resp.ErrorCode != schema.ErrCodeTransportFailure {
-		t.Fatalf("wrong token: ok=%v code=%d err=%s", resp.OK, resp.ErrorCode, resp.Error)
-	}
-}
-
-// With the real catalog, a step that is not an exact catalog entry is refused and nothing runs.
+// With the real catalog, a signed step that is not an exact catalog entry is refused and nothing runs.
 func TestInstallPlanRejectsUncatalogedStepWithRealCatalog(t *testing.T) {
 	testlog.Start(t)
 	server, sum := toolServer(t, []byte("payload"))
-	svc, workspace := newInstallGhost(t, server)
-	svc.catalogContains = nil
+	h := newInstallGhost(t, server)
+	h.svc.catalogContains = nil
 
-	resp := svc.handleControlRequest(controlRequest{Action: "install_dependencies", Install: approvedPlan(toolSpec(server.URL, sum, "seed.tool/tool"))}, "")
+	resp := h.svc.handleControlRequest(controlRequest{Action: "install_dependencies", Install: h.plan(t, toolSpec(server.URL, sum, "seed.tool/tool"))}, "")
 	if resp.OK || resp.ErrorCode != schema.ErrCodeSemanticValidation {
 		t.Fatalf("uncataloged step: ok=%v code=%d err=%s", resp.OK, resp.ErrorCode, resp.Error)
 	}
-	if _, err := os.Stat(filepath.Join(workspace, "local", "seeds", "seed.tool", "tool")); !os.IsNotExist(err) {
-		t.Fatalf("uncataloged step must not install, stat err=%v", err)
+	if h.installed("tool") {
+		t.Fatalf("uncataloged step must not install")
 	}
 
 	// A brew step with the catalog package but an extra tap is no longer an exact entry.
 	tampered := seeds.InstallSpec{SeedID: "seed.docker", Method: seeds.InstallMethodBrew, Package: "docker", Binary: "docker", InstallToBin: true, Tap: "evil/tap"}
-	if _, err := svc.ExecuteInstallPlan(approvedPlan(tampered)); !errors.Is(err, ErrDependencyNotCataloged) {
+	if _, err := h.svc.ExecuteInstallPlan(h.plan(t, tampered)); !errors.Is(err, ErrDependencyNotCataloged) {
 		t.Fatalf("tampered catalog step: expected ErrDependencyNotCataloged, got %v", err)
 	}
 }

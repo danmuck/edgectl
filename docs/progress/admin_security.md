@@ -1,6 +1,6 @@
 # Admin Boundary Security Tracker
 
-Status: `In Progress (Slices A-C complete)`
+Status: `In Progress (Slices A-D complete)`
 
 Contract (approved 2026-11-23): [`docs/architecture/definitions/admin_security.toml`](../architecture/definitions/admin_security.toml)
 
@@ -75,10 +75,18 @@ Slice C notes (2026-11-23):
 
 ### Slice D — Signed install approvals
 
-- [ ] Canonical approval payload and ECDSA signing in `client-tm` with the operator key.
-- [ ] Mirage verifies and stores the signed approval; enforces approver != proposer and expiry.
-- [ ] Ghost verifies the approval independently (signature chain, role, separation, expiry, ghost_id, catalog, nonce replay ledger).
-- [ ] Remove the `admin_frame_auth_token` requirement from `install_dependencies` once approvals are verified.
+- [x] Canonical approval payload and ECDSA signing in `client-tm` with the operator key.
+- [x] Mirage verifies and stores the signed approval; enforces approver != proposer and expiry.
+- [x] Ghost verifies the approval independently (signature chain, role, separation, expiry, ghost_id, catalog, nonce replay ledger).
+- [x] Remove the `admin_frame_auth_token` requirement from `install_dependencies` once approvals are verified.
+
+Slice D notes (2026-11-23):
+
+- `internal/approval`: `Payload` (`proposal_id, ghost_id, proposed_by, steps, expires_at_ms, nonce`), sha256 over canonical JSON, ECDSA P-256 ASN.1 signature, approver certificate carried with the approval. `Verify` checks chain to the admin root (clientAuth), operator role, signature, unexpired with lifetime <= 15 min (+1 min skew), and approver != proposer. `LoadSigner` loads only operator keys (0600).
+- Mirage `approve_dependencies` requires a signed approval: verified against `admin_tls_ca_file`; signer must be the calling operator; payload must match the stored proposal exactly; recorded on the proposal and audited with proposer, approver, and a signature digest. Unsigned or mismatched approvals return `1300`.
+- Ghost `install_dependencies` requires the signed approval (no shared token): verified against its own `admin_tls_ca_file`; must name this `ghost_id` and the request's proposal; only the signed steps run (listed steps must match); every step must pass policy and be an exact catalog entry; nonces are recorded until expiry and replays rejected. Without an admin CA, installs are disabled.
+- `client-tm`: Mirage console > Dependencies (list, propose, approve, execute). Approve fetches the stored proposal, shows it, and signs exactly its content with the operator key (10-minute expiry, random nonce).
+- A compromised Mirage can no longer forge an approval: it lacks any operator key, and Ghost verifies independently.
 
 ### Slice E — Deploy hardening and token removal
 

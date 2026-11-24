@@ -5,13 +5,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/danmuck/edgectl/internal/approval"
 	"github.com/danmuck/edgectl/internal/depcatalog"
+	"github.com/danmuck/edgectl/internal/identity"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/danmuck/edgectl/internal/protocol/schema"
 	"github.com/danmuck/edgectl/internal/seeds"
 	"github.com/danmuck/edgectl/internal/testutil/testlog"
+	"github.com/danmuck/edgectl/internal/testutil/tlstest"
 )
 
 // Every catalog entry must satisfy install policy and be recognized by depcatalog.Contains.
@@ -73,18 +77,55 @@ func TestDependencyProposalStateMachine(t *testing.T) {
 	if _, err := l.BeginExecution(p.ID, "user:ops"); !errors.Is(err, ErrDependencyProposalState) {
 		t.Fatalf("execute before approval: expected ErrDependencyProposalState, got %v", err)
 	}
-	if _, err := l.Approve(p.ID, ""); !errors.Is(err, ErrInvalidDependencyProposal) {
-		t.Fatalf("approval without actor: expected ErrInvalidDependencyProposal, got %v", err)
+	signed := signedFor(t, operatorSigner(t, tlstest.NewPKI(t), "lead"), p)
+	if _, err := l.Approve(p.ID, "", signed); !errors.Is(err, ErrInvalidDependencyProposal) {
+		t.Fatalf("approval without approver: expected ErrInvalidDependencyProposal, got %v", err)
 	}
-	if _, err := l.Approve(p.ID, "user:lead"); err != nil {
+	if _, err := l.Approve(p.ID, "user:ops", signed); !errors.Is(err, ErrInvalidDependencyProposal) {
+		t.Fatalf("proposer approving own proposal: expected ErrInvalidDependencyProposal, got %v", err)
+	}
+	mismatch := signed
+	mismatch.Payload.ProposedBy = "user:someone"
+	if _, err := l.Approve(p.ID, "edgectl://operator/lead", mismatch); !errors.Is(err, ErrInvalidDependencyProposal) {
+		t.Fatalf("payload not matching proposal: expected ErrInvalidDependencyProposal, got %v", err)
+	}
+	approved, err := l.Approve(p.ID, "edgectl://operator/lead", signed)
+	if err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	if _, err := l.Approve(p.ID, "user:lead"); !errors.Is(err, ErrDependencyProposalState) {
+	if approved.Approval == nil || approved.ApprovedBy != "edgectl://operator/lead" {
+		t.Fatalf("approval not recorded: %+v", approved)
+	}
+	if _, err := l.Approve(p.ID, "edgectl://operator/lead", signed); !errors.Is(err, ErrDependencyProposalState) {
 		t.Fatalf("double approval: expected ErrDependencyProposalState, got %v", err)
 	}
-	if _, err := l.Approve("depprop.none", "user:lead"); !errors.Is(err, ErrDependencyProposalNotFound) {
+	if _, err := l.Approve("depprop.none", "edgectl://operator/lead", signed); !errors.Is(err, ErrDependencyProposalNotFound) {
 		t.Fatalf("unknown id: expected ErrDependencyProposalNotFound, got %v", err)
 	}
+}
+
+func operatorSigner(t *testing.T, p *tlstest.PKI, id string) *approval.Signer {
+	t.Helper()
+	cert, key, _ := p.Issue(t, identity.RoleOperator, id)
+	s, err := approval.LoadSigner(cert, key)
+	if err != nil {
+		t.Fatalf("load signer: %v", err)
+	}
+	return s
+}
+
+// Operator approval over exactly the proposal content, valid for ten minutes.
+func signedFor(t *testing.T, s *approval.Signer, p DependencyProposal) approval.Signed {
+	t.Helper()
+	nonce, _ := approval.NewNonce()
+	signed, err := s.Sign(approval.Payload{
+		ProposalID: p.ID, GhostID: p.GhostID, ProposedBy: p.ProposedBy, Steps: p.Steps,
+		ExpiresAtMS: uint64(time.Now().Add(10 * time.Minute).UnixMilli()), Nonce: nonce,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return signed
 }
 
 // Mirage service with a ghost admin route and a scripted plan dispatcher.
@@ -103,7 +144,7 @@ func proposeAndApprove(t *testing.T, svc *Service) DependencyProposal {
 	if err != nil {
 		t.Fatalf("propose: %v", err)
 	}
-	if _, err := l.Approve(p.ID, "user:lead"); err != nil {
+	if _, err := l.Approve(p.ID, "edgectl://operator/lead", signedFor(t, operatorSigner(t, tlstest.NewPKI(t), "lead"), p)); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
 	return p
@@ -122,7 +163,7 @@ func TestExecuteDependencyProposalSuccessAudits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if sent.ApprovedBy != "user:lead" || len(sent.Steps) != 1 {
+	if sent.ApprovedBy != "edgectl://operator/lead" || sent.Approval == nil || len(sent.Steps) != 1 {
 		t.Fatalf("dispatched plan missing approval or steps: %+v", sent)
 	}
 	if done.State != ProposalSucceeded {
@@ -186,9 +227,14 @@ func TestExecuteDependencyProposalWithoutRouteFails(t *testing.T) {
 
 func TestDependencyAdminActionsAndCodes(t *testing.T) {
 	testlog.Start(t)
-	svc := newDependencyService(t, func(context.Context, string, DependencyProposal) (DependencyExecution, error) {
+	var dispatched DependencyProposal
+	svc := newDependencyService(t, func(_ context.Context, _ string, p DependencyProposal) (DependencyExecution, error) {
+		dispatched = p
 		return DependencyExecution{Succeeded: true}, nil
 	})
+	pki := tlstest.NewPKI(t)
+	svc.cfg.AdminTLS.CAFile = pki.CAFile()
+	lead := operatorSigner(t, pki, "lead")
 
 	resp := svc.handleAdminControlRequest(adminControlRequest{Action: "propose_dependencies", Dependency: AdminDependencyRequest{
 		GhostID: "ghost.alpha", SeedIDs: []string{"seed.docker"}, Actor: "user:ops",
@@ -202,11 +248,26 @@ func TestDependencyAdminActionsAndCodes(t *testing.T) {
 	if resp.OK || resp.ErrorCode != schema.ErrCodeSemanticValidation {
 		t.Fatalf("execute before approve: ok=%v code=%d", resp.OK, resp.ErrorCode)
 	}
-	for _, action := range []string{"approve_dependencies", "execute_dependencies"} {
-		resp = svc.handleAdminControlRequest(adminControlRequest{Action: action, Dependency: AdminDependencyRequest{ProposalID: p.ID, Actor: "user:lead"}})
-		if !resp.OK {
-			t.Fatalf("%s: %s", action, resp.Error)
-		}
+	// Approval needs a signature; an unsigned or wrongly-attributed approval is refused (1300).
+	resp = svc.handleAdminControlRequest(adminControlRequest{Action: "approve_dependencies", Dependency: AdminDependencyRequest{ProposalID: p.ID, Actor: "edgectl://operator/lead"}})
+	if resp.OK || resp.ErrorCode != schema.ErrCodeSemanticValidation {
+		t.Fatalf("unsigned approval: ok=%v code=%d %s", resp.OK, resp.ErrorCode, resp.Error)
+	}
+	signed := signedFor(t, lead, p)
+	resp = svc.handleAdminControlRequest(adminControlRequest{Action: "approve_dependencies", Dependency: AdminDependencyRequest{ProposalID: p.ID, Actor: "edgectl://operator/other", Approval: &signed}})
+	if resp.OK || resp.ErrorCode != schema.ErrCodeSemanticValidation {
+		t.Fatalf("approval submitted by a different operator: ok=%v code=%d %s", resp.OK, resp.ErrorCode, resp.Error)
+	}
+	resp = svc.handleAdminControlRequest(adminControlRequest{Action: "approve_dependencies", Dependency: AdminDependencyRequest{ProposalID: p.ID, Actor: "edgectl://operator/lead", Approval: &signed}})
+	if !resp.OK {
+		t.Fatalf("approve: %s", resp.Error)
+	}
+	resp = svc.handleAdminControlRequest(adminControlRequest{Action: "execute_dependencies", Dependency: AdminDependencyRequest{ProposalID: p.ID, Actor: "edgectl://operator/lead"}})
+	if !resp.OK {
+		t.Fatalf("execute: %s", resp.Error)
+	}
+	if dispatched.Approval == nil || dispatched.Approval.SignatureDigest() != signed.SignatureDigest() {
+		t.Fatalf("signed approval was not forwarded to the ghost")
 	}
 	resp = svc.handleAdminControlRequest(adminControlRequest{Action: "list_dependency_proposals", Dependency: AdminDependencyRequest{ProposalID: p.ID}})
 	list, _ := resp.Data.([]DependencyProposal)
@@ -240,15 +301,20 @@ func TestGhostControlClientInstallDependencies(t *testing.T) {
 		_, _ = conn.Write(append(resp, '\n'))
 	}()
 
-	client := NewGhostControlClient(ln.Addr().String()).WithCommandFrameAuthToken("secret")
-	exec, err := client.InstallDependencies(context.Background(), DependencyProposal{
-		ID: "depprop.ghost.alpha.9", ApprovedBy: "user:lead", Steps: []seeds.InstallSpec{depcatalog.CatalogFor("seed.docker")[0].Spec},
-	})
+	client := NewGhostControlClient(ln.Addr().String())
+	proposal := DependencyProposal{
+		ID: "depprop.ghost.alpha.9", GhostID: "ghost.alpha", ProposedBy: "user:ops", ApprovedBy: "edgectl://operator/lead",
+		Steps: []seeds.InstallSpec{depcatalog.CatalogFor("seed.docker")[0].Spec},
+	}
+	signed := signedFor(t, operatorSigner(t, tlstest.NewPKI(t), "lead"), proposal)
+	proposal.Approval = &signed
+	exec, err := client.InstallDependencies(context.Background(), proposal)
 	if err != nil {
 		t.Fatalf("install: %v", err)
 	}
 	req := <-got
-	if req.Action != "install_dependencies" || req.Install == nil || req.Install.ApprovedBy != "user:lead" || req.Install.Auth != "secret" || len(req.Install.Specs) != 1 {
+	if req.Action != "install_dependencies" || req.Install == nil || req.Install.ApprovedBy != "edgectl://operator/lead" ||
+		req.Install.Approval == nil || req.Install.Approval.SignatureDigest() != signed.SignatureDigest() || len(req.Install.Specs) != 1 {
 		t.Fatalf("unexpected request: %+v", req)
 	}
 	if !exec.Succeeded || len(exec.Steps) != 1 {

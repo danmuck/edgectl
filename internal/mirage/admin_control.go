@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/danmuck/edgectl/internal/adminauth"
+	"github.com/danmuck/edgectl/internal/approval"
 	"github.com/danmuck/edgectl/internal/protocol/schema"
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	logs "github.com/danmuck/smplog"
@@ -97,6 +98,9 @@ func adminErrorCode(err error) uint32 {
 	}
 	switch {
 	case errors.Is(err, errAdminInvalidRequest),
+		errors.Is(err, approval.ErrInvalidApproval),
+		errors.Is(err, approval.ErrApprovalExpired),
+		errors.Is(err, approval.ErrSeparationOfDuties),
 		errors.Is(err, ErrInvalidDependencyProposal),
 		errors.Is(err, ErrDependencyProposalNotFound),
 		errors.Is(err, ErrDependencyProposalState),

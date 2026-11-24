@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/danmuck/edgectl/internal/adminauth"
+	"github.com/danmuck/edgectl/internal/approval"
 	"github.com/danmuck/edgectl/internal/protocol/frame"
 	"github.com/danmuck/edgectl/internal/protocol/schema"
 	"github.com/danmuck/edgectl/internal/protocol/session"
@@ -40,6 +41,10 @@ func adminErrorCode(err error) uint32 {
 		errors.Is(err, ErrCommandTargetMismatch),
 		errors.Is(err, ErrDuplicateMessageID),
 		errors.Is(err, ErrDependencyPlanUnapproved),
+		errors.Is(err, ErrApprovalReplayed),
+		errors.Is(err, approval.ErrInvalidApproval),
+		errors.Is(err, approval.ErrApprovalExpired),
+		errors.Is(err, approval.ErrSeparationOfDuties),
 		errors.Is(err, ErrDependencyNotCataloged),
 		errors.Is(err, seeds.ErrInstallInvalidSpec),
 		errors.Is(err, seeds.ErrInstallMethodNotAllowed),

@@ -95,8 +95,9 @@ func (a *App) runMirageAdminConsole() error {
 		fmt.Println("  4) Reconcile intent")
 		fmt.Println("  5) Reports")
 		fmt.Println("  6) Ghost routing")
-		fmt.Println("  7) Back")
-		choice, err := a.promptInt("Choose", 1, 7, true, true)
+		fmt.Println("  7) Dependencies")
+		fmt.Println("  8) Back")
+		choice, err := a.promptInt("Choose", 1, 8, true, true)
 		if err != nil {
 			if errors.Is(err, ErrNavigateBack) {
 				return nil
@@ -130,6 +131,10 @@ func (a *App) runMirageAdminConsole() error {
 				logs.Errf("ghost routing console failed: %v", err)
 			}
 		case 7:
+			if err := a.runMirageDependencyConsole(target); err != nil {
+				logs.Errf("dependency console failed: %v", err)
+			}
+		case 8:
 			return nil
 		}
 	}

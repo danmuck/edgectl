@@ -129,6 +129,10 @@ type Service struct {
 	installerConfigHook func(*seeds.InstallerConfig)
 	// Test seam for catalog membership; nil uses depcatalog.Contains.
 	catalogContains func(seeds.InstallSpec) bool
+	// Approval nonces seen until their expiry (replay protection; guarded by installMu).
+	usedNonces map[string]time.Time
+	// Test seam for the approval clock; nil uses time.Now.
+	approvalNow func() time.Time
 }
 
 // CommandFrameAuthValidator validates optional command-frame auth bytes for admin execute_envelope RPCs.

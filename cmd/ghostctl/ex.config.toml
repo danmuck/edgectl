@@ -35,8 +35,8 @@ mirage_tls_insecure_skip_verify = false
 # Ghost executes only Mirage-approved plans built from Mirage's dependency catalog
 # (propose_dependencies -> approve_dependencies -> execute_dependencies); [[seed_install]]
 # entries are rejected. The whitelist limits which seed ids a plan may install for.
-# Install plans are refused unless admin_frame_auth_token is set and presented by Mirage
-# (miragectl ghost_admin_frame_auth_token), and every step must be a dependency-catalog entry.
+# Install plans must carry an operator-signed approval, which this Ghost verifies against
+# admin_tls_ca_file (required), and every step must be a dependency-catalog entry.
 seed_install_enabled = true
 seed_install_root = "local/seeds"
 seed_install_whitelist = ["seed.docker", "seed.mongod"]

@@ -159,13 +159,14 @@ type MirageAvailableService struct {
 }
 
 type mirageControlRequest struct {
-	Action         string                    `json:"action"`
-	Limit          int                       `json:"limit,omitempty"`
-	IntentID       string                    `json:"intent_id,omitempty"`
-	Issue          MirageIssueRequest        `json:"issue,omitempty"`
-	Spawn          mirage.SpawnGhostRequest  `json:"spawn,omitempty"`
-	Deploy         mirage.DeployGhostRequest `json:"deploy,omitempty"`
-	GhostAdminAddr string                    `json:"ghost_admin_addr,omitempty"`
+	Action         string                        `json:"action"`
+	Limit          int                           `json:"limit,omitempty"`
+	IntentID       string                        `json:"intent_id,omitempty"`
+	Issue          MirageIssueRequest            `json:"issue,omitempty"`
+	Spawn          mirage.SpawnGhostRequest      `json:"spawn,omitempty"`
+	Deploy         mirage.DeployGhostRequest     `json:"deploy,omitempty"`
+	GhostAdminAddr string                        `json:"ghost_admin_addr,omitempty"`
+	Dependency     mirage.AdminDependencyRequest `json:"dependency,omitempty"`
 }
 
 type mirageControlResponse struct {
