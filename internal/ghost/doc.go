@@ -59,6 +59,8 @@
 // Admin transport (admin_security.toml [transport], authorization.privileged):
 // - admin endpoint is mTLS as edgectl://ghost/<ghost_id>; plaintext only on loopback outside production
 //
+// - ServeAdmin serves a listener from adminauth.Listen (which owns the transport rules)
+//
 // - no shared admin token: execute_envelope frames carrying an auth block are refused (1300)
 //
 // - privileged actions (execute_envelope, install_dependencies, spawn_ghost, bind_mirage) require an mTLS peer

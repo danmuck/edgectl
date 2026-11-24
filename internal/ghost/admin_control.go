@@ -225,9 +225,14 @@ func (s *Service) serveAdminControl(ctx context.Context, addr string) error {
 	if err != nil {
 		return err
 	}
-	defer ln.Close()
 	logs.Infof("ghost.admin listening addr=%q", ln.Addr().String())
+	return s.ServeAdmin(ctx, ln)
+}
 
+// ServeAdmin answers admin requests on ln until ctx ends or ln fails; ln comes from adminauth.Listen
+// so transport rules (mTLS, loopback-only plaintext) are already enforced. Closes ln on return.
+func (s *Service) ServeAdmin(ctx context.Context, ln net.Listener) error {
+	defer ln.Close()
 	go func() {
 		<-ctx.Done()
 		_ = ln.Close()

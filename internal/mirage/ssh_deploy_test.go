@@ -47,9 +47,9 @@ func (f *fakeSSH) Run(name string, args ...string) ([]byte, []byte, uint32, erro
 type deployHarness struct {
 	svc        *Service
 	leafSerial string
-	ssh      *fakeSSH
-	pki      *tlstest.PKI
-	manifest GhostManifest
+	ssh        *fakeSSH
+	pki        *tlstest.PKI
+	manifest   GhostManifest
 }
 
 // Mirage with admin TLS and one valid manifest for ghost.pi.

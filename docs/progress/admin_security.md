@@ -118,10 +118,23 @@ Slice E notes (2026-11-23):
 
 ### Slice F — Verification
 
-- [ ] Negative tests per endpoint: no cert, wrong CA, expired, revoked serial, wrong role, wrong pinned Mirage, multiple URI SANs, plaintext on non-loopback.
-- [ ] Approval tests: forged signature, Mirage-signed instead of operator, approver == proposer, expired, replayed nonce, ghost_id mismatch, uncataloged step. (Unit coverage for these plus denied signer, stale intent, re-wrapped intent, and catalog-step mismatch landed with the proposer-signature amendment; Slice F adds the cross-process end-to-end run.)
-- [ ] Deploy tests: unknown target rejected, request-supplied host ignored, no token or other Ghost's key in generated config.
-- [ ] End-to-end over real TLS sockets for both endpoints.
+- [x] Negative tests per endpoint: no cert, wrong CA, expired, revoked serial, wrong role, wrong pinned Mirage, multiple URI SANs, plaintext on non-loopback.
+- [x] Approval tests: forged signature, Mirage-signed instead of operator, approver == proposer, expired, replayed nonce, ghost_id mismatch, uncataloged step.
+- [x] Deploy tests: unknown target rejected, request-supplied host ignored, no token or other Ghost's key in generated config.
+- [x] End-to-end over real TLS sockets for both endpoints.
+
+Slice F notes (2026-11-23):
+
+- `internal/ghost/admin_negative_test.go` and `internal/mirage/admin_negative_test.go`: one matrix per endpoint over a real mTLS listener using the service's own handler. Each case (no client cert, wrong CA, expired, revoked serial, wrong role, wrong/peer Mirage, multiple URI SANs, plaintext client) must fail the connection or get `1000`, and the side effect (Ghost `execute_envelope`; Mirage `submit_issue`, `deploy_ghost`) must not happen; a valid principal on the same listener is the control. Plaintext on `0.0.0.0` is refused at listen time for both services.
+- Test PKI helpers: `tlstest.PKI.IssueExpired`, `IssueMultiURI` (same root, so only the property under test fails).
+- Approval coverage map: forged/tampered (`approval_test.go` TestVerifyRejections), Mirage certificate as signer (TestNonOperatorCannotSign), approver == proposer (approval, Mirage ledger and admin, Ghost, end-to-end), expired and stale intent (approval, Ghost), replayed nonce and re-wrapped intent (Ghost), ghost_id mismatch (approval, Ghost), uncataloged step (Ghost real catalog), denied signer (approval, Mirage, Ghost).
+- Deploy coverage: `internal/mirage/ssh_deploy_test.go` (Slice E).
+- `internal/ghost/e2e_admin_test.go` (package `ghost_test`): Ghost and Mirage admin endpoints on real mTLS loopback listeners with one root. Operator `ops` attaches the Ghost and proposes (signed intent); self-approval and an approval relayed by another operator are refused (`1300`); `lead` approves; execute dispatches over pinned mTLS; the Ghost verifies both signatures and runs the real catalog step (installer runner recorded, nothing installed on the host). Then: re-execute refused; operator `install_dependencies` on the Ghost refused (`1000`); the pinned Mirage replaying the consumed approval refused (`1300`).
+- Seams: `Service.ServeAdmin(ctx, ln)` exported on both services (the listen path calls it; transport rules stay in `adminauth.Listen`); `internal/ghost/export_test.go` exposes the installer runner and bootstrap to `ghost_test` only.
+
+## Status
+
+All six slices complete (2026-11-23). Not yet exercised on separate hosts; Phase 8 Slice E (cluster validation) remains the place for that.
 
 ## Decisions (user, 2026-11-23: "Approve as drafted")
 
@@ -134,4 +147,4 @@ Slice E notes (2026-11-23):
 ## Interim Risk
 
 - Resolved by Slice E: no shared token exists, and `deploy_ghost` reaches only configured, host-key-pinned targets.
-- Until Slice F's end-to-end run, keep both admin listeners bound to loopback or a trusted network segment.
+- Slice F verified the boundary in-process over real sockets; until a multi-host run (Phase 8 Slice E), treat cross-host behavior as unverified.
