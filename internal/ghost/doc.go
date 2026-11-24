@@ -50,6 +50,13 @@
 //
 // - CommandEnv.Peer is boundary metadata for logging only; heartbeat probes skip custody lines
 //
+// Admin transport (admin_security.toml [transport], authorization.privileged):
+// - admin endpoint is mTLS as edgectl://ghost/<ghost_id>; plaintext only on loopback outside production
+//
+// - privileged actions (execute_envelope, install_dependencies, spawn_ghost, bind_mirage) require an mTLS peer
+//
+// - session dialer requires a mirage principal, the pinned mirage_principal when set (required in production)
+//
 // Admin boundary errors (errors.toml):
 // - failed admin responses carry error_code; execute_envelope frames are version/flag gated (1100)
 //
@@ -78,6 +85,8 @@
 // - docs/architecture/definitions/observability.toml
 //
 // - docs/architecture/definitions/errors.toml
+//
+// - docs/architecture/definitions/admin_security.toml
 //
 // - docs/glossary/ghost_dispatch.md
 //

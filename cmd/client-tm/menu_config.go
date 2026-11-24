@@ -74,8 +74,8 @@ func (a *App) resetToDefaultConfig() error {
 		LocalGhostAdminAddr: "127.0.0.1:7010",
 	}
 	a.closeMirageTargets()
-	a.targets = []GhostTarget{{Name: "local-ghost", Admin: NewRemoteGhostAdmin("127.0.0.1:7010")}}
-	a.mirageTargets = []MirageTarget{{Name: "local-mirage", Admin: NewRemoteMirageAdmin("127.0.0.1:7020")}}
+	a.targets = []GhostTarget{{Name: "local-ghost", Admin: a.newGhostAdmin("127.0.0.1:7010", "ghost.local")}}
+	a.mirageTargets = []MirageTarget{{Name: "local-mirage", Admin: a.newMirageAdmin("127.0.0.1:7020", "mirage.local")}}
 	a.activeTarget = 0
 	a.activeMirage = 0
 	a.clearScreen = false

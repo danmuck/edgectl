@@ -14,6 +14,13 @@
 //
 // - keys load only with mode 0600; denied serials are rejected on every handshake
 //
+// Admin transport (admin_security.toml [transport]):
+// - admin endpoint is mTLS as edgectl://mirage/<mirage_id>; plaintext only on loopback outside production
+//
+// - privileged actions (deploy_ghost, approve/execute_dependencies) require an mTLS peer
+//
+// - Ghost admin clients dial as Mirage and pin edgectl://ghost/<ghost_id>
+//
 // Identity binding (transport_security.toml [identity_binding], errors.toml):
 // - session events must match the bound ghost_id, both declared and as planned for the command_id
 //

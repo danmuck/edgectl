@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/adminauth"
 	"github.com/danmuck/edgectl/internal/identity"
 	"github.com/danmuck/edgectl/internal/observability"
 	"github.com/danmuck/edgectl/internal/protocol/frame"
@@ -46,6 +47,9 @@ type ServiceConfig struct {
 	Session                  session.Config
 	// Dispatch attempts per command before retry_exhausted; <=0 uses DefaultCommandMaxAttempts.
 	CommandMaxAttempts int
+	// Mirage admin mTLS credentials (edgectl://mirage/<mirage_id>): serves the admin endpoint and
+	// dials Ghost admin endpoints. Empty CertFile = plaintext loopback only (development).
+	AdminTLS adminauth.Credentials
 }
 
 // Mirage service defaults for session endpoint configuration.
@@ -166,8 +170,8 @@ func NewServiceWithConfig(cfg ServiceConfig) *Service {
 		localAdminAddr = strings.TrimSpace(cfg.RootGhostAdminAddr)
 	}
 	if localAdminAddr != "" {
-		svc.controlClient = svc.newGhostControlClient(localAdminAddr)
-		svc.server.SetGhostSpawner(NewGhostAdminSpawner(localAdminAddr))
+		svc.controlClient = svc.newGhostControlClient(cfg.LocalGhostID, localAdminAddr)
+		svc.server.SetGhostSpawner(NewGhostAdminSpawner(svc.controlClient))
 		localGhostID := strings.TrimSpace(cfg.LocalGhostID)
 		if localGhostID != "" {
 			svc.server.RegisterExecutor(localGhostID, NewGhostAdminCommandExecutor(svc.controlClient))
@@ -180,7 +184,7 @@ func NewServiceWithConfig(cfg ServiceConfig) *Service {
 		svc.buildlogStore = NewGhostSeedBuildlogStore(svc.controlClient, strings.TrimSpace(cfg.BuildlogSeedSelector))
 	}
 	if addr := strings.TrimSpace(cfg.RootGhostAdminAddr); addr != "" && localAdminAddr == "" {
-		svc.server.SetGhostSpawner(NewGhostAdminSpawner(addr))
+		svc.server.SetGhostSpawner(NewGhostAdminSpawner(svc.newGhostControlClient("", addr)))
 	}
 	return svc
 }
@@ -307,7 +311,7 @@ func (s *Service) SnapshotConnectedGhosts() []RegisteredGhost {
 	bound := s.snapshotGhostAdmins()
 	now := time.Now()
 	for ghostID, adminAddr := range bound {
-		client := s.newGhostControlClient(adminAddr)
+		client := s.newGhostControlClient(ghostID, adminAddr)
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		status, err := client.Status(ctx)
 		cancel()
@@ -411,7 +415,7 @@ func (s *Service) SnapshotSeedCatalog() []GhostSeedCatalog {
 			AdminAddr: strings.TrimSpace(adminAddr),
 		}
 
-		client := s.newGhostControlClient(entry.AdminAddr)
+		client := s.newGhostControlClient(entry.GhostID, entry.AdminAddr)
 		statusCtx, statusCancel := context.WithTimeout(context.Background(), 2*time.Second)
 		status, statusErr := client.Status(statusCtx)
 		statusCancel()
@@ -574,7 +578,7 @@ func (s *Service) runGhostHeartbeatLoop(ctx context.Context) error {
 		// Probe bound ghosts for health.
 		currentBound := s.snapshotGhostAdmins()
 		for ghostID, adminAddr := range currentBound {
-			client := s.newGhostControlClient(adminAddr)
+			client := s.newGhostControlClient(ghostID, adminAddr)
 			probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 			_, err := client.Status(probeCtx)
 			cancel()
@@ -608,7 +612,7 @@ func (s *Service) bindGhostToMirage(ghostID string, adminAddr string) error {
 	}
 	// Extract session listener port from mirage config so ghost can resolve session address.
 	sessionPort := extractPort(s.cfg.ListenAddr)
-	client := s.newGhostControlClient(addr)
+	client := s.newGhostControlClient(id, addr)
 	var lastErr error
 	for attempt := 1; attempt <= 5; attempt++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -878,8 +882,36 @@ func (s *Service) authenticateConn(conn net.Conn) (peerAuth, error) {
 }
 
 // Mirage certificate identity extractor using CN/URI/DNS preference order.
-func (s *Service) newGhostControlClient(adminAddr string) *GhostControlClient {
-	return NewGhostControlClient(adminAddr).WithCommandFrameAuthToken(strings.TrimSpace(s.cfg.GhostAdminFrameAuthToken))
+// Ghost admin client for one target. With admin TLS, Mirage dials as its own principal and the
+// server must be edgectl://ghost/<ghostID> (any ghost principal when ghostID is unknown; the
+// verified principal is then available from PeerPrincipal).
+func (s *Service) newGhostControlClient(ghostID string, adminAddr string) *GhostControlClient {
+	client := NewGhostControlClient(adminAddr).WithCommandFrameAuthToken(strings.TrimSpace(s.cfg.GhostAdminFrameAuthToken))
+	if !s.cfg.AdminTLS.Enabled() {
+		return client
+	}
+	check := adminauth.ExpectRole(identity.RoleGhost)
+	if id := strings.TrimSpace(ghostID); id != "" {
+		check = adminauth.ExpectPrincipal(identity.Principal{Role: identity.RoleGhost, ID: id})
+	}
+	cfg, err := adminauth.ClientTLSConfig(s.cfg.AdminTLS, s.selfPrincipal(), func(p identity.Principal) error {
+		if err := check(p); err != nil {
+			return err
+		}
+		client.setPeer(p)
+		return nil
+	})
+	return client.WithTLS(cfg, err)
+}
+
+// Principal this Mirage serves and dials as.
+func (s *Service) selfPrincipal() identity.Principal {
+	return identity.Principal{Role: identity.RoleMirage, ID: strings.TrimSpace(s.cfg.MirageID)}
+}
+
+// Production security mode follows the session security mode.
+func (s *Service) productionMode() bool {
+	return session.NormalizeSecurityMode(s.cfg.Session.SecurityMode) == session.SecurityModeProduction
 }
 
 // Mirage TLS server-config builder for listener transport enforcement.

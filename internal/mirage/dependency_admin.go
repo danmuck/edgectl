@@ -38,7 +38,7 @@ func (s *Service) ExecuteDependencyProposal(ctx context.Context, id string, acto
 		install := s.dependencyInstaller
 		if install == nil {
 			install = func(ctx context.Context, adminAddr string, p DependencyProposal) (DependencyExecution, error) {
-				return s.newGhostControlClient(adminAddr).InstallDependencies(ctx, p)
+				return s.newGhostControlClient(p.GhostID, adminAddr).InstallDependencies(ctx, p)
 			}
 		}
 		result, err := install(ctx, addr, p)

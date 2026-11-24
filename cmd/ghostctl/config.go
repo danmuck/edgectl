@@ -24,6 +24,11 @@ type fileConfig struct {
 	HeartbeatIntervalMS    int64    `toml:"heartbeat_interval_ms"`
 	AdminListen            string   `toml:"admin_listen"`
 	AdminFrameAuthToken    string   `toml:"admin_frame_auth_token"`
+	AdminTLSCertFile       string   `toml:"admin_tls_cert_file"`
+	AdminTLSKeyFile        string   `toml:"admin_tls_key_file"`
+	AdminTLSCAFile         string   `toml:"admin_tls_ca_file"`
+	AdminTLSDeniedSerials  []string `toml:"admin_tls_denied_serials"`
+	MiragePrincipal        string   `toml:"mirage_principal"`
 	MiragePolicy           string   `toml:"mirage_policy"`
 	MirageAddress          string   `toml:"mirage_address"`
 	MiragePeerIdentity     string   `toml:"mirage_peer_identity"`
@@ -138,6 +143,23 @@ func loadServiceConfig(path string) (ghost.ServiceConfig, error) {
 	}
 	if meta.IsDefined("mirage_tls_insecure_skip_verify") {
 		cfg.Mirage.SessionConfig.TLS.InsecureSkipVerify = raw.MirageTLSInsecure
+	}
+	// Admin endpoint mTLS identity edgectl://ghost/<id> (admin_security.toml [transport]).
+	if meta.IsDefined("admin_tls_cert_file") {
+		cfg.AdminTLS.CertFile = strings.TrimSpace(raw.AdminTLSCertFile)
+	}
+	if meta.IsDefined("admin_tls_key_file") {
+		cfg.AdminTLS.KeyFile = strings.TrimSpace(raw.AdminTLSKeyFile)
+	}
+	if meta.IsDefined("admin_tls_ca_file") {
+		cfg.AdminTLS.CAFile = strings.TrimSpace(raw.AdminTLSCAFile)
+	}
+	if meta.IsDefined("admin_tls_denied_serials") {
+		cfg.AdminTLS.DeniedSerials = tools.NormalizeNonEmptyList(raw.AdminTLSDeniedSerials)
+	}
+	// Pinned Mirage principal for session and admin peers (admin_security.toml ghost_pinning).
+	if meta.IsDefined("mirage_principal") {
+		cfg.MiragePrincipal = strings.TrimSpace(raw.MiragePrincipal)
 	}
 	// Shared secret for admin execute_envelope frames and required for install_dependencies plans.
 	if meta.IsDefined("admin_frame_auth_token") {

@@ -28,7 +28,9 @@ var (
 	ErrRegistrationRejected  = errors.New("ghost: registration rejected")
 	ErrAckRejected           = errors.New("ghost: event.ack rejected")
 	ErrAckTimeout            = errors.New("ghost: event.ack timeout")
-	ErrSessionClosed         = errors.New("ghost: mirage session closed")
+	// TLS in production requires a pinned Mirage principal (admin_security.toml ghost_pinning).
+	ErrMiragePrincipalRequired = errors.New("ghost: mirage_principal required with tls in production")
+	ErrSessionClosed           = errors.New("ghost: mirage session closed")
 )
 
 // Ghost outbound Mirage session-client configuration.
@@ -39,6 +41,8 @@ type MirageClientConfig struct {
 	SeedList           []session.SeedInfo
 	Session            session.Config
 	MaxConnectAttempts int
+	// Pinned Mirage principal (edgectl://mirage/<id>); required with TLS in production.
+	MiragePrincipal string
 }
 
 // Ghost Mirage session-client defaults aligned with session defaults.
@@ -68,6 +72,17 @@ func NewMirageClient(cfg MirageClientConfig) (*MirageClient, error) {
 		cfg.PeerIdentity = cfg.GhostID
 	}
 	cfg.Session = cfg.Session.WithDefaults()
+	if pin := strings.TrimSpace(cfg.MiragePrincipal); pin != "" {
+		p, err := identity.ParsePrincipal(pin)
+		if err != nil {
+			return nil, err
+		}
+		if p.Role != identity.RoleMirage {
+			return nil, fmt.Errorf("%w: mirage_principal %s is not a mirage principal", identity.ErrWrongRole, p)
+		}
+	} else if cfg.Session.TLS.Enabled && session.NormalizeSecurityMode(cfg.Session.SecurityMode) == session.SecurityModeProduction {
+		return nil, ErrMiragePrincipalRequired
+	}
 	client := &MirageClient{
 		cfg: cfg,
 		rng: rand.New(rand.NewSource(time.Now().UnixNano())),
@@ -197,6 +212,21 @@ func (c *MirageClient) clientTLSConfig() (*tls.Config, error) {
 		return nil, err
 	}
 	cfg.VerifyPeerCertificate = denied.VerifyPeerNotDenied
+	// Beyond chain and hostname, the server must be a Mirage principal, and the pinned one when set.
+	pin := strings.TrimSpace(c.cfg.MiragePrincipal)
+	cfg.VerifyConnection = func(cs tls.ConnectionState) error {
+		if len(cs.PeerCertificates) == 0 {
+			return fmt.Errorf("%w: mirage presented no certificate", identity.ErrNoPrincipal)
+		}
+		p, err := identity.RequireRole(cs.PeerCertificates[0], identity.RoleMirage)
+		if err != nil {
+			return err
+		}
+		if pin != "" && p.String() != pin {
+			return fmt.Errorf("%w: mirage is %s, pinned %s", identity.ErrWrongRole, p, pin)
+		}
+		return nil
+	}
 	return cfg, nil
 }
 

@@ -83,7 +83,12 @@ make run-client
 make certs-root                                  # once; keep certs/root offline
 make certs-mirage ID=mirage.mac DNS=mirage.mac IP=192.168.50.94
 make certs-ghost ID=ghost.pi                     # ID must equal the ghost_id
+make certs-operator NAME=<you>                   # client-tm operator identity
 ```
+
+Admin endpoints require mTLS for privileged actions (command execution, installs, deploys); without
+admin TLS they serve plaintext on loopback only and refuse those actions. Configure `admin_tls_*`
+on ghostctl and miragectl and `operator_*` in client-tm (see `cmd/ghostctl/ex.config.toml`).
 
 ## Testing
 

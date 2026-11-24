@@ -184,3 +184,21 @@ func TestLoadServiceConfigMirageTLSDeniedSerials(t *testing.T) {
 		t.Fatalf("denied serials = %v", got)
 	}
 }
+
+func TestLoadServiceConfigAdminTLSAndMiragePrincipal(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := "admin_tls_cert_file = \"certs/ghost.pi.crt\"\nadmin_tls_key_file = \"certs/ghost.pi.key\"\nadmin_tls_ca_file = \"certs/ca.crt\"\nadmin_tls_denied_serials = [\"ab\"]\nmirage_principal = \"edgectl://mirage/mirage.mac\"\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadServiceConfig(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.AdminTLS.CertFile != "certs/ghost.pi.crt" || cfg.AdminTLS.KeyFile != "certs/ghost.pi.key" || cfg.AdminTLS.CAFile != "certs/ca.crt" || len(cfg.AdminTLS.DeniedSerials) != 1 {
+		t.Fatalf("admin tls = %+v", cfg.AdminTLS)
+	}
+	if cfg.MiragePrincipal != "edgectl://mirage/mirage.mac" {
+		t.Fatalf("mirage principal = %q", cfg.MiragePrincipal)
+	}
+}

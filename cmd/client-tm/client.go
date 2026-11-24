@@ -185,7 +185,7 @@ func (a *App) loadOrInitConfigs() error {
 			continue
 		}
 		ghostID := strings.TrimSpace(cfg.GhostID)
-		admin := NewRemoteGhostAdmin(addr)
+		admin := a.newGhostAdmin(addr, ghostID)
 		if ghostID == "" {
 			if status, err := admin.Status(); err == nil && strings.TrimSpace(status.GhostID) != "" {
 				ghostID = strings.TrimSpace(status.GhostID)
@@ -210,7 +210,7 @@ func (a *App) loadOrInitConfigs() error {
 		return errors.New("mirage config requires non-empty target name and addr")
 	}
 	mirageID := strings.TrimSpace(cfg.MirageID)
-	admin := NewRemoteMirageAdmin(addr)
+	admin := a.newMirageAdmin(addr, mirageID)
 	if mirageID == "" {
 		if status, err := admin.Status(); err == nil && strings.TrimSpace(status.MirageID) != "" {
 			mirageID = strings.TrimSpace(status.MirageID)

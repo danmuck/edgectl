@@ -372,7 +372,7 @@ func TestServiceRegistrationTLSMTLSIdentityBound(t *testing.T) {
 
 	dir := t.TempDir()
 	ca := tlstest.NewAuthority(t, dir, "edgectl-test-ca")
-	serverCert, serverKey := ca.IssueServerCert(t, dir, "mirage.local", []string{"mirage.local"}, []net.IP{net.ParseIP("127.0.0.1")})
+	serverCert, serverKey := ca.IssuePrincipalCert(t, dir, "edgectl://mirage/mirage.local", []string{"mirage.local"}, []net.IP{net.ParseIP("127.0.0.1")})
 	clientCert, clientKey := ca.IssuePrincipalCert(t, dir, "edgectl://ghost/ghost.alpha", nil, nil)
 
 	cfg := DefaultServiceConfig()
@@ -420,7 +420,8 @@ func TestServiceRegistrationTLSMTLSIdentityBound(t *testing.T) {
 		SeedList: []session.SeedInfo{
 			{ID: "seed.flow", Name: "Flow", Description: "Deterministic control-flow seed"},
 		},
-		Session: clientSessionCfg,
+		Session:         clientSessionCfg,
+		MiragePrincipal: "edgectl://mirage/mirage.local",
 	})
 	if err != nil {
 		t.Fatalf("new client: %v", err)
@@ -445,7 +446,7 @@ func TestServiceRegistrationTLSIdentityMismatchRejected(t *testing.T) {
 
 	dir := t.TempDir()
 	ca := tlstest.NewAuthority(t, dir, "edgectl-test-ca")
-	serverCert, serverKey := ca.IssueServerCert(t, dir, "mirage.local", []string{"mirage.local"}, []net.IP{net.ParseIP("127.0.0.1")})
+	serverCert, serverKey := ca.IssuePrincipalCert(t, dir, "edgectl://mirage/mirage.local", []string{"mirage.local"}, []net.IP{net.ParseIP("127.0.0.1")})
 	clientCert, clientKey := ca.IssuePrincipalCert(t, dir, "edgectl://ghost/ghost.beta", nil, nil)
 
 	cfg := DefaultServiceConfig()
@@ -492,6 +493,7 @@ func TestServiceRegistrationTLSIdentityMismatchRejected(t *testing.T) {
 		PeerIdentity:       "ghost.alpha",
 		SeedList:           []session.SeedInfo{},
 		Session:            clientSessionCfg,
+		MiragePrincipal:    "edgectl://mirage/mirage.local",
 		MaxConnectAttempts: 1,
 	})
 	if err != nil {

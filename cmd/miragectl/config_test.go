@@ -296,3 +296,25 @@ func TestLoadServiceConfigSessionTLSDeniedSerials(t *testing.T) {
 		t.Fatalf("denied serials = %v", got)
 	}
 }
+
+// Mirage admin TLS is loaded; the managed local Ghost gets its own cert, Mirage's CA, and Mirage pinned.
+func TestLoadRuntimeConfigsAdminTLS(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := "id = \"mirage.mac\"\nlocal_ghost_admin_addr = \"127.0.0.1:7010\"\nadmin_tls_cert_file = \"certs/mirage.mac.crt\"\nadmin_tls_key_file = \"certs/mirage.mac.key\"\nadmin_tls_ca_file = \"certs/ca.crt\"\nlocal_ghost_admin_tls_cert_file = \"certs/ghost.local.crt\"\nlocal_ghost_admin_tls_key_file = \"certs/ghost.local.key\"\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mCfg, gCfg, err := loadRuntimeConfigs(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if mCfg.AdminTLS.CertFile != "certs/mirage.mac.crt" || mCfg.AdminTLS.CAFile != "certs/ca.crt" {
+		t.Fatalf("mirage admin tls = %+v", mCfg.AdminTLS)
+	}
+	if gCfg.AdminTLS.CertFile != "certs/ghost.local.crt" || gCfg.AdminTLS.CAFile != "certs/ca.crt" {
+		t.Fatalf("local ghost admin tls = %+v", gCfg.AdminTLS)
+	}
+	if gCfg.MiragePrincipal != "edgectl://mirage/mirage.mac" {
+		t.Fatalf("local ghost mirage pin = %q", gCfg.MiragePrincipal)
+	}
+}

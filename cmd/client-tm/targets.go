@@ -103,7 +103,7 @@ func (a *App) addGhostTarget() error {
 
 	cfg := ghostTargetConfig{Name: targetName, Addr: addr, GhostID: ghostID}
 	a.ghostCfg.Targets = append(a.ghostCfg.Targets, cfg)
-	a.targets = append(a.targets, GhostTarget{Name: targetName, Admin: NewRemoteGhostAdmin(addr)})
+	a.targets = append(a.targets, GhostTarget{Name: targetName, Admin: a.newGhostAdmin(addr, ghostID)})
 	if a.activeTarget < 0 {
 		a.activeTarget = 0
 	}

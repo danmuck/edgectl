@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/adminauth"
 	"github.com/danmuck/edgectl/internal/protocol/schema"
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	logs "github.com/danmuck/smplog"
@@ -91,6 +92,9 @@ func adminErrorCode(err error) uint32 {
 	if errors.As(err, &ghostErr) && ghostErr.Code != 0 {
 		return ghostErr.Code
 	}
+	if errors.Is(err, adminauth.ErrAuthRequired) {
+		return schema.ErrCodeTransportFailure
+	}
 	switch {
 	case errors.Is(err, errAdminInvalidRequest),
 		errors.Is(err, ErrInvalidDependencyProposal),
@@ -116,7 +120,8 @@ func failAdminRequest(format string, args ...any) adminControlResponse {
 
 // serveAdminControl exposes a TCP JSON request/response endpoint for Mirage control.
 func (s *Service) serveAdminControl(ctx context.Context, addr string) error {
-	ln, err := net.Listen("tcp", strings.TrimSpace(addr))
+	// mTLS per admin_security.toml [transport]; plaintext only on loopback outside production.
+	ln, err := adminauth.Listen(addr, s.cfg.AdminTLS, s.selfPrincipal(), s.productionMode())
 	if err != nil {
 		return err
 	}
@@ -144,6 +149,11 @@ func (s *Service) serveAdminControl(ctx context.Context, addr string) error {
 func (s *Service) handleAdminConn(conn net.Conn) {
 	defer conn.Close()
 	remote := conn.RemoteAddr().String()
+	peer, err := adminauth.PeerFromConn(conn, 5*time.Second)
+	if err != nil {
+		logs.Warnf("mirage.admin handshake rejected component=mirage peer=%q error_code=%d err=%q", remote, schema.ErrCodeTransportFailure, err.Error())
+		return
+	}
 	active := s.adminClientCount.Add(1)
 	logs.Warnf("mirage.admin client connected remote=%q active_clients=%d", remote, active)
 	defer func() {
@@ -164,7 +174,13 @@ func (s *Service) handleAdminConn(conn net.Conn) {
 			_ = writeAdminControlResponse(conn, failAdminRequest("%v", err))
 			continue
 		}
-		resp := s.handleAdminControlRequest(req)
+		var resp adminControlResponse
+		if adminauth.Privileged(req.Action) && !peer.Authenticated {
+			// Privileged actions require mTLS in every mode (admin_security.toml authorization.privileged).
+			resp = failAdmin(fmt.Errorf("%w: %s", adminauth.ErrAuthRequired, req.Action))
+		} else {
+			resp = s.handleAdminControlRequest(req)
+		}
 		if err := writeAdminControlResponse(conn, resp); err != nil {
 			logs.Warnf("mirage.admin write err=%v", err)
 			return
@@ -313,7 +329,7 @@ func (s *Service) attachGhostAdmin(expectedGhostID string, adminAddr string) (Ad
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	client := s.newGhostControlClient(addr)
+	client := s.newGhostControlClient(expectedGhostID, addr)
 	status, err := client.Status(ctx)
 	if err != nil {
 		return AdminAttachGhostResponse{}, err
@@ -321,6 +337,12 @@ func (s *Service) attachGhostAdmin(expectedGhostID string, adminAddr string) (Ad
 	ghostID := strings.TrimSpace(status.GhostID)
 	if ghostID == "" {
 		return AdminAttachGhostResponse{}, fmt.Errorf("ghost status missing ghost_id")
+	}
+	// With mTLS the certificate principal, not the self-reported status, is authoritative.
+	if s.cfg.AdminTLS.Enabled() {
+		if peer := client.PeerPrincipal(); peer.ID != ghostID {
+			return AdminAttachGhostResponse{}, fmt.Errorf("ghost_id mismatch certificate=%q reported=%q", peer.ID, ghostID)
+		}
 	}
 	expected := strings.TrimSpace(expectedGhostID)
 	if expected != "" && ghostID != expected {

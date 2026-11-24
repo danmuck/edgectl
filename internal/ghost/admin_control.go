@@ -11,7 +11,9 @@ import (
 	"io"
 	"net"
 	"strings"
+	"time"
 
+	"github.com/danmuck/edgectl/internal/adminauth"
 	"github.com/danmuck/edgectl/internal/protocol/frame"
 	"github.com/danmuck/edgectl/internal/protocol/schema"
 	"github.com/danmuck/edgectl/internal/protocol/session"
@@ -30,7 +32,8 @@ var (
 // errors are classified here; protocol errors (framing, TLV, schema) fall back to session.ErrorCode.
 func adminErrorCode(err error) uint32 {
 	switch {
-	case errors.Is(err, ErrAdminFrameAuthRequired), errors.Is(err, ErrAdminFrameAuthInvalid):
+	case errors.Is(err, ErrAdminFrameAuthRequired), errors.Is(err, ErrAdminFrameAuthInvalid),
+		errors.Is(err, adminauth.ErrAuthRequired):
 		return schema.ErrCodeTransportFailure
 	case errors.Is(err, errAdminInvalidRequest),
 		errors.Is(err, ErrInvalidCommandEnv),
@@ -213,9 +216,10 @@ func cloneRecent[T any](in []T, limit int) []T {
 	return out
 }
 
-// serveAdminControl exposes a TCP JSON request/response endpoint for client-tm.
+// serveAdminControl exposes the admin JSON endpoint over mTLS (admin_security.toml [transport]);
+// plaintext is allowed only on loopback outside production.
 func (s *Service) serveAdminControl(ctx context.Context, addr string) error {
-	ln, err := net.Listen("tcp", strings.TrimSpace(addr))
+	ln, err := adminauth.Listen(addr, s.cfg.AdminTLS, s.selfPrincipal(), s.productionMode())
 	if err != nil {
 		return err
 	}
@@ -243,6 +247,11 @@ func (s *Service) serveAdminControl(ctx context.Context, addr string) error {
 func (s *Service) handleAdminConn(conn net.Conn) {
 	defer conn.Close()
 	remote := conn.RemoteAddr().String()
+	peer, err := adminauth.PeerFromConn(conn, 5*time.Second)
+	if err != nil {
+		logs.Warnf("ghost.admin handshake rejected component=ghost peer=%q error_code=%d err=%q", remote, schema.ErrCodeTransportFailure, err.Error())
+		return
+	}
 	active := s.adminClientCount.Add(1)
 	logs.Warnf("ghost.admin client connected remote=%q active_clients=%d", remote, active)
 	defer func() {
@@ -264,7 +273,13 @@ func (s *Service) handleAdminConn(conn net.Conn) {
 			_ = writeControlResponse(conn, failControl(fmt.Errorf("%w: %v", errAdminInvalidRequest, err)))
 			continue
 		}
-		resp := s.handleControlRequest(req, remote)
+		var resp controlResponse
+		if adminauth.Privileged(req.Action) && !peer.Authenticated {
+			// Privileged actions require mTLS in every mode (admin_security.toml authorization.privileged).
+			resp = failControl(fmt.Errorf("%w: %s", adminauth.ErrAuthRequired, req.Action))
+		} else {
+			resp = s.handleControlRequest(req, remote)
+		}
 		if err := writeControlResponse(conn, resp); err != nil {
 			logs.Warnf("ghost.admin write err=%v", err)
 			return

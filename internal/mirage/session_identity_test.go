@@ -21,7 +21,7 @@ import (
 // mTLS Mirage session server; returns the address, the CA, and a stop func.
 func startTLSSessionServer(t *testing.T, dir string, ca *tlstest.Authority, denied []string) string {
 	t.Helper()
-	serverCert, serverKey := ca.IssueServerCert(t, dir, "mirage.local", []string{"mirage.local"}, []net.IP{net.ParseIP("127.0.0.1")})
+	serverCert, serverKey := ca.IssuePrincipalCert(t, dir, "edgectl://mirage/mirage.local", []string{"mirage.local"}, []net.IP{net.ParseIP("127.0.0.1")})
 	cfg := DefaultServiceConfig()
 	cfg.RequireIdentityBinding = true
 	cfg.Session.SecurityMode = session.SecurityModeProduction
@@ -60,6 +60,7 @@ func registerWithCert(t *testing.T, addr string, ca *tlstest.Authority, certFile
 	client, err := ghost.NewMirageClient(ghost.MirageClientConfig{
 		Address: addr, GhostID: "ghost.alpha", PeerIdentity: "ghost.alpha",
 		SeedList: []session.SeedInfo{}, Session: sc, MaxConnectAttempts: 1,
+		MiragePrincipal: "edgectl://mirage/mirage.local",
 	})
 	if err != nil {
 		t.Fatalf("new client: %v", err)

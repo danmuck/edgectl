@@ -263,7 +263,7 @@ func (a *App) openLocalGhostConsole() error {
 		localGhostID,
 		localGhostAddr,
 	)
-	admin := NewRemoteGhostAdmin(localGhostAddr)
+	admin := a.newGhostAdmin(localGhostAddr, localGhostID)
 	defer admin.Close()
 	return a.runGhostAdminConsoleForTarget(GhostTarget{
 		Name:  localGhostID,

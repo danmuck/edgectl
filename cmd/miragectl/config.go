@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/danmuck/edgectl/internal/adminauth"
 	"github.com/danmuck/edgectl/internal/ghost"
 	"github.com/danmuck/edgectl/internal/mirage"
 	"github.com/danmuck/edgectl/internal/protocol/session"
@@ -22,6 +23,12 @@ type fileConfig struct {
 	LocalGhostID                 string              `toml:"local_ghost_id"`
 	LocalGhostAdminAddr          string              `toml:"local_ghost_admin_addr"`
 	GhostAdminFrameAuthToken     string              `toml:"ghost_admin_frame_auth_token"`
+	AdminTLSCertFile             string              `toml:"admin_tls_cert_file"`
+	AdminTLSKeyFile              string              `toml:"admin_tls_key_file"`
+	AdminTLSCAFile               string              `toml:"admin_tls_ca_file"`
+	AdminTLSDeniedSerials        []string            `toml:"admin_tls_denied_serials"`
+	LocalGhostAdminTLSCertFile   string              `toml:"local_ghost_admin_tls_cert_file"`
+	LocalGhostAdminTLSKeyFile    string              `toml:"local_ghost_admin_tls_key_file"`
 	LocalGhostSeeds              []string            `toml:"local_ghost_seeds"`
 	LocalGhostHeartbeat          string              `toml:"local_ghost_heartbeat_interval"`
 	LocalGhostHeartbeatMS        int64               `toml:"local_ghost_heartbeat_interval_ms"`
@@ -99,6 +106,19 @@ func loadServiceConfig(path string) (mirage.ServiceConfig, error) {
 	}
 	if meta.IsDefined("local_ghost_admin_addr") {
 		cfg.LocalGhostAdminAddr = strings.TrimSpace(raw.LocalGhostAdminAddr)
+	}
+	// Mirage admin mTLS identity edgectl://mirage/<id>: serves the admin endpoint and dials Ghosts.
+	if meta.IsDefined("admin_tls_cert_file") {
+		cfg.AdminTLS.CertFile = strings.TrimSpace(raw.AdminTLSCertFile)
+	}
+	if meta.IsDefined("admin_tls_key_file") {
+		cfg.AdminTLS.KeyFile = strings.TrimSpace(raw.AdminTLSKeyFile)
+	}
+	if meta.IsDefined("admin_tls_ca_file") {
+		cfg.AdminTLS.CAFile = strings.TrimSpace(raw.AdminTLSCAFile)
+	}
+	if meta.IsDefined("admin_tls_denied_serials") {
+		cfg.AdminTLS.DeniedSerials = tools.NormalizeNonEmptyList(raw.AdminTLSDeniedSerials)
 	}
 	// Token Mirage presents to Ghost admin endpoints (execute_envelope, install_dependencies).
 	if meta.IsDefined("ghost_admin_frame_auth_token") {
@@ -242,6 +262,18 @@ func loadRuntimeConfigs(path string) (mirage.ServiceConfig, ghost.ServiceConfig,
 	cfg.AdminListenAddr = strings.TrimSpace(mCfg.LocalGhostAdminAddr)
 	// The managed local Ghost accepts the same token Mirage presents.
 	cfg.AdminFrameAuthToken = mCfg.GhostAdminFrameAuthToken
+	// Managed local Ghost: its own admin identity, Mirage's CA and deny list, Mirage pinned.
+	if certFile := strings.TrimSpace(raw.LocalGhostAdminTLSCertFile); certFile != "" {
+		cfg.AdminTLS = adminauth.Credentials{
+			CertFile:      certFile,
+			KeyFile:       strings.TrimSpace(raw.LocalGhostAdminTLSKeyFile),
+			CAFile:        mCfg.AdminTLS.CAFile,
+			DeniedSerials: append([]string{}, mCfg.AdminTLS.DeniedSerials...),
+		}
+	}
+	if mCfg.AdminTLS.Enabled() {
+		cfg.MiragePrincipal = "edgectl://mirage/" + strings.TrimSpace(mCfg.MirageID)
+	}
 	if cfg.AdminListenAddr == "" {
 		cfg.AdminListenAddr = ghost.DefaultServiceConfig().AdminListenAddr
 	}

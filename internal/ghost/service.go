@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/adminauth"
+	"github.com/danmuck/edgectl/internal/identity"
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/seeds"
 	seeddocker "github.com/danmuck/edgectl/internal/seeds/docker"
@@ -70,8 +72,12 @@ type ServiceConfig struct {
 	HeartbeatInterval   time.Duration
 	AdminListenAddr     string
 	AdminFrameAuthToken string
-	EnableClusterHost   bool
-	Mirage              MirageSessionConfig
+	// Admin endpoint mTLS credentials; empty CertFile serves plaintext on loopback only (development).
+	AdminTLS adminauth.Credentials
+	// Pinned Mirage principal (edgectl://mirage/<id>); session and admin peers must match it.
+	MiragePrincipal   string
+	EnableClusterHost bool
+	Mirage            MirageSessionConfig
 }
 
 // Ghost service defaults for standalone runtime configuration.
@@ -373,6 +379,7 @@ func (s *Service) connectMirageSession(ctx context.Context) (*MirageSession, err
 		SeedList:           seedList,
 		Session:            s.cfg.Mirage.SessionConfig,
 		MaxConnectAttempts: s.cfg.Mirage.MaxConnectAttempts,
+		MiragePrincipal:    s.cfg.MiragePrincipal,
 	}
 
 	client, err := NewMirageClient(clientCfg)
@@ -726,4 +733,14 @@ func (s *Service) fetchProjectRepoOnBoot() error {
 	}
 	logs.Infof("ghost.Service.fetchProjectRepoOnBoot ok root=%q", projectAbs)
 	return nil
+}
+
+// Principal this Ghost serves as on its admin endpoint.
+func (s *Service) selfPrincipal() identity.Principal {
+	return identity.Principal{Role: identity.RoleGhost, ID: strings.TrimSpace(s.cfg.GhostID)}
+}
+
+// Production security mode follows the Mirage session security mode.
+func (s *Service) productionMode() bool {
+	return session.NormalizeSecurityMode(s.cfg.Mirage.SessionConfig.SecurityMode) == session.SecurityModeProduction
 }

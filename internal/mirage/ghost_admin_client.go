@@ -4,13 +4,16 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"net"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/adminauth"
+	"github.com/danmuck/edgectl/internal/identity"
 	"github.com/danmuck/edgectl/internal/protocol/frame"
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/seeds"
@@ -147,6 +150,33 @@ type GhostControlClient struct {
 	adminAddr        string
 	timeout          time.Duration
 	commandFrameAuth []byte
+	// mTLS dial config (nil = plaintext); tlsErr defers credential load errors to the first call.
+	tlsConfig *tls.Config
+	tlsErr    error
+	// Ghost principal observed on the last verified TLS handshake.
+	peerMu sync.Mutex
+	peer   identity.Principal
+}
+
+// WithTLS sets the mTLS dial configuration; a non-nil err fails every call.
+func (c *GhostControlClient) WithTLS(cfg *tls.Config, err error) *GhostControlClient {
+	c.tlsConfig = cfg
+	c.tlsErr = err
+	return c
+}
+
+// PeerPrincipal returns the Ghost principal verified on the most recent TLS handshake.
+func (c *GhostControlClient) PeerPrincipal() identity.Principal {
+	c.peerMu.Lock()
+	defer c.peerMu.Unlock()
+	return c.peer
+}
+
+// Records the verified server principal; used from the TLS verification callback.
+func (c *GhostControlClient) setPeer(p identity.Principal) {
+	c.peerMu.Lock()
+	c.peer = p
+	c.peerMu.Unlock()
 }
 
 // NewGhostControlClient constructs a control client bound to one ghost admin address.
@@ -171,10 +201,8 @@ func (c *GhostControlClient) WithCommandFrameAuthToken(token string) *GhostContr
 // InstallDependencies sends an approved proposal's plan to Ghost "install_dependencies" and returns
 // Ghost's per-step result. Uses a long per-call timeout instead of the client default.
 func (c *GhostControlClient) InstallDependencies(ctx context.Context, p DependencyProposal) (DependencyExecution, error) {
-	long := *c
-	long.timeout = dependencyInstallTimeout
 	var out ghostInstallPlanResult
-	if err := long.call(ctx, ghostControlRequest{
+	if err := c.callTimeout(ctx, dependencyInstallTimeout, ghostControlRequest{
 		Action: "install_dependencies",
 		Install: &ghostInstallPlan{
 			ProposalID: p.ID,
@@ -346,12 +374,19 @@ func mapCommandArgSpecs(in []ghostCommandArgSpec) []seeds.CommandArgSpec {
 }
 
 func (c *GhostControlClient) call(ctx context.Context, req ghostControlRequest, out any) error {
+	return c.callTimeout(ctx, c.timeout, req, out)
+}
+
+// One request/response exchange, over mTLS when configured, bounded by timeout.
+func (c *GhostControlClient) callTimeout(ctx context.Context, timeout time.Duration, req ghostControlRequest, out any) error {
 	addr := strings.TrimSpace(c.adminAddr)
 	if addr == "" {
 		return fmt.Errorf("mirage: ghost admin addr required")
 	}
-	dialer := net.Dialer{Timeout: c.timeout}
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	if c.tlsErr != nil {
+		return c.tlsErr
+	}
+	conn, err := adminauth.Dial(ctx, addr, c.tlsConfig, timeout)
 	if err != nil {
 		return err
 	}
@@ -362,12 +397,12 @@ func (c *GhostControlClient) call(ctx context.Context, req ghostControlRequest, 
 		return err
 	}
 	line = append(line, '\n')
-	_ = conn.SetWriteDeadline(time.Now().Add(c.timeout))
+	_ = conn.SetWriteDeadline(time.Now().Add(timeout))
 	if _, err := conn.Write(line); err != nil {
 		return err
 	}
 
-	_ = conn.SetReadDeadline(time.Now().Add(c.timeout))
+	_ = conn.SetReadDeadline(time.Now().Add(timeout))
 	respLine, err := bufio.NewReader(conn).ReadBytes('\n')
 	if err != nil {
 		return err
@@ -391,10 +426,8 @@ type GhostAdminSpawner struct {
 }
 
 // NewGhostAdminSpawner constructs a spawner bound to one root ghost admin address.
-func NewGhostAdminSpawner(adminAddr string) *GhostAdminSpawner {
-	return &GhostAdminSpawner{
-		client: NewGhostControlClient(adminAddr),
-	}
+func NewGhostAdminSpawner(client *GhostControlClient) *GhostAdminSpawner {
+	return &GhostAdminSpawner{client: client}
 }
 
 // SpawnLocalGhost calls root ghost admin "spawn_ghost" for local provisioning.

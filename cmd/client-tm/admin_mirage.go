@@ -4,12 +4,13 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
-	"net"
 	"strings"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/adminauth"
 	"github.com/danmuck/edgectl/internal/mirage"
 	"github.com/danmuck/edgectl/internal/protocol/session"
 )
@@ -202,7 +203,10 @@ func (c *RemoteMirageAdmin) ensureConn() error {
 	if c.conn != nil {
 		return nil
 	}
-	conn, err := net.DialTimeout("tcp", c.addr, 3*time.Second)
+	if c.tlsErr != nil {
+		return c.tlsErr
+	}
+	conn, err := adminauth.Dial(context.Background(), c.addr, c.tlsConfig, 3*time.Second)
 	if err != nil {
 		return err
 	}

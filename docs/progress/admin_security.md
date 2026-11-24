@@ -1,6 +1,6 @@
 # Admin Boundary Security Tracker
 
-Status: `In Progress (Slice A complete)`
+Status: `In Progress (Slices A-B complete)`
 
 Contract (approved 2026-11-23): [`docs/architecture/definitions/admin_security.toml`](../architecture/definitions/admin_security.toml)
 
@@ -41,11 +41,22 @@ Slice A notes (2026-11-23):
 
 ### Slice B — Mutual TLS on both admin endpoints
 
-- [ ] Mirage admin listener: TLS 1.3, `RequireAndVerifyClientCert`.
-- [ ] Ghost admin listener: same.
-- [ ] Mirage's Ghost admin client dials with Mirage's cert and verifies the Ghost server principal matches the target ghost_id.
-- [ ] `client-tm` dials both endpoints with an operator cert and verifies server principals.
-- [ ] Development exception: plaintext only when bound to loopback; privileged actions still refused without mTLS.
+- [x] Mirage admin listener: TLS 1.3, `RequireAndVerifyClientCert`.
+- [x] Ghost admin listener: same.
+- [x] Mirage's Ghost admin client dials with Mirage's cert and verifies the Ghost server principal matches the target ghost_id.
+- [x] `client-tm` dials both endpoints with an operator cert and verifies server principals.
+- [x] Development exception: plaintext only when bound to loopback; privileged actions still refused without mTLS.
+
+Slice B notes (2026-11-23):
+
+- `internal/adminauth`: `ServerTLSConfig` (TLS 1.3, client certs required and verified, denied serials, valid principal required, server's own cert must match its runtime principal), `ClientTLSConfig` (chain to root with serverAuth, denied serials, then an explicit server-principal check; hostname verification is replaced by the principal check, so admin addresses need no DNS/IP SANs), `Listen` (mTLS when credentials are set; plaintext only on loopback outside production), `PeerFromConn`, `Privileged`.
+- Both admin handlers authenticate each connection at accept and refuse privileged actions from unauthenticated peers with `error_code=1000`. Per-action role authorization is Slice C.
+- Mirage's Ghost clients pin `edgectl://ghost/<ghost_id>` for known targets. `attach_ghost_admin` without an id accepts any ghost principal, then requires the reported `ghost_id` to equal the certificate id. The Ghost spawner now takes a client so it shares the pinned TLS dialer.
+- Child Ghosts: a TLS parent requires operator-issued `<child_id>.crt/.key` next to its own certificate (runtimes never mint); a plaintext parent may only spawn loopback children. Checked before spawning.
+- Session security finding fixed here: Ghost's session dialer now requires a mirage-role server principal, matching the pinned `mirage_principal` when set; with TLS in production the pin is required (`ErrMiragePrincipalRequired`).
+- Config: ghostctl `admin_tls_cert_file`, `admin_tls_key_file`, `admin_tls_ca_file`, `admin_tls_denied_serials`, `mirage_principal`; miragectl the same `admin_tls_*` keys (Mirage identity for serving and dialing) plus `local_ghost_admin_tls_cert_file`/`_key_file` (local Ghost inherits Mirage's CA/deny list and pins Mirage); client-tm `operator_cert_file`, `operator_key_file`, `ca_file` in either config file.
+- Behavior change: without admin TLS, a local Mirage cannot dispatch commands to its Ghost (`execute_envelope` is privileged). Local development needs `make certs-root`, `make certs-mirage ID=mirage.local`, `make certs-ghost ID=ghost.local`, `make certs-operator NAME=<you>` and the config keys above.
+- Still pending: the shared `admin_frame_auth_token` (removed in Slice E); per-action role authorization and actor binding (Slice C).
 
 ### Slice C — Authorization and audit
 

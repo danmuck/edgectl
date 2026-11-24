@@ -7,6 +7,16 @@ seeds = ["seed.flow", "seed.mongod", "seed.kv", "seed.fs"]
 heartbeat_interval = "5s"
 admin_listen = "127.0.0.1:7011"
 
+# Admin endpoint mTLS (admin_security.toml). Without admin_tls_cert_file the admin endpoint is
+# plaintext and must bind to loopback; privileged actions (execute_envelope, install_dependencies,
+# spawn_ghost, bind_mirage) are refused without mTLS. Issue with: make certs-ghost ID=<id>
+# admin_tls_cert_file = "certs/ghost.local.crt"
+# admin_tls_key_file = "certs/ghost.local.key"
+# admin_tls_ca_file = "certs/ca.crt"
+# admin_tls_denied_serials = []
+# Pinned Mirage principal; required with TLS sessions in production.
+# mirage_principal = "edgectl://mirage/mirage.local"
+
 mirage_policy = "headless"
 mirage_address = "127.0.0.1:9000"
 mirage_peer_identity = "ghost.local"
