@@ -1,0 +1,16 @@
+# Admin lab Ghost (testutil/adminlab). Run from the repo root after testutil/adminlab/setup.sh.
+
+id = "ghost.lab"
+seeds = ["seed.flow"]
+heartbeat_interval = "5s"
+admin_listen = "127.0.0.1:7011"
+admin_tls_cert_file = "certs/ghost.lab.crt"
+admin_tls_key_file = "certs/ghost.lab.key"
+admin_tls_ca_file = "certs/ca.crt"
+admin_tls_denied_serials = []
+mirage_principal = "edgectl://mirage/mirage.lab"
+admin_operator_access = false
+mirage_policy = "headless"
+project_fetch_on_boot = false
+# true lets execute_dependencies run brew/curl ON THIS HOST; keep false outside a container/VM.
+seed_install_enabled = false

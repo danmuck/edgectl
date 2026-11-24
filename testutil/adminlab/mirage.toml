@@ -1,0 +1,17 @@
+# Admin lab Mirage (testutil/adminlab). Run from the repo root after testutil/adminlab/setup.sh.
+
+id = "mirage.lab"
+addr = "127.0.0.1:9000"
+admin_listen_addr = "127.0.0.1:7020"
+admin_tls_cert_file = "certs/mirage.lab.crt"
+admin_tls_key_file = "certs/mirage.lab.key"
+admin_tls_ca_file = "certs/ca.crt"
+admin_tls_denied_serials = []
+session_security_mode = "development"
+
+# Managed local Ghost started by miragectl (required when the admin endpoint is on).
+local_ghost_id = "ghost.local"
+local_ghost_admin_addr = "127.0.0.1:7010"
+local_ghost_admin_tls_cert_file = "certs/ghost.local.crt"
+local_ghost_admin_tls_key_file = "certs/ghost.local.key"
+local_ghost_seeds = ["seed.flow"]

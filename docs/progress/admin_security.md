@@ -136,6 +136,9 @@ Slice F notes (2026-11-23):
 
 All six slices complete (2026-11-23). Not yet exercised on separate hosts; Phase 8 Slice E (cluster validation) remains the place for that.
 
+- Pushed to `origin/staging` (1131146) for third-party testing; `dev` itself not pushed.
+- Third-party test brief and local lab: `testutil/adminlab/README.md` (configs, setup/up/down, an openssl request helper, and an unchecked signing CLI for crafting hostile approvals). Verified from a fresh clone. `setup.sh` refuses to run if `certs/` holds files it did not create.
+
 ## Decisions (user, 2026-11-23: "Approve as drafted")
 
 - [x] Contract approved as written and linked from `docs/index.md`.
