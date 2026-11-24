@@ -1,0 +1,167 @@
+[admin_security_contract]
+
+[admin_security_contract.metadata]
+name = "EdgeCTL Admin Boundary Security Contract"
+version = "v1"
+status = "approved"
+approval = "approved by user 2026-11-23, with proposed defaults (see docs/progress/admin_security.md)"
+scope = "mirage admin endpoint, ghost admin endpoint, dependency install approval, ghost deploy credentials"
+related = [
+  "docs/architecture/definitions/transport_security.toml",
+  "docs/architecture/definitions/errors.toml",
+  "docs/architecture/definitions/observability.toml",
+  "docs/progress/mvp_p9_dependency_approval_flow.mmd",
+]
+replaces = "shared admin_frame_auth_token (ghostctl admin_frame_auth_token, miragectl ghost_admin_frame_auth_token)"
+
+# ---------------------------------------------------------------------------
+# Identity: every admin caller and every admin server is a certificate principal.
+# ---------------------------------------------------------------------------
+
+[identity]
+
+[identity.rules]
+principal_source = "exactly one URI SAN in the leaf certificate"
+principal_format = "edgectl://<role>/<id>"
+roles = ["operator", "mirage", "ghost"]
+id_charset = "[a-z0-9][a-z0-9._-]{0,62}"
+multiple_uri_sans = "reject certificate"
+missing_uri_san = "reject certificate"
+common_name = "ignored for authentication and authorization"
+ghost_id_binding = "ghost principal id MUST equal the Ghost runtime ghost_id"
+mirage_id_binding = "mirage principal id MUST equal the Mirage runtime mirage_id"
+
+# ---------------------------------------------------------------------------
+# Trust: one private root; issuing keys never live on runtime hosts.
+# ---------------------------------------------------------------------------
+
+[trust]
+
+[trust.rules]
+root = "single private edgectl root CA"
+root_private_key = "offline; MUST NOT be present on any Mirage or Ghost host"
+leaf_issuance = "operator tooling only (make certs-*); runtimes never mint certificates"
+leaf_key_algorithm = "ECDSA P-256"
+leaf_lifetime_max_days = 90
+leaf_extended_key_usage = "serverAuth and clientAuth (admin endpoints are both served and dialed)"
+private_key_file_mode = "0600; runtime refuses to start if group/other readable"
+revocation = "denied_serials list in runtime config, checked on every handshake"
+
+# ---------------------------------------------------------------------------
+# Transport: both admin endpoints are mutually authenticated TLS.
+# ---------------------------------------------------------------------------
+
+[transport]
+
+[transport.rules]
+protocol = "TLS 1.3 only"
+client_auth = "require and verify client certificate against the edgectl root"
+production_plaintext = "forbidden"
+development_plaintext = "permitted only when the listener is bound to a loopback address"
+privileged_actions_plaintext = "forbidden in all modes (see authorization.privileged)"
+server_identity_check = "dialer MUST verify the server principal equals the expected principal for that endpoint"
+handshake_failure = "close connection; no response body"
+
+# ---------------------------------------------------------------------------
+# Authorization: action -> allowed roles. Anything not listed is denied.
+# The acting identity is always the TLS principal; request-body actor fields are ignored.
+# ---------------------------------------------------------------------------
+
+[authorization]
+
+[authorization.rules]
+default = "deny"
+actor_source = "TLS principal; request actor/approver fields MUST be absent or equal the principal"
+decision_logging = "every request logs principal, role, action, decision"
+
+[authorization.mirage_admin]
+status = ["operator"]
+list_intents = ["operator"]
+snapshot_intent = ["operator"]
+recent_reports = ["operator"]
+registered_ghosts = ["operator"]
+routing_table = ["operator"]
+available_services = ["operator"]
+seed_catalog = ["operator"]
+list_dependency_proposals = ["operator"]
+submit_issue = ["operator"]
+reconcile_intent = ["operator"]
+reconcile_all = ["operator"]
+attach_ghost_admin = ["operator"]
+spawn_local_ghost = ["operator"]
+deploy_ghost = ["operator"]
+propose_dependencies = ["operator"]
+approve_dependencies = ["operator"]
+execute_dependencies = ["operator"]
+
+[authorization.ghost_admin]
+status = ["mirage", "operator"]
+list_seeds = ["mirage", "operator"]
+list_seed_catalog = ["mirage", "operator"]
+recent_events = ["mirage", "operator"]
+verification = ["mirage", "operator"]
+execution_by_command_id = ["mirage", "operator"]
+dependency_status = ["mirage", "operator"]
+execute_envelope = ["mirage"]
+spawn_ghost = ["mirage"]
+bind_mirage = ["mirage"]
+install_dependencies = ["mirage"]
+
+[authorization.ghost_pinning]
+pinned_mirage = "Ghost config names exactly one mirage principal (mirage_principal); only that principal holds the mirage role"
+operator_access = "operator role on Ghost admin is disabled unless ghost config enables it"
+
+[authorization.privileged]
+actions = ["execute_envelope", "install_dependencies", "spawn_ghost", "bind_mirage", "deploy_ghost", "approve_dependencies", "execute_dependencies"]
+rule = "require mTLS in every security mode, including development"
+
+# ---------------------------------------------------------------------------
+# Install approval: approvals are signed by the approving operator, not by Mirage,
+# so a compromised Mirage cannot forge an approval.
+# ---------------------------------------------------------------------------
+
+[install_approval]
+
+[install_approval.rules]
+approval_signer = "operator principal private key"
+signed_payload = "sha256 over canonical JSON of {proposal_id, ghost_id, proposed_by, steps, expires_at_ms, nonce}"
+signature_algorithm = "ECDSA P-256 over the payload digest"
+approver_certificate = "carried with the approval; MUST chain to the edgectl root and carry role operator"
+separation_of_duties = "approver principal MUST differ from proposer principal; no single-operator override"
+expiry_max_minutes = 15
+mirage_verification = "verify signature, role, separation, expiry before recording approval"
+ghost_verification = "verify signature, role, separation, expiry, ghost_id == self, every step in depcatalog, nonce unused"
+replay = "Ghost records used nonces for at least expiry_max_minutes; reuse is rejected"
+failure = "reject plan; no step runs"
+
+# ---------------------------------------------------------------------------
+# Deploy: credentials go only to pre-configured targets, and each Ghost gets only its own.
+# ---------------------------------------------------------------------------
+
+[deploy]
+
+[deploy.rules]
+targets = "deploy_ghost names a ghost_id; host, user, ssh_port come only from configured ghost_manifests"
+unknown_target = "reject"
+ssh_host_key = "pinned per manifest (known_hosts entry); StrictHostKeyChecking=yes"
+credentials_delivered = "that ghost's own leaf key and certificate, the root CA certificate, and the pinned mirage principal"
+shared_secrets = "none; no credential is shared between Ghosts"
+key_transfer = "written with mode 0600 on the target; never logged; never returned in admin responses"
+
+# ---------------------------------------------------------------------------
+# Errors and audit
+# ---------------------------------------------------------------------------
+
+[errors]
+
+[errors.rules]
+authentication_failure = "1000 (transport_failure); connection closed"
+authorization_denied = "1000 (transport_failure) with reason authorization_denied"
+approval_invalid = "1300 (semantic_validation_failure)"
+
+[audit]
+
+[audit.rules]
+admin_request_fields = "component, peer, principal, role, action, decision, error_code, timestamp_ms"
+approval_fields = "proposal_id, proposer, approver, signature digest, decision"
+secret_material = "never logged"

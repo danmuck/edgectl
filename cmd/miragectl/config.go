@@ -37,6 +37,7 @@ type fileConfig struct {
 	SessionTLSCertFile           string              `toml:"session_tls_cert_file"`
 	SessionTLSKeyFile            string              `toml:"session_tls_key_file"`
 	SessionTLSCAFile             string              `toml:"session_tls_ca_file"`
+	SessionTLSDeniedSerials      []string            `toml:"session_tls_denied_serials"`
 	GhostManifests               []ghostManifestFile `toml:"ghost_manifests"`
 	CommandMaxAttempts           int                 `toml:"command_max_attempts"`
 }
@@ -133,6 +134,10 @@ func loadServiceConfig(path string) (mirage.ServiceConfig, error) {
 	}
 	if meta.IsDefined("session_tls_key_file") {
 		cfg.Session.TLS.KeyFile = strings.TrimSpace(raw.SessionTLSKeyFile)
+	}
+	// Revoked certificate serials (hex) rejected on every session handshake.
+	if meta.IsDefined("session_tls_denied_serials") {
+		cfg.Session.TLS.DeniedSerials = tools.NormalizeNonEmptyList(raw.SessionTLSDeniedSerials)
 	}
 	if meta.IsDefined("session_tls_ca_file") {
 		cfg.Session.TLS.CAFile = strings.TrimSpace(raw.SessionTLSCAFile)

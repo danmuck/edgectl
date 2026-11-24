@@ -282,3 +282,17 @@ func TestLoadRuntimeConfigsGhostAdminFrameAuthToken(t *testing.T) {
 		t.Fatalf("tokens: mirage=%q ghost=%q", mCfg.GhostAdminFrameAuthToken, gCfg.AdminFrameAuthToken)
 	}
 }
+
+func TestLoadServiceConfigSessionTLSDeniedSerials(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("session_tls_denied_serials = [\"1A:2B\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadServiceConfig(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := cfg.Session.TLS.DeniedSerials; len(got) != 1 || got[0] != "1A:2B" {
+		t.Fatalf("denied serials = %v", got)
+	}
+}

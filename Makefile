@@ -9,7 +9,12 @@
 	build-mirage \
 	build-client \
 	build-all \
-	update-pi
+	update-pi \
+	certs \
+	certs-root \
+	certs-operator \
+	certs-mirage \
+	certs-ghost
 
 include .env
 
@@ -38,12 +43,33 @@ run-pi:
 run-tls:
 	clear; go run ./cmd/miragectl -config cmd/miragectl/mac.tls.config.toml
 
+# Certificates (docs/architecture/definitions/admin_security.toml).
+# Principals are edgectl://<role>/<id> in one URI SAN; ECDSA P-256; leaves last at most 90 days.
+# certs/root holds the root CA key: keep it offline, never copy it to Mirage or Ghost hosts.
+# Runtimes need only certs/ca.crt plus their own <id>.crt and <id>.key (0600).
+# Existing files are never overwritten; remove a stale cert/key pair before re-issuing.
 certs:
-	@bash -lc 'mkdir -p certs && \
-		openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 -nodes -keyout certs/ca.key -out certs/ca.crt -subj "/CN=edgectl-ca" && \
-		openssl req -newkey rsa:2048 -nodes -keyout certs/mirage.mac.key -out certs/mirage.mac.csr -subj "/CN=mirage.mac" && printf "subjectAltName=DNS:mirage.mac,IP:192.168.50.94\nextendedKeyUsage=serverAuth\n" > certs/mirage.mac.ext && openssl x509 -req -in certs/mirage.mac.csr -CA certs/ca.crt -CAkey certs/ca.key -CAcreateserial -out certs/mirage.mac.crt -days 825 -sha256 -extfile certs/mirage.mac.ext && \
-		openssl req -newkey rsa:2048 -nodes -keyout certs/ghost.pi.key -out certs/ghost.pi.csr -subj "/CN=ghost.pi" && printf "subjectAltName=DNS:ghost.pi\nextendedKeyUsage=clientAuth\n" > certs/ghost.pi.ext && openssl x509 -req -in certs/ghost.pi.csr -CA certs/ca.crt -CAkey certs/ca.key -CAserial certs/ca.srl -out certs/ghost.pi.crt -days 825 -sha256 -extfile certs/ghost.pi.ext
-		'
+	@echo "usage:"
+	@echo "  make certs-root                              # once; offline root CA in certs/root"
+	@echo "  make certs-operator NAME=<id>                # operator client cert"
+	@echo "  make certs-mirage ID=<id> [DNS=a,b] [IP=x]   # Mirage cert (add its host name/IP)"
+	@echo "  make certs-ghost ID=<ghost_id> [DNS=] [IP=]  # Ghost cert; ID must equal ghost_id"
+
+certs-root:
+	go run ./cmd/edgecert root -out certs/root
+	cp certs/root/ca.crt certs/ca.crt
+
+certs-operator:
+	@test -n "$(NAME)" || { echo "usage: make certs-operator NAME=<id>"; exit 1; }
+	go run ./cmd/edgecert issue -role operator -id "$(NAME)" -out certs
+
+certs-mirage:
+	@test -n "$(ID)" || { echo "usage: make certs-mirage ID=<id> [DNS=a,b] [IP=x,y]"; exit 1; }
+	go run ./cmd/edgecert issue -role mirage -id "$(ID)" -dns "$(DNS)" -ip "$(IP)" -out certs
+
+certs-ghost:
+	@test -n "$(ID)" || { echo "usage: make certs-ghost ID=<ghost_id> [DNS=a,b] [IP=x,y]"; exit 1; }
+	go run ./cmd/edgecert issue -role ghost -id "$(ID)" -dns "$(DNS)" -ip "$(IP)" -out certs
 
 
 run-client:

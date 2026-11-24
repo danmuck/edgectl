@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/identity"
 	"github.com/danmuck/edgectl/internal/observability"
 	"github.com/danmuck/edgectl/internal/protocol/frame"
 	"github.com/danmuck/edgectl/internal/protocol/schema"
@@ -868,41 +869,26 @@ func (s *Service) authenticateConn(conn net.Conn) (peerAuth, error) {
 	if len(state.PeerCertificates) == 0 {
 		return peerAuth{}, session.ErrMTLSRequired
 	}
-	peerID := peerIdentityFromCert(state.PeerCertificates[0])
-	if peerID == "" {
-		return peerAuth{}, fmt.Errorf("mirage: empty peer identity from certificate")
+	// Session peers must present a ghost principal; its id is bound to the registered ghost_id.
+	principal, err := identity.RequireRole(state.PeerCertificates[0], identity.RoleGhost)
+	if err != nil {
+		return peerAuth{}, fmt.Errorf("mirage: session peer identity: %w", err)
 	}
-	return peerAuth{PeerIdentity: peerID, Authenticated: true}, nil
+	return peerAuth{PeerIdentity: principal.ID, Authenticated: true}, nil
 }
 
 // Mirage certificate identity extractor using CN/URI/DNS preference order.
-func peerIdentityFromCert(cert *x509.Certificate) string {
-	if cert == nil {
-		return ""
-	}
-	if v := strings.TrimSpace(cert.Subject.CommonName); v != "" {
-		return v
-	}
-	if len(cert.URIs) > 0 {
-		if v := strings.TrimSpace(cert.URIs[0].String()); v != "" {
-			return v
-		}
-	}
-	if len(cert.DNSNames) > 0 {
-		if v := strings.TrimSpace(cert.DNSNames[0]); v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
 func (s *Service) newGhostControlClient(adminAddr string) *GhostControlClient {
 	return NewGhostControlClient(adminAddr).WithCommandFrameAuthToken(strings.TrimSpace(s.cfg.GhostAdminFrameAuthToken))
 }
 
 // Mirage TLS server-config builder for listener transport enforcement.
 func (s *Service) serverTLSConfig() (*tls.Config, error) {
-	cert, err := tls.LoadX509KeyPair(s.cfg.Session.TLS.CertFile, s.cfg.Session.TLS.KeyFile)
+	cert, err := identity.LoadKeyPair(s.cfg.Session.TLS.CertFile, s.cfg.Session.TLS.KeyFile)
+	if err != nil {
+		return nil, err
+	}
+	denied, err := identity.ParseDeniedSerials(s.cfg.Session.TLS.DeniedSerials)
 	if err != nil {
 		return nil, err
 	}
@@ -924,6 +910,7 @@ func (s *Service) serverTLSConfig() (*tls.Config, error) {
 			return nil, fmt.Errorf("mirage: parse tls ca bundle: %s", s.cfg.Session.TLS.CAFile)
 		}
 		cfg.ClientCAs = pool
+		cfg.VerifyPeerCertificate = denied.VerifyPeerNotDenied
 	}
 	return cfg, nil
 }

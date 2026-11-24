@@ -19,6 +19,8 @@ type TLSConfig struct {
 	CAFile             string
 	ServerName         string
 	InsecureSkipVerify bool
+	// Revoked peer certificate serials (hex), rejected on every handshake.
+	DeniedSerials []string
 }
 
 // Session retry backoff behavior settings.

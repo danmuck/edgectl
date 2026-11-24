@@ -78,6 +78,11 @@ make run-ghost
 
 # terminal client for Ghost admin/testing
 make run-client
+
+# certificates (edgectl://<role>/<id> principals; see admin_security.toml)
+make certs-root                                  # once; keep certs/root offline
+make certs-mirage ID=mirage.mac DNS=mirage.mac IP=192.168.50.94
+make certs-ghost ID=ghost.pi                     # ID must equal the ghost_id
 ```
 
 ## Testing

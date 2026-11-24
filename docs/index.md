@@ -54,6 +54,7 @@ This index is the navigation root for architecture and protocol documentation.
 - Protocol boundary contract: [`architecture/definitions/protocol.toml`](architecture/definitions/protocol.toml)
 - TLV IDs and required field sets: [`architecture/definitions/tlv.toml`](architecture/definitions/tlv.toml)
 - Transport security policy: [`architecture/definitions/transport_security.toml`](architecture/definitions/transport_security.toml)
+- Admin boundary security (mTLS principals, authorization, signed approvals): [`architecture/definitions/admin_security.toml`](architecture/definitions/admin_security.toml)
 - Session handshake sequence: [`architecture/definitions/handshake.toml`](architecture/definitions/handshake.toml)
 - Timeout/retry/idempotency: [`architecture/definitions/reliability.toml`](architecture/definitions/reliability.toml)
 - Error taxonomy and wire codes: [`architecture/definitions/errors.toml`](architecture/definitions/errors.toml)

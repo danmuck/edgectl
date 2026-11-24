@@ -373,7 +373,7 @@ func TestServiceRegistrationTLSMTLSIdentityBound(t *testing.T) {
 	dir := t.TempDir()
 	ca := tlstest.NewAuthority(t, dir, "edgectl-test-ca")
 	serverCert, serverKey := ca.IssueServerCert(t, dir, "mirage.local", []string{"mirage.local"}, []net.IP{net.ParseIP("127.0.0.1")})
-	clientCert, clientKey := ca.IssueClientCert(t, dir, "ghost.alpha")
+	clientCert, clientKey := ca.IssuePrincipalCert(t, dir, "edgectl://ghost/ghost.alpha", nil, nil)
 
 	cfg := DefaultServiceConfig()
 	cfg.RequireIdentityBinding = true
@@ -446,7 +446,7 @@ func TestServiceRegistrationTLSIdentityMismatchRejected(t *testing.T) {
 	dir := t.TempDir()
 	ca := tlstest.NewAuthority(t, dir, "edgectl-test-ca")
 	serverCert, serverKey := ca.IssueServerCert(t, dir, "mirage.local", []string{"mirage.local"}, []net.IP{net.ParseIP("127.0.0.1")})
-	clientCert, clientKey := ca.IssueClientCert(t, dir, "ghost.beta")
+	clientCert, clientKey := ca.IssuePrincipalCert(t, dir, "edgectl://ghost/ghost.beta", nil, nil)
 
 	cfg := DefaultServiceConfig()
 	cfg.RequireIdentityBinding = true

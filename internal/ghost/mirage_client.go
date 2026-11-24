@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/identity"
 	"github.com/danmuck/edgectl/internal/protocol/frame"
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/seeds"
@@ -185,12 +186,17 @@ func (c *MirageClient) clientTLSConfig() (*tls.Config, error) {
 	}
 
 	if c.cfg.Session.TLS.Mutual {
-		cert, err := tls.LoadX509KeyPair(c.cfg.Session.TLS.CertFile, c.cfg.Session.TLS.KeyFile)
+		cert, err := identity.LoadKeyPair(c.cfg.Session.TLS.CertFile, c.cfg.Session.TLS.KeyFile)
 		if err != nil {
 			return nil, err
 		}
 		cfg.Certificates = []tls.Certificate{cert}
 	}
+	denied, err := identity.ParseDeniedSerials(c.cfg.Session.TLS.DeniedSerials)
+	if err != nil {
+		return nil, err
+	}
+	cfg.VerifyPeerCertificate = denied.VerifyPeerNotDenied
 	return cfg, nil
 }
 

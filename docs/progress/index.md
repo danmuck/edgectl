@@ -26,6 +26,7 @@ The canonical high-level MVP phase schedule is [`mvp_buildplan.md`](mvp_buildpla
 - [x] Future API v1 proposal tracker: [`future_api_v1.md`](future_api_v1.md)
 - [x] Pi Homebrew bootstrap and ghost-local dependency control pass: [`pi_brew_bootstrap_validation.md`](pi_brew_bootstrap_validation.md)
 - [x] Claude policy hardening and repo-wide validation pass: [`claude_code_policy_validation.md`](claude_code_policy_validation.md)
+- [ ] Admin boundary security (mTLS identities, authorization, signed approvals; contract approved): [`admin_security.md`](admin_security.md)
 
 ## Intended Read Order
 
@@ -50,3 +51,4 @@ The canonical high-level MVP phase schedule is [`mvp_buildplan.md`](mvp_buildpla
 19. [`future_api_v1.md`](future_api_v1.md)
 20. [`pi_brew_bootstrap_validation.md`](pi_brew_bootstrap_validation.md)
 21. [`claude_code_policy_validation.md`](claude_code_policy_validation.md)
+22. [`admin_security.md`](admin_security.md)

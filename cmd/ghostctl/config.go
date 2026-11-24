@@ -15,31 +15,32 @@ import (
 
 // ghostctl config.toml key mapping to Ghost runtime settings.
 type fileConfig struct {
-	ID                   string   `toml:"id"`
-	ProjectRoot          string   `toml:"project_root"`
-	ProjectFetchOnBoot   bool     `toml:"project_fetch_on_boot"`
-	Seeds                []string `toml:"seeds"`
-	Heartbeat            string   `toml:"heartbeat"`
-	HeartbeatInterval    string   `toml:"heartbeat_interval"`
-	HeartbeatIntervalMS  int64    `toml:"heartbeat_interval_ms"`
-	AdminListen          string   `toml:"admin_listen"`
-	AdminFrameAuthToken  string   `toml:"admin_frame_auth_token"`
-	MiragePolicy         string   `toml:"mirage_policy"`
-	MirageAddress        string   `toml:"mirage_address"`
-	MiragePeerIdentity   string   `toml:"mirage_peer_identity"`
-	MirageMaxAttempts    int      `toml:"mirage_max_connect_attempts"`
-	MirageSecurityMode   string   `toml:"mirage_security_mode"`
-	MirageTLSEnabled     bool     `toml:"mirage_tls_enabled"`
-	MirageTLSMutual      bool     `toml:"mirage_tls_mutual"`
-	MirageTLSCertFile    string   `toml:"mirage_tls_cert_file"`
-	MirageTLSKeyFile     string   `toml:"mirage_tls_key_file"`
-	MirageTLSCAFile      string   `toml:"mirage_tls_ca_file"`
-	MirageTLSServerName  string   `toml:"mirage_tls_server_name"`
-	MirageTLSInsecure    bool     `toml:"mirage_tls_insecure_skip_verify"`
-	SeedInstallEnabled   bool     `toml:"seed_install_enabled"`
-	SeedInstallRoot      string   `toml:"seed_install_root"`
-	SeedInstallBinRoot   string   `toml:"seed_install_bin_root"`
-	SeedInstallWhitelist []string `toml:"seed_install_whitelist"`
+	ID                     string   `toml:"id"`
+	ProjectRoot            string   `toml:"project_root"`
+	ProjectFetchOnBoot     bool     `toml:"project_fetch_on_boot"`
+	Seeds                  []string `toml:"seeds"`
+	Heartbeat              string   `toml:"heartbeat"`
+	HeartbeatInterval      string   `toml:"heartbeat_interval"`
+	HeartbeatIntervalMS    int64    `toml:"heartbeat_interval_ms"`
+	AdminListen            string   `toml:"admin_listen"`
+	AdminFrameAuthToken    string   `toml:"admin_frame_auth_token"`
+	MiragePolicy           string   `toml:"mirage_policy"`
+	MirageAddress          string   `toml:"mirage_address"`
+	MiragePeerIdentity     string   `toml:"mirage_peer_identity"`
+	MirageMaxAttempts      int      `toml:"mirage_max_connect_attempts"`
+	MirageSecurityMode     string   `toml:"mirage_security_mode"`
+	MirageTLSEnabled       bool     `toml:"mirage_tls_enabled"`
+	MirageTLSMutual        bool     `toml:"mirage_tls_mutual"`
+	MirageTLSCertFile      string   `toml:"mirage_tls_cert_file"`
+	MirageTLSKeyFile       string   `toml:"mirage_tls_key_file"`
+	MirageTLSCAFile        string   `toml:"mirage_tls_ca_file"`
+	MirageTLSServerName    string   `toml:"mirage_tls_server_name"`
+	MirageTLSInsecure      bool     `toml:"mirage_tls_insecure_skip_verify"`
+	MirageTLSDeniedSerials []string `toml:"mirage_tls_denied_serials"`
+	SeedInstallEnabled     bool     `toml:"seed_install_enabled"`
+	SeedInstallRoot        string   `toml:"seed_install_root"`
+	SeedInstallBinRoot     string   `toml:"seed_install_bin_root"`
+	SeedInstallWhitelist   []string `toml:"seed_install_whitelist"`
 }
 
 // ghostctl loader for TOML config with default overlay.
@@ -130,6 +131,10 @@ func loadServiceConfig(path string) (ghost.ServiceConfig, error) {
 	}
 	if meta.IsDefined("mirage_tls_server_name") {
 		cfg.Mirage.SessionConfig.TLS.ServerName = strings.TrimSpace(raw.MirageTLSServerName)
+	}
+	// Revoked certificate serials (hex) rejected on every Mirage session handshake.
+	if meta.IsDefined("mirage_tls_denied_serials") {
+		cfg.Mirage.SessionConfig.TLS.DeniedSerials = tools.NormalizeNonEmptyList(raw.MirageTLSDeniedSerials)
 	}
 	if meta.IsDefined("mirage_tls_insecure_skip_verify") {
 		cfg.Mirage.SessionConfig.TLS.InsecureSkipVerify = raw.MirageTLSInsecure

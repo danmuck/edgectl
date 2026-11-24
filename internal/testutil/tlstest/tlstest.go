@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,6 +81,18 @@ func (a *Authority) IssueClientCert(t testing.TB, dir string, commonName string)
 	return a.issueCert(t, dir, commonName, x509.ExtKeyUsageClientAuth, nil, nil)
 }
 
+// IssuePrincipalCert issues a serverAuth+clientAuth certificate whose single URI SAN is principal
+// (edgectl://<role>/<id>), matching admin_security.toml identity rules.
+func (a *Authority) IssuePrincipalCert(t testing.TB, dir string, principal string, dnsNames []string, ips []net.IP) (string, string) {
+	t.Helper()
+	u, err := url.Parse(principal)
+	if err != nil {
+		t.Fatalf("parse principal %q: %v", principal, err)
+	}
+	return a.issueCertWithURIs(t, dir, sanitize(u.Host+"."+strings.TrimPrefix(u.Path, "/")), "",
+		[]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}, dnsNames, ips, []*url.URL{u})
+}
+
 // tlstest internal certificate issuer shared by client/server helpers.
 func (a *Authority) issueCert(
 	t testing.TB,
@@ -88,6 +101,21 @@ func (a *Authority) issueCert(
 	usage x509.ExtKeyUsage,
 	dnsNames []string,
 	ips []net.IP,
+) (string, string) {
+	t.Helper()
+	return a.issueCertWithURIs(t, dir, sanitize(commonName), commonName, []x509.ExtKeyUsage{usage}, dnsNames, ips, nil)
+}
+
+// tlstest leaf issuer; basename names the output files.
+func (a *Authority) issueCertWithURIs(
+	t testing.TB,
+	dir string,
+	basename string,
+	commonName string,
+	usages []x509.ExtKeyUsage,
+	dnsNames []string,
+	ips []net.IP,
+	uris []*url.URL,
 ) (string, string) {
 	t.Helper()
 
@@ -102,16 +130,17 @@ func (a *Authority) issueCert(
 		NotBefore:    now.Add(-time.Hour),
 		NotAfter:     now.Add(24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:  []x509.ExtKeyUsage{usage},
+		ExtKeyUsage:  usages,
 		DNSNames:     dnsNames,
 		IPAddresses:  ips,
+		URIs:         uris,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, a.cert, &key.PublicKey, a.key)
 	if err != nil {
 		t.Fatalf("create signed cert: %v", err)
 	}
 
-	base := sanitize(commonName)
+	base := basename
 	certPath := filepath.Join(dir, fmt.Sprintf("%s.crt", base))
 	keyPath := filepath.Join(dir, fmt.Sprintf("%s.key", base))
 

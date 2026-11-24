@@ -170,3 +170,17 @@ func TestLoadServiceConfigAdminFrameAuthToken(t *testing.T) {
 		t.Fatalf("admin_frame_auth_token = %q", cfg.AdminFrameAuthToken)
 	}
 }
+
+func TestLoadServiceConfigMirageTLSDeniedSerials(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("mirage_tls_denied_serials = [\"1a2b\", \" \", \"ff\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadServiceConfig(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := cfg.Mirage.SessionConfig.TLS.DeniedSerials; len(got) != 2 || got[0] != "1a2b" || got[1] != "ff" {
+		t.Fatalf("denied serials = %v", got)
+	}
+}

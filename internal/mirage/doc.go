@@ -9,6 +9,11 @@
 //
 // - report production
 //
+// Session TLS identity (admin_security.toml [identity], [trust]):
+// - session client certificates must carry an edgectl://ghost/<ghost_id> URI SAN principal (CN ignored)
+//
+// - keys load only with mode 0600; denied serials are rejected on every handshake
+//
 // Identity binding (transport_security.toml [identity_binding], errors.toml):
 // - session events must match the bound ghost_id, both declared and as planned for the command_id
 //
@@ -60,6 +65,8 @@
 // - docs/architecture/definitions/protocol.toml
 //
 // - docs/architecture/definitions/transport_security.toml
+//
+// - docs/architecture/definitions/admin_security.toml
 //
 // - docs/architecture/definitions/errors.toml
 //
