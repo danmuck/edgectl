@@ -202,3 +202,18 @@ func TestLoadServiceConfigAdminTLSAndMiragePrincipal(t *testing.T) {
 		t.Fatalf("mirage principal = %q", cfg.MiragePrincipal)
 	}
 }
+
+func TestLoadServiceConfigAdminOperatorAccess(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("admin_operator_access = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadServiceConfig(path)
+	if err != nil || !cfg.AdminOperatorAccess {
+		t.Fatalf("admin_operator_access: %v %v", cfg.AdminOperatorAccess, err)
+	}
+	def, err := loadServiceConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err == nil && def.AdminOperatorAccess {
+		t.Fatalf("operator access must default off")
+	}
+}

@@ -1,6 +1,6 @@
 # Admin Boundary Security Tracker
 
-Status: `In Progress (Slices A-B complete)`
+Status: `In Progress (Slices A-C complete)`
 
 Contract (approved 2026-11-23): [`docs/architecture/definitions/admin_security.toml`](../architecture/definitions/admin_security.toml)
 
@@ -60,10 +60,18 @@ Slice B notes (2026-11-23):
 
 ### Slice C — Authorization and audit
 
-- [ ] Default-deny action matrix from the contract, enforced before dispatch on both endpoints.
-- [ ] Actor derived from principal; reject requests whose `actor` disagrees.
-- [ ] Ghost `mirage_principal` pinning; optional operator access flag.
-- [ ] Per-request audit line: principal, role, action, decision, error_code.
+- [x] Default-deny action matrix from the contract, enforced before dispatch on both endpoints.
+- [x] Actor derived from principal; reject requests whose `actor` disagrees.
+- [x] Ghost `mirage_principal` pinning; optional operator access flag.
+- [x] Per-request audit line: principal, role, action, decision, error_code.
+
+Slice C notes (2026-11-23):
+
+- `adminauth.Policy.Authorize` encodes `[authorization.mirage_admin]` and `[authorization.ghost_admin]` exactly; unknown actions are denied. Unauthenticated peers (development loopback only) may run listed non-privileged actions; privileged ones return `ErrAuthRequired`. Denials return code `1000` with reason `authorization_denied`.
+- Ghost endpoint: the mirage role is honored only for the pinned `mirage_principal` (no pin = no Mirage may act); operator principals only when `admin_operator_access = true` (default off), and operators never hold mirage-only actions (`execute_envelope`, `spawn_ghost`, `bind_mirage`, `install_dependencies`). Ghost principals hold no Ghost-admin action. This closes the security review finding on `b639bd2` (authentication without role check).
+- Mirage endpoint: operators only. `submit_issue` and `propose/approve/execute_dependencies` actor fields must be empty or equal the caller principal; empty is filled from the certificate (e.g. `edgectl://operator/dan`).
+- `adminauth.Audit` writes `admin.audit component, peer, principal, role, action, decision, error_code, timestamp_ms` for every request on both endpoints (warn on deny).
+- Config: ghostctl `admin_operator_access`; miragectl `local_ghost_admin_operator_access`. `client-tm` Ghost mode requires operator access on the target Ghost; Mirage-mode admin works with an operator certificate.
 
 ### Slice D — Signed install approvals
 

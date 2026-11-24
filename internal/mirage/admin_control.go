@@ -92,7 +92,7 @@ func adminErrorCode(err error) uint32 {
 	if errors.As(err, &ghostErr) && ghostErr.Code != 0 {
 		return ghostErr.Code
 	}
-	if errors.Is(err, adminauth.ErrAuthRequired) {
+	if errors.Is(err, adminauth.ErrAuthRequired) || errors.Is(err, adminauth.ErrAuthorizationDenied) {
 		return schema.ErrCodeTransportFailure
 	}
 	switch {
@@ -174,13 +174,17 @@ func (s *Service) handleAdminConn(conn net.Conn) {
 			_ = writeAdminControlResponse(conn, failAdminRequest("%v", err))
 			continue
 		}
+		// Default-deny authorization by principal, then actor binding, before dispatch
+		// (admin_security.toml [authorization]).
 		var resp adminControlResponse
-		if adminauth.Privileged(req.Action) && !peer.Authenticated {
-			// Privileged actions require mTLS in every mode (admin_security.toml authorization.privileged).
-			resp = failAdmin(fmt.Errorf("%w: %s", adminauth.ErrAuthRequired, req.Action))
+		decision := adminauth.DecisionAllow
+		if err := s.authorizeAdminRequest(peer, &req); err != nil {
+			resp = failAdmin(err)
+			decision = adminauth.DecisionDeny
 		} else {
 			resp = s.handleAdminControlRequest(req)
 		}
+		adminauth.Audit("mirage", peer, req.Action, decision, resp.ErrorCode)
 		if err := writeAdminControlResponse(conn, resp); err != nil {
 			logs.Warnf("mirage.admin write err=%v", err)
 			return
@@ -429,5 +433,22 @@ func writeAdminControlResponse(w io.Writer, resp adminControlResponse) error {
 	}
 	payload = append(payload, '\n')
 	_, err = w.Write(payload)
+	return err
+}
+
+// Authorizes one admin request for peer and binds request actor fields to the peer principal:
+// operators only (admin_security.toml [authorization.mirage_admin]); actor fields must be empty or
+// equal the caller and are filled from the certificate when empty.
+func (s *Service) authorizeAdminRequest(peer adminauth.Peer, req *adminControlRequest) error {
+	if err := (adminauth.Policy{Endpoint: adminauth.MirageAdmin}).Authorize(peer, req.Action); err != nil {
+		return err
+	}
+	var err error
+	switch strings.TrimSpace(req.Action) {
+	case "submit_issue":
+		req.Issue.Actor, err = adminauth.BindActor(peer, req.Issue.Actor)
+	case "propose_dependencies", "approve_dependencies", "execute_dependencies":
+		req.Dependency.Actor, err = adminauth.BindActor(peer, req.Dependency.Actor)
+	}
 	return err
 }

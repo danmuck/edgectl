@@ -15,38 +15,39 @@ import (
 
 // miragectl config.toml key mapping to Mirage runtime settings.
 type fileConfig struct {
-	Addr                         string              `toml:"addr"`
-	ID                           string              `toml:"id"`
-	AdminListenAddr              string              `toml:"admin_listen_addr"`
-	RequireIdentityBind          bool                `toml:"require_identity_binding"`
-	RootGhostAdminAddr           string              `toml:"root_ghost_admin_addr"`
-	LocalGhostID                 string              `toml:"local_ghost_id"`
-	LocalGhostAdminAddr          string              `toml:"local_ghost_admin_addr"`
-	GhostAdminFrameAuthToken     string              `toml:"ghost_admin_frame_auth_token"`
-	AdminTLSCertFile             string              `toml:"admin_tls_cert_file"`
-	AdminTLSKeyFile              string              `toml:"admin_tls_key_file"`
-	AdminTLSCAFile               string              `toml:"admin_tls_ca_file"`
-	AdminTLSDeniedSerials        []string            `toml:"admin_tls_denied_serials"`
-	LocalGhostAdminTLSCertFile   string              `toml:"local_ghost_admin_tls_cert_file"`
-	LocalGhostAdminTLSKeyFile    string              `toml:"local_ghost_admin_tls_key_file"`
-	LocalGhostSeeds              []string            `toml:"local_ghost_seeds"`
-	LocalGhostHeartbeat          string              `toml:"local_ghost_heartbeat_interval"`
-	LocalGhostHeartbeatMS        int64               `toml:"local_ghost_heartbeat_interval_ms"`
-	LocalGhostProjectRoot        string              `toml:"local_ghost_project_root"`
-	LocalGhostProjectFetchOnBoot bool                `toml:"local_ghost_project_fetch_on_boot"`
-	PreloadGhostAdmins           []preloadGhostAdmin `toml:"preload_ghost_admins"`
-	BuildlogPersist              bool                `toml:"buildlog_persist_enabled"`
-	BuildlogSeed                 string              `toml:"buildlog_seed_selector"`
-	BuildlogKeyPrefix            string              `toml:"buildlog_key_prefix"`
-	SessionSecurityMode          string              `toml:"session_security_mode"`
-	SessionTLSEnabled            bool                `toml:"session_tls_enabled"`
-	SessionTLSMutual             bool                `toml:"session_tls_mutual"`
-	SessionTLSCertFile           string              `toml:"session_tls_cert_file"`
-	SessionTLSKeyFile            string              `toml:"session_tls_key_file"`
-	SessionTLSCAFile             string              `toml:"session_tls_ca_file"`
-	SessionTLSDeniedSerials      []string            `toml:"session_tls_denied_serials"`
-	GhostManifests               []ghostManifestFile `toml:"ghost_manifests"`
-	CommandMaxAttempts           int                 `toml:"command_max_attempts"`
+	Addr                          string              `toml:"addr"`
+	ID                            string              `toml:"id"`
+	AdminListenAddr               string              `toml:"admin_listen_addr"`
+	RequireIdentityBind           bool                `toml:"require_identity_binding"`
+	RootGhostAdminAddr            string              `toml:"root_ghost_admin_addr"`
+	LocalGhostID                  string              `toml:"local_ghost_id"`
+	LocalGhostAdminAddr           string              `toml:"local_ghost_admin_addr"`
+	GhostAdminFrameAuthToken      string              `toml:"ghost_admin_frame_auth_token"`
+	AdminTLSCertFile              string              `toml:"admin_tls_cert_file"`
+	AdminTLSKeyFile               string              `toml:"admin_tls_key_file"`
+	AdminTLSCAFile                string              `toml:"admin_tls_ca_file"`
+	AdminTLSDeniedSerials         []string            `toml:"admin_tls_denied_serials"`
+	LocalGhostAdminTLSCertFile    string              `toml:"local_ghost_admin_tls_cert_file"`
+	LocalGhostAdminTLSKeyFile     string              `toml:"local_ghost_admin_tls_key_file"`
+	LocalGhostAdminOperatorAccess bool                `toml:"local_ghost_admin_operator_access"`
+	LocalGhostSeeds               []string            `toml:"local_ghost_seeds"`
+	LocalGhostHeartbeat           string              `toml:"local_ghost_heartbeat_interval"`
+	LocalGhostHeartbeatMS         int64               `toml:"local_ghost_heartbeat_interval_ms"`
+	LocalGhostProjectRoot         string              `toml:"local_ghost_project_root"`
+	LocalGhostProjectFetchOnBoot  bool                `toml:"local_ghost_project_fetch_on_boot"`
+	PreloadGhostAdmins            []preloadGhostAdmin `toml:"preload_ghost_admins"`
+	BuildlogPersist               bool                `toml:"buildlog_persist_enabled"`
+	BuildlogSeed                  string              `toml:"buildlog_seed_selector"`
+	BuildlogKeyPrefix             string              `toml:"buildlog_key_prefix"`
+	SessionSecurityMode           string              `toml:"session_security_mode"`
+	SessionTLSEnabled             bool                `toml:"session_tls_enabled"`
+	SessionTLSMutual              bool                `toml:"session_tls_mutual"`
+	SessionTLSCertFile            string              `toml:"session_tls_cert_file"`
+	SessionTLSKeyFile             string              `toml:"session_tls_key_file"`
+	SessionTLSCAFile              string              `toml:"session_tls_ca_file"`
+	SessionTLSDeniedSerials       []string            `toml:"session_tls_denied_serials"`
+	GhostManifests                []ghostManifestFile `toml:"ghost_manifests"`
+	CommandMaxAttempts            int                 `toml:"command_max_attempts"`
 }
 
 // ghostManifestFile maps one ghost_manifests TOML table row for remote deploy targets.
@@ -274,6 +275,7 @@ func loadRuntimeConfigs(path string) (mirage.ServiceConfig, ghost.ServiceConfig,
 	if mCfg.AdminTLS.Enabled() {
 		cfg.MiragePrincipal = "edgectl://mirage/" + strings.TrimSpace(mCfg.MirageID)
 	}
+	cfg.AdminOperatorAccess = raw.LocalGhostAdminOperatorAccess
 	if cfg.AdminListenAddr == "" {
 		cfg.AdminListenAddr = ghost.DefaultServiceConfig().AdminListenAddr
 	}

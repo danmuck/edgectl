@@ -318,3 +318,14 @@ func TestLoadRuntimeConfigsAdminTLS(t *testing.T) {
 		t.Fatalf("local ghost mirage pin = %q", gCfg.MiragePrincipal)
 	}
 }
+
+func TestLoadRuntimeConfigsLocalGhostOperatorAccess(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("local_ghost_admin_operator_access = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, gCfg, err := loadRuntimeConfigs(path)
+	if err != nil || !gCfg.AdminOperatorAccess {
+		t.Fatalf("local ghost operator access: %v %v", gCfg.AdminOperatorAccess, err)
+	}
+}

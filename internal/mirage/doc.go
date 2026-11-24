@@ -21,6 +21,11 @@
 //
 // - Ghost admin clients dial as Mirage and pin edgectl://ghost/<ghost_id>
 //
+// Admin authorization (admin_security.toml [authorization.mirage_admin]):
+// - default deny; operators only; actor fields bound to the caller principal
+//
+// - every request writes an admin.audit line (principal, role, action, decision, error_code)
+//
 // Identity binding (transport_security.toml [identity_binding], errors.toml):
 // - session events must match the bound ghost_id, both declared and as planned for the command_id
 //

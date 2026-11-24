@@ -29,6 +29,7 @@ type fileConfig struct {
 	AdminTLSCAFile         string   `toml:"admin_tls_ca_file"`
 	AdminTLSDeniedSerials  []string `toml:"admin_tls_denied_serials"`
 	MiragePrincipal        string   `toml:"mirage_principal"`
+	AdminOperatorAccess    bool     `toml:"admin_operator_access"`
 	MiragePolicy           string   `toml:"mirage_policy"`
 	MirageAddress          string   `toml:"mirage_address"`
 	MiragePeerIdentity     string   `toml:"mirage_peer_identity"`
@@ -160,6 +161,10 @@ func loadServiceConfig(path string) (ghost.ServiceConfig, error) {
 	// Pinned Mirage principal for session and admin peers (admin_security.toml ghost_pinning).
 	if meta.IsDefined("mirage_principal") {
 		cfg.MiragePrincipal = strings.TrimSpace(raw.MiragePrincipal)
+	}
+	// Honor operator principals on this Ghost's admin endpoint (off by default).
+	if meta.IsDefined("admin_operator_access") {
+		cfg.AdminOperatorAccess = raw.AdminOperatorAccess
 	}
 	// Shared secret for admin execute_envelope frames and required for install_dependencies plans.
 	if meta.IsDefined("admin_frame_auth_token") {

@@ -16,6 +16,8 @@ admin_listen = "127.0.0.1:7011"
 # admin_tls_denied_serials = []
 # Pinned Mirage principal; required with TLS sessions in production.
 # mirage_principal = "edgectl://mirage/mirage.local"
+# Allow operator principals (client-tm Ghost mode) to use read actions on this admin endpoint.
+# admin_operator_access = false
 
 mirage_policy = "headless"
 mirage_address = "127.0.0.1:9000"

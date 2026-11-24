@@ -75,9 +75,11 @@ type ServiceConfig struct {
 	// Admin endpoint mTLS credentials; empty CertFile serves plaintext on loopback only (development).
 	AdminTLS adminauth.Credentials
 	// Pinned Mirage principal (edgectl://mirage/<id>); session and admin peers must match it.
-	MiragePrincipal   string
-	EnableClusterHost bool
-	Mirage            MirageSessionConfig
+	MiragePrincipal string
+	// Honor operator principals on the admin endpoint (admin_security.toml ghost_pinning; off by default).
+	AdminOperatorAccess bool
+	EnableClusterHost   bool
+	Mirage              MirageSessionConfig
 }
 
 // Ghost service defaults for standalone runtime configuration.
@@ -743,4 +745,13 @@ func (s *Service) selfPrincipal() identity.Principal {
 // Production security mode follows the Mirage session security mode.
 func (s *Service) productionMode() bool {
 	return session.NormalizeSecurityMode(s.cfg.Mirage.SessionConfig.SecurityMode) == session.SecurityModeProduction
+}
+
+// Admin authorization policy: only the pinned Mirage holds the mirage role; operators only when enabled.
+func (s *Service) adminPolicy() adminauth.Policy {
+	return adminauth.Policy{
+		Endpoint:       adminauth.GhostAdmin,
+		PinnedMirage:   strings.TrimSpace(s.cfg.MiragePrincipal),
+		OperatorAccess: s.cfg.AdminOperatorAccess,
+	}
 }

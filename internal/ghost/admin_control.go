@@ -33,7 +33,7 @@ var (
 func adminErrorCode(err error) uint32 {
 	switch {
 	case errors.Is(err, ErrAdminFrameAuthRequired), errors.Is(err, ErrAdminFrameAuthInvalid),
-		errors.Is(err, adminauth.ErrAuthRequired):
+		errors.Is(err, adminauth.ErrAuthRequired), errors.Is(err, adminauth.ErrAuthorizationDenied):
 		return schema.ErrCodeTransportFailure
 	case errors.Is(err, errAdminInvalidRequest),
 		errors.Is(err, ErrInvalidCommandEnv),
@@ -273,13 +273,16 @@ func (s *Service) handleAdminConn(conn net.Conn) {
 			_ = writeControlResponse(conn, failControl(fmt.Errorf("%w: %v", errAdminInvalidRequest, err)))
 			continue
 		}
+		// Default-deny authorization by principal before dispatch (admin_security.toml [authorization]).
 		var resp controlResponse
-		if adminauth.Privileged(req.Action) && !peer.Authenticated {
-			// Privileged actions require mTLS in every mode (admin_security.toml authorization.privileged).
-			resp = failControl(fmt.Errorf("%w: %s", adminauth.ErrAuthRequired, req.Action))
+		decision := adminauth.DecisionAllow
+		if err := s.adminPolicy().Authorize(peer, req.Action); err != nil {
+			resp = failControl(err)
+			decision = adminauth.DecisionDeny
 		} else {
 			resp = s.handleControlRequest(req, remote)
 		}
+		adminauth.Audit("ghost", peer, req.Action, decision, resp.ErrorCode)
 		if err := writeControlResponse(conn, resp); err != nil {
 			logs.Warnf("ghost.admin write err=%v", err)
 			return

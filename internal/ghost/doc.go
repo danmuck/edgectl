@@ -57,6 +57,11 @@
 //
 // - session dialer requires a mirage principal, the pinned mirage_principal when set (required in production)
 //
+// Admin authorization (admin_security.toml [authorization.ghost_admin], ghost_pinning):
+// - default deny; mirage role only for the pinned mirage_principal; operators only with admin_operator_access
+//
+// - every request writes an admin.audit line (principal, role, action, decision, error_code)
+//
 // Admin boundary errors (errors.toml):
 // - failed admin responses carry error_code; execute_envelope frames are version/flag gated (1100)
 //

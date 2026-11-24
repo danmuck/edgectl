@@ -103,6 +103,7 @@ func TestGhostAdminMutualTLSAllowsPrivilegedActions(t *testing.T) {
 	cfg := DefaultServiceConfig()
 	cfg.GhostID = "ghost.alpha"
 	cfg.AdminTLS = adminauth.Credentials{CertFile: gCert, KeyFile: gKey, CAFile: p.CAFile()}
+	cfg.MiragePrincipal = "edgectl://mirage/mirage.main"
 	svc := NewServiceWithConfig(cfg)
 	svc.server = newRadiatingServer(t, "ghost.alpha")
 	addr := serveAdmin(t, svc, true)
@@ -152,5 +153,52 @@ func TestChildAdminTLSCredentials(t *testing.T) {
 	}
 	if _, err := plain.childAdminTLS("ghost.local.x", "127.0.0.1:7999"); err != nil {
 		t.Fatalf("plaintext loopback child: %v", err)
+	}
+}
+
+// The review scenario: another Ghost's valid certificate cannot run privileged actions; operators
+// are refused unless enabled and even then cannot execute.
+func TestGhostAdminAuthorizesByPrincipal(t *testing.T) {
+	testlog.Start(t)
+	p := tlstest.NewPKI(t)
+	gCert, gKey, _ := p.Issue(t, identity.RoleGhost, "ghost.alpha")
+	otherCert, otherKey, _ := p.Issue(t, identity.RoleGhost, "ghost.beta")
+	opCert, opKey, _ := p.Issue(t, identity.RoleOperator, "dan")
+
+	cfg := DefaultServiceConfig()
+	cfg.GhostID = "ghost.alpha"
+	cfg.AdminTLS = adminauth.Credentials{CertFile: gCert, KeyFile: gKey, CAFile: p.CAFile()}
+	cfg.MiragePrincipal = "edgectl://mirage/mirage.main"
+	svc := NewServiceWithConfig(cfg)
+	svc.server = newRadiatingServer(t, "ghost.alpha")
+	addr := serveAdmin(t, svc, true)
+
+	dialAs := func(cert, key string, self identity.Principal) *tls.Config {
+		c, err := adminauth.ClientTLSConfig(adminauth.Credentials{CertFile: cert, KeyFile: key, CAFile: p.CAFile()}, self,
+			adminauth.ExpectPrincipal(identity.Principal{Role: identity.RoleGhost, ID: "ghost.alpha"}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	other := dialAs(otherCert, otherKey, identity.Principal{Role: identity.RoleGhost, ID: "ghost.beta"})
+	resp, err := adminCall(t, addr, other, controlRequest{Action: "execute_envelope", CommandFrame: flowCommandFrame(t, "cmd.peer")})
+	if err != nil || resp.OK || resp.ErrorCode != schema.ErrCodeTransportFailure {
+		t.Fatalf("ghost peer execute: ok=%v code=%d err=%v", resp.OK, resp.ErrorCode, err)
+	}
+	if _, ok := svc.server.ExecutionByCommandID("cmd.peer"); ok {
+		t.Fatalf("denied command executed")
+	}
+
+	op := dialAs(opCert, opKey, identity.Principal{Role: identity.RoleOperator, ID: "dan"})
+	if resp, _ := adminCall(t, addr, op, controlRequest{Action: "status"}); resp.OK {
+		t.Fatalf("operator access is off by default")
+	}
+	svc.cfg.AdminOperatorAccess = true
+	if resp, _ := adminCall(t, addr, op, controlRequest{Action: "status"}); !resp.OK {
+		t.Fatalf("operator status with access: %s", resp.Error)
+	}
+	if resp, _ := adminCall(t, addr, op, controlRequest{Action: "execute_envelope", CommandFrame: flowCommandFrame(t, "cmd.op")}); resp.OK {
+		t.Fatalf("operator must not execute on a ghost")
 	}
 }
