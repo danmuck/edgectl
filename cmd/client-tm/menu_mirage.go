@@ -621,81 +621,24 @@ func (a *App) spawnMirageLocalGhost(target MirageTarget) error {
 	return nil
 }
 
+// Deploys a Ghost that Mirage has a ghost_manifests entry for. Host, user, port, pinned host key,
+// and credentials come only from that manifest (admin_security.toml deploy.targets).
 func (a *App) deployRemoteGhost(target MirageTarget) error {
 	fmt.Println()
-	fmt.Println("Deploy Remote Ghost (SSH)")
-	ghostID, err := a.promptLine("ghost_id (e.g. ghost.remote-1)")
+	fmt.Println("Deploy Remote Ghost (SSH, configured manifests only)")
+	ghostID, err := a.promptLine("ghost_id (must match a ghost_manifests entry on Mirage)")
 	if err != nil {
 		return err
 	}
-	host, err := a.promptLine("host (IP or hostname)")
+	if strings.TrimSpace(ghostID) == "" {
+		return errors.New("ghost_id required")
+	}
+	force, err := a.promptConfirm("Stop an existing ghostctl on the target first")
 	if err != nil {
 		return err
 	}
-	userRaw, err := a.promptLine("ssh user (blank = deploy)")
-	if err != nil {
-		return err
-	}
-	user := strings.TrimSpace(userRaw)
-	if user == "" {
-		user = "deploy"
-	}
-	keyRaw, err := a.promptLine("ssh key path (blank = ~/.ssh/id_ed25519)")
-	if err != nil {
-		return err
-	}
-	seedsRaw, err := a.promptLine("seeds (comma-separated, blank = seed.flow,seed.host)")
-	if err != nil {
-		return err
-	}
-	seeds := []string{"seed.flow", "seed.host"}
-	if v := strings.TrimSpace(seedsRaw); v != "" {
-		seeds = strings.Split(v, ",")
-		for i := range seeds {
-			seeds[i] = strings.TrimSpace(seeds[i])
-		}
-	}
-	mirageAddrRaw, err := a.promptLine("mirage address for ghost to connect back (blank = skip)")
-	if err != nil {
-		return err
-	}
-	adminListenRaw, err := a.promptLine("ghost admin listen addr (blank = 0.0.0.0:7010)")
-	if err != nil {
-		return err
-	}
-	binaryRaw, err := a.promptLine("local ghostctl binary path (blank = local/bin/ghostctl)")
-	if err != nil {
-		return err
-	}
-	templateRaw, err := a.promptLine("ghost config template path (blank = cmd/ghostctl/pi.tls.config.toml)")
-	if err != nil {
-		return err
-	}
-	adminListen := strings.TrimSpace(adminListenRaw)
-	if adminListen == "" {
-		adminListen = "0.0.0.0:7010"
-	}
-	templatePath := strings.TrimSpace(templateRaw)
-	if templatePath == "" {
-		templatePath = "cmd/ghostctl/pi.tls.config.toml"
-	}
-
-	req := mirage.DeployGhostRequest{
-		Manifest: mirage.GhostManifest{
-			GhostID:            strings.TrimSpace(ghostID),
-			Host:               strings.TrimSpace(host),
-			User:               user,
-			SSHKeyFile:         strings.TrimSpace(keyRaw),
-			Seeds:              seeds,
-			AdminListen:        adminListen,
-			MiragePolicy:       "auto",
-			MirageAddress:      strings.TrimSpace(mirageAddrRaw),
-			ConfigTemplatePath: templatePath,
-		},
-		BinaryPath:         strings.TrimSpace(binaryRaw),
-		ConfigTemplatePath: templatePath,
-	}
-	fmt.Printf("Deploying ghost_id=%s to %s@%s...\n", req.Manifest.GhostID, user, req.Manifest.Host)
+	req := mirage.DeployGhostRequest{GhostID: strings.TrimSpace(ghostID), ForceRedeploy: force}
+	fmt.Printf("Deploying ghost_id=%s...\n", req.GhostID)
 	result, err := target.Admin.DeployGhost(req)
 	if err != nil {
 		return err

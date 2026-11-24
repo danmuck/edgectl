@@ -47,8 +47,8 @@ const MaxLifetime = 15 * time.Minute
 // MaxIntentAge caps how long a proposer intent stays approvable (proposer_intent_max_age_hours).
 const MaxIntentAge = 24 * time.Hour
 
-// clockSkew tolerates small clock differences between operator, Mirage, and Ghost hosts.
-const clockSkew = time.Minute
+// ClockSkew tolerates small clock differences between operator, Mirage, and Ghost hosts.
+const ClockSkew = time.Minute
 
 var (
 	// Approval or intent is malformed, does not verify, or is not from an operator under the root.
@@ -140,6 +140,16 @@ func (p Payload) Digest() ([32]byte, error) { return digestJSON(p) }
 
 // SignatureDigest is a short audit identifier for the approval signature.
 func (s Signed) SignatureDigest() string { return shortDigest(s.Signature) }
+
+// ReplayKey identifies an intent by proposer and content (not signature bytes, which are malleable),
+// so one intent is consumed at most once regardless of how its signature is encoded.
+func (s SignedIntent) ReplayKey(proposer identity.Principal) (string, error) {
+	d, err := s.Intent.Digest()
+	if err != nil {
+		return "", err
+	}
+	return proposer.String() + "|" + hex.EncodeToString(d[:]), nil
+}
 
 // SignatureDigest is a short audit identifier for the intent signature.
 func (s SignedIntent) SignatureDigest() string { return shortDigest(s.Signature) }
@@ -278,7 +288,7 @@ func VerifyIntent(si SignedIntent, tr Trust) (identity.Principal, error) {
 		return identity.Principal{}, err
 	}
 	at := time.UnixMilli(int64(i.ProposedAtMS))
-	if at.After(tr.Now.Add(clockSkew)) || tr.Now.Sub(at) > MaxIntentAge {
+	if at.After(tr.Now.Add(ClockSkew)) || tr.Now.Sub(at) > MaxIntentAge {
 		return identity.Principal{}, fmt.Errorf("%w: intent proposed at %s", ErrApprovalExpired, at.Format(time.RFC3339))
 	}
 	return proposer, nil
@@ -323,7 +333,7 @@ func Verify(s Signed, tr Trust) (Result, error) {
 	if !now.Before(expires) {
 		return Result{}, fmt.Errorf("%w: expired at %s", ErrApprovalExpired, expires.Format(time.RFC3339))
 	}
-	if expires.Sub(now) > MaxLifetime+clockSkew {
+	if expires.Sub(now) > MaxLifetime+ClockSkew {
 		return Result{}, fmt.Errorf("%w: lifetime exceeds %s", ErrApprovalExpired, MaxLifetime)
 	}
 	return Result{Proposer: proposer, Approver: approver}, nil

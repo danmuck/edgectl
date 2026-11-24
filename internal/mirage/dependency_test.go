@@ -3,9 +3,14 @@ package mirage
 import (
 	"bufio"
 	"context"
+	"crypto/elliptic"
+	"crypto/x509"
+	"encoding/asn1"
 	"encoding/json"
 	"errors"
+	"math/big"
 	"net"
+	"os"
 	"testing"
 	"time"
 
@@ -71,6 +76,32 @@ func operatorSigner(t *testing.T, p *tlstest.PKI, id string) (*approval.Signer, 
 	return s, serial
 }
 
+// Re-encodes an ECDSA P-256 signature as (r, n-s): a different byte string that still verifies.
+func highS(t *testing.T, sig []byte) []byte {
+	t.Helper()
+	var rs struct{ R, S *big.Int }
+	if _, err := asn1.Unmarshal(sig, &rs); err != nil {
+		t.Fatal(err)
+	}
+	rs.S = new(big.Int).Sub(elliptic.P256().Params().N, rs.S)
+	out, err := asn1.Marshal(rs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func rootsOf(t *testing.T, p *tlstest.PKI) *x509.CertPool {
+	t.Helper()
+	raw, err := os.ReadFile(p.CAFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(raw)
+	return pool
+}
+
 // Proposer-signed intent for ghostID and seedIDs, proposed now.
 func intentFor(t *testing.T, s *approval.Signer, ghostID string, seedIDs ...string) approval.SignedIntent {
 	t.Helper()
@@ -116,6 +147,15 @@ func TestDependencyProposalBuiltFromCatalogWithUnresolved(t *testing.T) {
 	}
 	if _, err := l.Propose(intent, "edgectl://operator/ops"); !errors.Is(err, ErrInvalidDependencyProposal) {
 		t.Fatalf("reused intent: expected ErrInvalidDependencyProposal, got %v", err)
+	}
+	// Same intent with a re-encoded (still valid) signature is the same intent.
+	malleated := intent
+	malleated.Signature = highS(t, intent.Signature)
+	if _, err := approval.VerifyIntent(malleated, approval.Trust{Roots: rootsOf(t, op.pki), Now: time.Now()}); err != nil {
+		t.Fatalf("malleated signature should still verify: %v", err)
+	}
+	if _, err := l.Propose(malleated, "edgectl://operator/ops"); !errors.Is(err, ErrInvalidDependencyProposal) {
+		t.Fatalf("reused intent with malleated signature: expected ErrInvalidDependencyProposal, got %v", err)
 	}
 	if _, err := l.Propose(intentFor(t, op.ops, "ghost.alpha", "seed.flow"), "edgectl://operator/ops"); !errors.Is(err, ErrInvalidDependencyProposal) {
 		t.Fatalf("seed without catalog sources: expected ErrInvalidDependencyProposal, got %v", err)

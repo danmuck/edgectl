@@ -157,17 +157,15 @@ func TestResolveWorkspaceRootFallsBackToConfigDir(t *testing.T) {
 	}
 }
 
-func TestLoadServiceConfigAdminFrameAuthToken(t *testing.T) {
+// The removed shared token is refused with a migration message, not silently ignored.
+func TestLoadServiceConfigRejectsAdminFrameAuthToken(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(path, []byte("admin_frame_auth_token = \" s3cret \"\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("admin_frame_auth_token = \"s3cret\"\n"), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	cfg, err := loadServiceConfig(path)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if cfg.AdminFrameAuthToken != "s3cret" {
-		t.Fatalf("admin_frame_auth_token = %q", cfg.AdminFrameAuthToken)
+	_, err := loadServiceConfig(path)
+	if err == nil || !strings.Contains(err.Error(), "admin_frame_auth_token was removed") {
+		t.Fatalf("expected removal error, got %v", err)
 	}
 }
 

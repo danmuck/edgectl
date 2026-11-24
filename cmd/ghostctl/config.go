@@ -15,14 +15,15 @@ import (
 
 // ghostctl config.toml key mapping to Ghost runtime settings.
 type fileConfig struct {
-	ID                     string   `toml:"id"`
-	ProjectRoot            string   `toml:"project_root"`
-	ProjectFetchOnBoot     bool     `toml:"project_fetch_on_boot"`
-	Seeds                  []string `toml:"seeds"`
-	Heartbeat              string   `toml:"heartbeat"`
-	HeartbeatInterval      string   `toml:"heartbeat_interval"`
-	HeartbeatIntervalMS    int64    `toml:"heartbeat_interval_ms"`
-	AdminListen            string   `toml:"admin_listen"`
+	ID                  string   `toml:"id"`
+	ProjectRoot         string   `toml:"project_root"`
+	ProjectFetchOnBoot  bool     `toml:"project_fetch_on_boot"`
+	Seeds               []string `toml:"seeds"`
+	Heartbeat           string   `toml:"heartbeat"`
+	HeartbeatInterval   string   `toml:"heartbeat_interval"`
+	HeartbeatIntervalMS int64    `toml:"heartbeat_interval_ms"`
+	AdminListen         string   `toml:"admin_listen"`
+	// Removed (admin_security.toml replaces it with mTLS); present only so loading can refuse it.
 	AdminFrameAuthToken    string   `toml:"admin_frame_auth_token"`
 	AdminTLSCertFile       string   `toml:"admin_tls_cert_file"`
 	AdminTLSKeyFile        string   `toml:"admin_tls_key_file"`
@@ -166,9 +167,11 @@ func loadServiceConfig(path string) (ghost.ServiceConfig, error) {
 	if meta.IsDefined("admin_operator_access") {
 		cfg.AdminOperatorAccess = raw.AdminOperatorAccess
 	}
-	// Shared secret for admin execute_envelope frames and required for install_dependencies plans.
+	// The shared admin token was removed; refuse configs that still carry it so no one relies on it.
 	if meta.IsDefined("admin_frame_auth_token") {
-		cfg.AdminFrameAuthToken = strings.TrimSpace(raw.AdminFrameAuthToken)
+		return ghost.ServiceConfig{}, fmt.Errorf("load ghost config: admin_frame_auth_token was removed " +
+			"(docs/architecture/definitions/admin_security.toml); delete it and set admin_tls_cert_file, " +
+			"admin_tls_key_file, admin_tls_ca_file, and mirage_principal")
 	}
 	if meta.IsDefined("seed_install_enabled") {
 		cfg.SeedInstall.Enabled = raw.SeedInstallEnabled

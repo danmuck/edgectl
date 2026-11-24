@@ -148,9 +148,8 @@ type ghostCommandArgSpec struct {
 
 // GhostControlClient is a TCP JSON control client for one root/local ghost admin endpoint.
 type GhostControlClient struct {
-	adminAddr        string
-	timeout          time.Duration
-	commandFrameAuth []byte
+	adminAddr string
+	timeout   time.Duration
 	// mTLS dial config (nil = plaintext); tlsErr defers credential load errors to the first call.
 	tlsConfig *tls.Config
 	tlsErr    error
@@ -186,17 +185,6 @@ func NewGhostControlClient(adminAddr string) *GhostControlClient {
 		adminAddr: strings.TrimSpace(adminAddr),
 		timeout:   5 * time.Second,
 	}
-}
-
-// WithCommandFrameAuthToken configures optional auth bytes attached to execute_envelope command frames.
-func (c *GhostControlClient) WithCommandFrameAuthToken(token string) *GhostControlClient {
-	raw := strings.TrimSpace(token)
-	if raw == "" {
-		c.commandFrameAuth = nil
-		return c
-	}
-	c.commandFrameAuth = []byte(raw)
-	return c
 }
 
 // InstallDependencies sends an approved proposal's plan to Ghost "install_dependencies" and returns
@@ -235,14 +223,14 @@ func (c *GhostControlClient) ExecuteAdminCommand(ctx context.Context, command gh
 	if ghostID == "" {
 		ghostID = "ghost.local"
 	}
-	cmdFrame, err := session.EncodeCommandFrameWithAuth(1, session.Command{
+	cmdFrame, err := session.EncodeCommandFrame(1, session.Command{
 		CommandID:    strings.TrimSpace(command.CommandID),
 		IntentID:     strings.TrimSpace(command.IntentID),
 		GhostID:      ghostID,
 		SeedSelector: strings.TrimSpace(command.SeedSelector),
 		Operation:    strings.TrimSpace(command.Operation),
 		Args:         copyArgs(command.Args),
-	}, c.commandFrameAuth)
+	})
 	if err != nil {
 		return session.Event{}, err
 	}

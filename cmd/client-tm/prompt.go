@@ -22,6 +22,7 @@ func (a *App) promptLine(label string) (string, error) {
 }
 
 // promptConfirm asks a y/N question; only "y" or "yes" confirms, anything else (including empty) declines.
+// Callers that sign report the decline themselves.
 func (a *App) promptConfirm(label string) (bool, error) {
 	line, err := a.promptLine(label + " [y/N]")
 	if err != nil {
@@ -31,7 +32,6 @@ func (a *App) promptConfirm(label string) (bool, error) {
 	case "y", "yes":
 		return true, nil
 	}
-	fmt.Println("Not signed.")
 	return false, nil
 }
 

@@ -26,25 +26,25 @@ import (
 	"github.com/danmuck/edgectl/internal/protocol/schema"
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/seeds"
+	"github.com/danmuck/edgectl/internal/tools"
 	logs "github.com/danmuck/smplog"
 )
 
 // Mirage session endpoint configuration.
 type ServiceConfig struct {
-	ListenAddr               string
-	RequireIdentityBinding   bool
-	MirageID                 string
-	AdminListenAddr          string
-	LocalGhostID             string
-	LocalGhostAdminAddr      string
-	GhostAdminFrameAuthToken string
-	PreloadGhostAdmins       []GhostAdminTarget
-	BuildlogPersistEnabled   bool
-	BuildlogSeedSelector     string
-	BuildlogKeyPrefix        string
-	RootGhostAdminAddr       string
-	GhostManifests           []GhostManifest
-	Session                  session.Config
+	ListenAddr             string
+	RequireIdentityBinding bool
+	MirageID               string
+	AdminListenAddr        string
+	LocalGhostID           string
+	LocalGhostAdminAddr    string
+	PreloadGhostAdmins     []GhostAdminTarget
+	BuildlogPersistEnabled bool
+	BuildlogSeedSelector   string
+	BuildlogKeyPrefix      string
+	RootGhostAdminAddr     string
+	GhostManifests         []GhostManifest
+	Session                session.Config
 	// Dispatch attempts per command before retry_exhausted; <=0 uses DefaultCommandMaxAttempts.
 	CommandMaxAttempts int
 	// Mirage admin mTLS credentials (edgectl://mirage/<mirage_id>): serves the admin endpoint and
@@ -55,19 +55,18 @@ type ServiceConfig struct {
 // Mirage service defaults for session endpoint configuration.
 func DefaultServiceConfig() ServiceConfig {
 	return ServiceConfig{
-		ListenAddr:               ":9000",
-		RequireIdentityBinding:   true,
-		MirageID:                 "mirage.local",
-		AdminListenAddr:          "",
-		LocalGhostID:             "ghost.local",
-		LocalGhostAdminAddr:      "127.0.0.1:7010",
-		GhostAdminFrameAuthToken: "",
-		BuildlogPersistEnabled:   false,
-		BuildlogSeedSelector:     "seed.fs",
-		BuildlogKeyPrefix:        "local/buildlogs/",
-		RootGhostAdminAddr:       "",
-		Session:                  session.DefaultConfig(),
-		CommandMaxAttempts:       DefaultCommandMaxAttempts,
+		ListenAddr:             ":9000",
+		RequireIdentityBinding: true,
+		MirageID:               "mirage.local",
+		AdminListenAddr:        "",
+		LocalGhostID:           "ghost.local",
+		LocalGhostAdminAddr:    "127.0.0.1:7010",
+		BuildlogPersistEnabled: false,
+		BuildlogSeedSelector:   "seed.fs",
+		BuildlogKeyPrefix:      "local/buildlogs/",
+		RootGhostAdminAddr:     "",
+		Session:                session.DefaultConfig(),
+		CommandMaxAttempts:     DefaultCommandMaxAttempts,
 	}
 }
 
@@ -142,6 +141,8 @@ type Service struct {
 	adminGhostAddrs map[string]string
 	// Test seam for dependency plan dispatch; nil uses the Ghost admin client.
 	dependencyInstaller dependencyInstaller
+	// Test seam for the ssh/scp runner used by remote deploys; nil uses the system binaries.
+	sshRunner tools.CommandRunner
 }
 
 // Mirage service constructor using default configuration.
@@ -886,7 +887,7 @@ func (s *Service) authenticateConn(conn net.Conn) (peerAuth, error) {
 // server must be edgectl://ghost/<ghostID> (any ghost principal when ghostID is unknown; the
 // verified principal is then available from PeerPrincipal).
 func (s *Service) newGhostControlClient(ghostID string, adminAddr string) *GhostControlClient {
-	client := NewGhostControlClient(adminAddr).WithCommandFrameAuthToken(strings.TrimSpace(s.cfg.GhostAdminFrameAuthToken))
+	client := NewGhostControlClient(adminAddr)
 	if !s.cfg.AdminTLS.Enabled() {
 		return client
 	}

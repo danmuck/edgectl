@@ -65,14 +65,13 @@ type SeedInstallConfig struct {
 
 // ServiceConfig configures Ghost standalone runtime defaults.
 type ServiceConfig struct {
-	GhostID             string
-	ProjectRoot         string
-	ProjectFetchOnBoot  bool
-	BuiltinSeedIDs      []string
-	SeedInstall         SeedInstallConfig
-	HeartbeatInterval   time.Duration
-	AdminListenAddr     string
-	AdminFrameAuthToken string
+	GhostID            string
+	ProjectRoot        string
+	ProjectFetchOnBoot bool
+	BuiltinSeedIDs     []string
+	SeedInstall        SeedInstallConfig
+	HeartbeatInterval  time.Duration
+	AdminListenAddr    string
 	// Admin endpoint mTLS credentials; empty CertFile serves plaintext on loopback only (development).
 	AdminTLS adminauth.Credentials
 	// Pinned Mirage principal (edgectl://mirage/<id>); session and admin peers must match it.
@@ -86,15 +85,14 @@ type ServiceConfig struct {
 // Ghost service defaults for standalone runtime configuration.
 func DefaultServiceConfig() ServiceConfig {
 	return ServiceConfig{
-		GhostID:             "ghost.local",
-		ProjectRoot:         "",
-		ProjectFetchOnBoot:  true,
-		BuiltinSeedIDs:      []string{"seed.flow"},
-		SeedInstall:         SeedInstallConfig{Enabled: false, InstallRoot: filepath.Join("local", "seeds")},
-		HeartbeatInterval:   5 * time.Second,
-		AdminListenAddr:     "",
-		AdminFrameAuthToken: "",
-		EnableClusterHost:   true,
+		GhostID:            "ghost.local",
+		ProjectRoot:        "",
+		ProjectFetchOnBoot: true,
+		BuiltinSeedIDs:     []string{"seed.flow"},
+		SeedInstall:        SeedInstallConfig{Enabled: false, InstallRoot: filepath.Join("local", "seeds")},
+		HeartbeatInterval:  5 * time.Second,
+		AdminListenAddr:    "",
+		EnableClusterHost:  true,
 		Mirage: MirageSessionConfig{
 			Policy:        MiragePolicyHeadless,
 			SessionConfig: session.DefaultConfig(),
@@ -116,13 +114,12 @@ type Service struct {
 	mirageClientMu     sync.RWMutex
 	mirageActiveClient *MirageClient // current connect/register client for live bind_mirage address updates
 
-	adminMu                 sync.Mutex
-	adminSeq                atomic.Uint64
-	adminEvents             []EventEnv
-	verificationEvents      []VerificationRecord
-	adminFrameAuthValidator CommandFrameAuthValidator
-	adminClientCount        atomic.Int64
-	cluster                 clusterHost
+	adminMu            sync.Mutex
+	adminSeq           atomic.Uint64
+	adminEvents        []EventEnv
+	verificationEvents []VerificationRecord
+	adminClientCount   atomic.Int64
+	cluster            clusterHost
 
 	// Serializes dependency install plans.
 	installMu sync.Mutex
@@ -132,12 +129,13 @@ type Service struct {
 	approvalStepsFor approval.StepsFunc
 	// Approval nonces seen until their expiry (replay protection; guarded by installMu).
 	usedNonces map[string]time.Time
+	// Proposer intents consumed until they age out (guarded by installMu); one intent, one install.
+	usedIntents map[string]time.Time
+	// Service start; intents proposed earlier are refused so a restart cannot reopen consumed ones.
+	startedAt time.Time
 	// Test seam for the approval clock; nil uses time.Now.
 	approvalNow func() time.Time
 }
-
-// CommandFrameAuthValidator validates optional command-frame auth bytes for admin execute_envelope RPCs.
-type CommandFrameAuthValidator func(auth []byte) error
 
 // Ghost service constructor using default standalone config.
 func NewService() *Service {
@@ -151,24 +149,14 @@ func NewServiceWithConfig(cfg ServiceConfig) *Service {
 		cfg.Mirage.Policy = MiragePolicyHeadless
 	}
 	return &Service{
-		server:                  NewServer(),
-		cfg:                     cfg,
-		adminEvents:             make([]EventEnv, 0),
-		verificationEvents:      make([]VerificationRecord, 0),
-		adminFrameAuthValidator: defaultCommandFrameAuthValidator(strings.TrimSpace(cfg.AdminFrameAuthToken)),
-		cluster:                 newClusterHost(),
-		mirageBindNotify:        make(chan struct{}, 1),
+		server:             NewServer(),
+		cfg:                cfg,
+		adminEvents:        make([]EventEnv, 0),
+		verificationEvents: make([]VerificationRecord, 0),
+		cluster:            newClusterHost(),
+		mirageBindNotify:   make(chan struct{}, 1),
+		startedAt:          time.Now(),
 	}
-}
-
-// SetAdminCommandFrameAuthValidator overrides admin execute_envelope auth validation behavior.
-func (s *Service) SetAdminCommandFrameAuthValidator(validator CommandFrameAuthValidator) {
-	if validator == nil {
-		validator = defaultCommandFrameAuthValidator(strings.TrimSpace(s.cfg.AdminFrameAuthToken))
-	}
-	s.adminMu.Lock()
-	defer s.adminMu.Unlock()
-	s.adminFrameAuthValidator = validator
 }
 
 // Ghost runtime entrypoint that blocks until process signal shutdown.

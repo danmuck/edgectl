@@ -117,17 +117,3 @@ func TestAdminFailureCodesForRequestErrors(t *testing.T) {
 	resp := svc.handleControlRequest(controlRequest{Action: "execute_envelope", CommandFrame: append(append([]byte{}, header...), missing...)}, "")
 	assertAdminFailure(t, resp, schema.ErrCodeSemanticValidation)
 }
-
-func TestAdminFailureCodeForFrameAuth(t *testing.T) {
-	testlog.Start(t)
-	cfg := DefaultServiceConfig()
-	cfg.AdminFrameAuthToken = "secret"
-	svc := NewServiceWithConfig(cfg)
-	svc.server = newRadiatingServer(t, "ghost.alpha")
-
-	resp := svc.handleControlRequest(controlRequest{
-		Action:       "execute_envelope",
-		CommandFrame: compatCommandFrame(t, "cmd.compat.auth", nil),
-	}, "")
-	assertAdminFailure(t, resp, schema.ErrCodeTransportFailure)
-}

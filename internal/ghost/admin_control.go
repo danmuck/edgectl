@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,8 +22,6 @@ import (
 )
 
 var (
-	ErrAdminFrameAuthRequired = errors.New("ghost.admin: command_frame auth required")
-	ErrAdminFrameAuthInvalid  = errors.New("ghost.admin: command_frame auth invalid")
 	// Admin request is malformed or names no known action (semantic_validation_failure).
 	errAdminInvalidRequest = errors.New("ghost.admin: invalid request")
 )
@@ -33,8 +30,7 @@ var (
 // errors are classified here; protocol errors (framing, TLV, schema) fall back to session.ErrorCode.
 func adminErrorCode(err error) uint32 {
 	switch {
-	case errors.Is(err, ErrAdminFrameAuthRequired), errors.Is(err, ErrAdminFrameAuthInvalid),
-		errors.Is(err, adminauth.ErrAuthRequired), errors.Is(err, adminauth.ErrAuthorizationDenied):
+	case errors.Is(err, adminauth.ErrAuthRequired), errors.Is(err, adminauth.ErrAuthorizationDenied):
 		return schema.ErrCodeTransportFailure
 	case errors.Is(err, errAdminInvalidRequest),
 		errors.Is(err, ErrInvalidCommandEnv),
@@ -365,12 +361,10 @@ func (s *Service) executeAdminCommandEnvelope(commandFrame []byte, peer string) 
 	if err != nil {
 		return executeEnvelopeResponse{}, err
 	}
-	validator := s.adminFrameAuthValidator
-	if validator == nil {
-		validator = defaultCommandFrameAuthValidator(strings.TrimSpace(s.cfg.AdminFrameAuthToken))
-	}
-	if err := validator(fr.Auth); err != nil {
-		return executeEnvelopeResponse{}, err
+	// Admin callers are authenticated by mTLS (admin_security.toml replaces the shared frame token);
+	// a frame carrying an auth block is from a stale client and is refused rather than ignored.
+	if len(fr.Auth) > 0 || fr.Header.Flags&frame.FlagHasAuth != 0 {
+		return executeEnvelopeResponse{}, fmt.Errorf("%w: command_frame auth block is not accepted; admin callers authenticate with mTLS", errAdminInvalidRequest)
 	}
 	cmd, err := session.DecodeCommandFrame(fr)
 	if err != nil {
@@ -400,23 +394,6 @@ func (s *Service) executeAdminCommandEnvelope(commandFrame []byte, peer string) 
 		return executeEnvelopeResponse{}, err
 	}
 	return executeEnvelopeResponse{EventFrame: eventFrame}, nil
-}
-
-func defaultCommandFrameAuthValidator(token string) CommandFrameAuthValidator {
-	expected := strings.TrimSpace(token)
-	if expected == "" {
-		return func(_ []byte) error { return nil }
-	}
-	expectedBytes := []byte(expected)
-	return func(auth []byte) error {
-		if len(auth) == 0 {
-			return ErrAdminFrameAuthRequired
-		}
-		if subtle.ConstantTimeCompare(auth, expectedBytes) != 1 {
-			return ErrAdminFrameAuthInvalid
-		}
-		return nil
-	}
 }
 
 func writeControlResponse(w io.Writer, resp controlResponse) error {

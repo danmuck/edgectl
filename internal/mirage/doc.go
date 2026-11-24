@@ -19,6 +19,10 @@
 //
 // - privileged actions (deploy_ghost, approve/execute_dependencies) require an mTLS peer
 //
+// - deploy_ghost (admin_security.toml [deploy]): ghost_id only; target, pinned SSH host key, and that
+// Ghost's own leaf credentials come from ghost_manifests; delivers leaf, root CA, and the pinned Mirage
+// principal (0700 dir, 0600 key); no shared admin token exists
+//
 // - Ghost admin clients dial as Mirage and pin edgectl://ghost/<ghost_id>
 //
 // Admin authorization (admin_security.toml [authorization.mirage_admin]):

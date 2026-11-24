@@ -105,6 +105,8 @@ func adminErrorCode(err error) uint32 {
 		errors.Is(err, ErrInvalidDependencyProposal),
 		errors.Is(err, ErrDependencyProposalNotFound),
 		errors.Is(err, ErrDependencyProposalState),
+		errors.Is(err, ErrUnknownDeployTarget),
+		errors.Is(err, ErrInvalidDeployManifest),
 		errors.Is(err, ErrInvalidIssue),
 		errors.Is(err, ErrIntentNotFound),
 		errors.Is(err, ErrTargetGhostRequired):
@@ -293,11 +295,9 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 		logs.Warnf("mirage.admin spawned local ghost ghost_id=%q addr=%q", out.GhostID, out.AdminAddr)
 		return adminControlResponse{OK: true, Data: out}
 	case "deploy_ghost":
-		deployer := NewSSHDeployer()
-		deployer.adminFrameAuthToken = s.cfg.GhostAdminFrameAuthToken
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		result, err := deployer.Deploy(ctx, req.Deploy)
+		result, err := s.DeployGhost(ctx, req.Deploy)
 		if err != nil {
 			return failAdmin(err)
 		}

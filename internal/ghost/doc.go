@@ -37,6 +37,9 @@
 // Dependency installs (docs/progress/mvp_p8.md Slice F):
 // - Ghost never installs on its own (no boot-time installs; seed_install config specs rejected)
 //
+// - one intent, one install: approval nonces and proposer intents are single-use, and intents proposed
+// before this Ghost started are refused
+//
 // - install_dependencies runs only plans carrying a two-operator approval (internal/approval;
 // admin_security.toml [install_approval] ghost_verification) that this Ghost verifies itself against
 // its admin CA and denied serials: proposer intent and approval signed by two different operators,
@@ -55,6 +58,8 @@
 //
 // Admin transport (admin_security.toml [transport], authorization.privileged):
 // - admin endpoint is mTLS as edgectl://ghost/<ghost_id>; plaintext only on loopback outside production
+//
+// - no shared admin token: execute_envelope frames carrying an auth block are refused (1300)
 //
 // - privileged actions (execute_envelope, install_dependencies, spawn_ghost, bind_mirage) require an mTLS peer
 //

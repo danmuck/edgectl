@@ -15,13 +15,14 @@ import (
 
 // miragectl config.toml key mapping to Mirage runtime settings.
 type fileConfig struct {
-	Addr                          string              `toml:"addr"`
-	ID                            string              `toml:"id"`
-	AdminListenAddr               string              `toml:"admin_listen_addr"`
-	RequireIdentityBind           bool                `toml:"require_identity_binding"`
-	RootGhostAdminAddr            string              `toml:"root_ghost_admin_addr"`
-	LocalGhostID                  string              `toml:"local_ghost_id"`
-	LocalGhostAdminAddr           string              `toml:"local_ghost_admin_addr"`
+	Addr                string `toml:"addr"`
+	ID                  string `toml:"id"`
+	AdminListenAddr     string `toml:"admin_listen_addr"`
+	RequireIdentityBind bool   `toml:"require_identity_binding"`
+	RootGhostAdminAddr  string `toml:"root_ghost_admin_addr"`
+	LocalGhostID        string `toml:"local_ghost_id"`
+	LocalGhostAdminAddr string `toml:"local_ghost_admin_addr"`
+	// Removed (admin_security.toml replaces it with mTLS); present only so loading can refuse it.
 	GhostAdminFrameAuthToken      string              `toml:"ghost_admin_frame_auth_token"`
 	AdminTLSCertFile              string              `toml:"admin_tls_cert_file"`
 	AdminTLSKeyFile               string              `toml:"admin_tls_key_file"`
@@ -66,6 +67,10 @@ type ghostManifestFile struct {
 	SeedInstallBinRoot              string   `toml:"seed_install_bin_root"`
 	SeedInstallAllowInternalDefault bool     `toml:"seed_install_allow_internal_defaults"`
 	SeedInstallWhitelist            []string `toml:"seed_install_whitelist"`
+	SSHHostKey                      string   `toml:"ssh_host_key"`
+	TLSCertFile                     string   `toml:"tls_cert_file"`
+	TLSKeyFile                      string   `toml:"tls_key_file"`
+	BinaryPath                      string   `toml:"binary_path"`
 	// Rejected when present; kept only to detect stale configs.
 	SeedInstall        []map[string]any `toml:"seed_install"`
 	ConfigTemplatePath string           `toml:"config_template_path"`
@@ -121,9 +126,11 @@ func loadServiceConfig(path string) (mirage.ServiceConfig, error) {
 	if meta.IsDefined("admin_tls_denied_serials") {
 		cfg.AdminTLS.DeniedSerials = tools.NormalizeNonEmptyList(raw.AdminTLSDeniedSerials)
 	}
-	// Token Mirage presents to Ghost admin endpoints (execute_envelope, install_dependencies).
+	// The shared admin token was removed; refuse configs that still carry it so no one relies on it.
 	if meta.IsDefined("ghost_admin_frame_auth_token") {
-		cfg.GhostAdminFrameAuthToken = strings.TrimSpace(raw.GhostAdminFrameAuthToken)
+		return mirage.ServiceConfig{}, fmt.Errorf("load mirage config: ghost_admin_frame_auth_token was removed " +
+			"(docs/architecture/definitions/admin_security.toml); delete it and set admin_tls_cert_file, " +
+			"admin_tls_key_file, and admin_tls_ca_file on Mirage and its Ghosts")
 	}
 	if meta.IsDefined("preload_ghost_admins") {
 		targets, normErr := normalizePreloadGhostAdmins(raw.PreloadGhostAdmins)
@@ -261,8 +268,6 @@ func loadRuntimeConfigs(path string) (mirage.ServiceConfig, ghost.ServiceConfig,
 		cfg.GhostID = ghost.DefaultServiceConfig().GhostID
 	}
 	cfg.AdminListenAddr = strings.TrimSpace(mCfg.LocalGhostAdminAddr)
-	// The managed local Ghost accepts the same token Mirage presents.
-	cfg.AdminFrameAuthToken = mCfg.GhostAdminFrameAuthToken
 	// Managed local Ghost: its own admin identity, Mirage's CA and deny list, Mirage pinned.
 	if certFile := strings.TrimSpace(raw.LocalGhostAdminTLSCertFile); certFile != "" {
 		cfg.AdminTLS = adminauth.Credentials{
@@ -319,6 +324,10 @@ func normalizeGhostManifests(raw []ghostManifestFile) []mirage.GhostManifest {
 			User:                             strings.TrimSpace(r.User),
 			SSHKeyFile:                       strings.TrimSpace(r.SSHKey),
 			SSHPort:                          r.SSHPort,
+			SSHHostKey:                       strings.TrimSpace(r.SSHHostKey),
+			TLSCertFile:                      strings.TrimSpace(r.TLSCertFile),
+			TLSKeyFile:                       strings.TrimSpace(r.TLSKeyFile),
+			BinaryPath:                       strings.TrimSpace(r.BinaryPath),
 			Seeds:                            tools.NormalizeNonEmptyList(r.Seeds),
 			AdminListen:                      strings.TrimSpace(r.AdminListen),
 			MiragePolicy:                     strings.TrimSpace(r.MiragePolicy),

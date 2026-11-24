@@ -257,6 +257,24 @@ func TestInstallPlanVerifiesApprovalIndependently(t *testing.T) {
 	if _, err := h.svc.ExecuteInstallPlan(once); !errors.Is(err, ErrApprovalReplayed) {
 		t.Fatalf("replay: expected ErrApprovalReplayed, got %v", err)
 	}
+
+	// The approver alone re-wraps the consumed intent in a fresh approval: still one intent, one install.
+	rewrapped, err := h.signer.Sign(approval.Payload{
+		ProposalID: "depprop.1", GhostID: self, ProposerIntent: once.Approval.Payload.ProposerIntent,
+		Steps: []seeds.InstallSpec{spec}, ExpiresAtMS: uint64(future.UnixMilli()), Nonce: "fresh-nonce",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.ExecuteInstallPlan(InstallPlanRequest{ProposalID: "depprop.1", Approval: &rewrapped}); !errors.Is(err, ErrApprovalReplayed) {
+		t.Fatalf("re-wrapped intent: expected ErrApprovalReplayed, got %v", err)
+	}
+
+	// After a restart the in-memory record is empty, so intents proposed before start are refused.
+	h.svc.startedAt = time.Now().Add(time.Hour)
+	if _, err := h.svc.ExecuteInstallPlan(h.plan(t, spec)); !errors.Is(err, ErrApprovalReplayed) {
+		t.Fatalf("intent before start: expected ErrApprovalReplayed, got %v", err)
+	}
 }
 
 // Separation of duties is enforced at the Ghost from the two signatures, independent of Mirage:

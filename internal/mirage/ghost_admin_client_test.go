@@ -195,7 +195,8 @@ func TestGhostAdminCommandExecutor(t *testing.T) {
 	<-done
 }
 
-func TestGhostControlClientExecuteAdminCommandWithAuthToken(t *testing.T) {
+// Mirage never attaches an auth block to admin command frames; callers authenticate with mTLS.
+func TestGhostControlClientExecuteAdminCommandSendsNoFrameAuth(t *testing.T) {
 	testlog.Start(t)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -229,7 +230,7 @@ func TestGhostControlClientExecuteAdminCommandWithAuthToken(t *testing.T) {
 		if err != nil {
 			return
 		}
-		if string(fr.Auth) != "phase6-token" {
+		if len(fr.Auth) != 0 || fr.Header.Flags&frame.FlagHasAuth != 0 {
 			return
 		}
 		cmd, err := session.DecodeCommandFrame(fr)
@@ -257,7 +258,7 @@ func TestGhostControlClientExecuteAdminCommandWithAuthToken(t *testing.T) {
 		_, _ = conn.Write(payload)
 	}()
 
-	client := NewGhostControlClient(ln.Addr().String()).WithCommandFrameAuthToken("phase6-token")
+	client := NewGhostControlClient(ln.Addr().String())
 	event, err := client.ExecuteAdminCommand(context.Background(), ghostAdminCommand{
 		CommandID:    "cmd.intent.auth.1",
 		IntentID:     "intent.auth.1",

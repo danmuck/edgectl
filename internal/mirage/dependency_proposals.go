@@ -11,6 +11,7 @@ import (
 
 	"github.com/danmuck/edgectl/internal/approval"
 	"github.com/danmuck/edgectl/internal/depcatalog"
+	"github.com/danmuck/edgectl/internal/identity"
 	"github.com/danmuck/edgectl/internal/seeds"
 	logs "github.com/danmuck/smplog"
 )
@@ -105,7 +106,7 @@ type DependencyLedger struct {
 	mu        sync.Mutex
 	seq       uint64
 	proposals map[string]*DependencyProposal
-	// Intent signatures already recorded; a signed intent creates at most one proposal.
+	// Intents already proposed, keyed by proposer and intent content; one intent, one proposal.
 	intents map[string]struct{}
 	now     func() time.Time
 }
@@ -142,7 +143,14 @@ func (l *DependencyLedger) Propose(intent approval.SignedIntent, proposer string
 		return DependencyProposal{}, fmt.Errorf("%w: no catalog install sources for seeds %v (unresolved: %v)", ErrInvalidDependencyProposal, intent.Intent.SeedIDs, unresolved)
 	}
 
-	key := intent.SignatureDigest()
+	pp, err := identity.ParsePrincipal(proposer)
+	if err != nil {
+		return DependencyProposal{}, fmt.Errorf("%w: proposer: %v", ErrInvalidDependencyProposal, err)
+	}
+	key, err := intent.ReplayKey(pp)
+	if err != nil {
+		return DependencyProposal{}, err
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if _, used := l.intents[key]; used {
@@ -160,7 +168,7 @@ func (l *DependencyLedger) Propose(intent approval.SignedIntent, proposer string
 		ProposedBy: proposer,
 		Intent:     cloneIntent(intent),
 	}
-	l.auditLocked(p, AuditProposal, proposer, fmt.Sprintf("steps=%d unresolved=%v intent_signature=%s", len(steps), unresolved, key))
+	l.auditLocked(p, AuditProposal, proposer, fmt.Sprintf("steps=%d unresolved=%v intent_signature=%s", len(steps), unresolved, intent.SignatureDigest()))
 	l.proposals[p.ID] = p
 	return cloneProposal(p), nil
 }

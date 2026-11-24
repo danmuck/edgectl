@@ -268,18 +268,15 @@ func TestLoadServiceConfigCommandMaxAttempts(t *testing.T) {
 	}
 }
 
-// Mirage's ghost admin token is loaded and handed to its managed local Ghost.
-func TestLoadRuntimeConfigsGhostAdminFrameAuthToken(t *testing.T) {
+// The removed shared token is refused with a migration message, not silently ignored.
+func TestLoadRuntimeConfigsRejectsGhostAdminFrameAuthToken(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(path, []byte("ghost_admin_frame_auth_token = \"s3cret\"\nlocal_ghost_admin_addr = \"127.0.0.1:7010\"\n"), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	mCfg, gCfg, err := loadRuntimeConfigs(path)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if mCfg.GhostAdminFrameAuthToken != "s3cret" || gCfg.AdminFrameAuthToken != "s3cret" {
-		t.Fatalf("tokens: mirage=%q ghost=%q", mCfg.GhostAdminFrameAuthToken, gCfg.AdminFrameAuthToken)
+	_, _, err := loadRuntimeConfigs(path)
+	if err == nil || !strings.Contains(err.Error(), "ghost_admin_frame_auth_token was removed") {
+		t.Fatalf("expected removal error, got %v", err)
 	}
 }
 

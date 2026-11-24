@@ -24,7 +24,8 @@ var (
 	ErrDependencyPlanUnapproved = errors.New("ghost: dependency plan lacks mirage approval")
 	// Signed steps are not exactly this Ghost's compiled-in catalog steps for the proposer's seeds.
 	ErrDependencyNotCataloged = errors.New("ghost: dependency plan step not in catalog")
-	// Approval nonce was already used (admin_security.toml install_approval.replay).
+	// Approval nonce or proposer intent already used, or intent predates this Ghost's start
+	// (admin_security.toml install_approval.replay).
 	ErrApprovalReplayed = errors.New("ghost: approval nonce already used")
 )
 
@@ -57,21 +58,41 @@ func (s *Service) approvalClock() time.Time {
 	return time.Now()
 }
 
-// Records a nonce until its approval expires; a nonce seen before is a replay. Caller holds installMu.
-func (s *Service) consumeApprovalNonce(nonce string, expires time.Time) error {
+// Single-use enforcement (install_approval.replay). The approval nonce is held until the approval
+// expires and the proposer intent until it ages out, so neither a replayed approval nor a fresh
+// approval re-wrapping a consumed intent installs again. Intents proposed before this Ghost started
+// are refused, so a restart (which clears the in-memory record) cannot reopen consumed ones.
+// Nothing is recorded unless both checks pass. Caller holds installMu.
+func (s *Service) consumeApproval(pl approval.Payload, intentKey string) error {
 	now := s.approvalClock()
 	if s.usedNonces == nil {
 		s.usedNonces = make(map[string]time.Time)
 	}
-	for n, exp := range s.usedNonces {
+	if s.usedIntents == nil {
+		s.usedIntents = make(map[string]time.Time)
+	}
+	for k, exp := range s.usedNonces {
 		if now.After(exp) {
-			delete(s.usedNonces, n)
+			delete(s.usedNonces, k)
 		}
 	}
-	if _, used := s.usedNonces[nonce]; used {
-		return fmt.Errorf("%w: %s", ErrApprovalReplayed, nonce)
+	for k, exp := range s.usedIntents {
+		if now.After(exp) {
+			delete(s.usedIntents, k)
+		}
 	}
-	s.usedNonces[nonce] = expires
+	proposedAt := time.UnixMilli(int64(pl.ProposerIntent.Intent.ProposedAtMS))
+	if !s.startedAt.IsZero() && proposedAt.Before(s.startedAt.Add(-approval.ClockSkew)) {
+		return fmt.Errorf("%w: intent proposed before this ghost started; propose again", ErrApprovalReplayed)
+	}
+	if _, used := s.usedNonces[pl.Nonce]; used {
+		return fmt.Errorf("%w: approval nonce %s", ErrApprovalReplayed, pl.Nonce)
+	}
+	if _, used := s.usedIntents[intentKey]; used {
+		return fmt.Errorf("%w: proposer intent already installed", ErrApprovalReplayed)
+	}
+	s.usedNonces[pl.Nonce] = time.UnixMilli(int64(pl.ExpiresAtMS))
+	s.usedIntents[intentKey] = proposedAt.Add(approval.MaxIntentAge + approval.ClockSkew)
 	return nil
 }
 
@@ -179,10 +200,15 @@ func (s *Service) ExecuteInstallPlan(req InstallPlanRequest) (InstallPlanResult,
 	logs.Infof("ghost.dependency.approval component=ghost ghost_id=%q proposal_id=%q proposer=%q approver=%q intent_signature=%s signature=%s decision=accepted",
 		s.cfg.GhostID, pl.ProposalID, res.Proposer, res.Approver, pl.ProposerIntent.SignatureDigest(), signed.SignatureDigest())
 
+	intentKey, err := pl.ProposerIntent.ReplayKey(res.Proposer)
+	if err != nil {
+		return InstallPlanResult{}, err
+	}
+
 	s.installMu.Lock()
 	defer s.installMu.Unlock()
 
-	if err := s.consumeApprovalNonce(pl.Nonce, time.UnixMilli(int64(pl.ExpiresAtMS))); err != nil {
+	if err := s.consumeApproval(pl, intentKey); err != nil {
 		return InstallPlanResult{}, err
 	}
 

@@ -107,6 +107,9 @@ func (a *App) proposeInstall(target MirageTarget, ghostID string, seedIDs []stri
 	fmt.Printf("  intent digest: %s\n", hex.EncodeToString(digest[:]))
 	ok, err := a.promptConfirm("Sign this proposal intent")
 	if err != nil || !ok {
+		if err == nil {
+			fmt.Println("Not signed.")
+		}
 		return err
 	}
 	signed, err := signer.SignIntent(intent)
@@ -162,6 +165,9 @@ func (a *App) approveProposal(target MirageTarget, id string) error {
 		signer.Principal, p.ProposedBy, time.UnixMilli(int64(payload.ExpiresAtMS)).Format(time.RFC3339), hex.EncodeToString(digest[:]))
 	ok, err := a.promptConfirm("Sign this approval")
 	if err != nil || !ok {
+		if err == nil {
+			fmt.Println("Not signed.")
+		}
 		return err
 	}
 	signed, err := signer.Sign(payload)

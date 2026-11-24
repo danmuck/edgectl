@@ -97,13 +97,24 @@ Slice D amendment — proposer signatures (2026-11-23, user: "Add proposer signa
 - [x] Ghost: verifies with its own CA, denied serials, and compiled catalog; logs proposer, approver, and both signature digests on acceptance. Step mismatch reports `ErrDependencyNotCataloged` (`1300`).
 - [x] `client-tm`: propose shows ghost, seeds, catalog steps, and intent digest, then asks `[y/N]` before signing. Approve refuses non-pending proposals, verifies the intent under the operator CA, refuses self-approval, recomputes steps from its own catalog, shows the full steps, proposer, expiry, and payload digest, then asks `[y/N]` before signing. A compromised Mirage cannot get an operator to sign content other than what is shown.
 - Wire change: `propose_dependencies` no longer accepts bare `ghost_id`/`seed_ids`; approvals signed before this change no longer verify (none are long-lived: 15-minute maximum).
+- Replay follow-up (security review of the amendment commit): an approver could re-wrap a consumed intent in a fresh approval (new nonce) and install again without the proposer; Mirage keyed intent reuse on signature bytes, which ECDSA malleability can change. Fixes: intents are keyed by proposer principal + intent content digest (`SignedIntent.ReplayKey`) at Mirage and Ghost; Ghost records consumed intents until they age out and refuses intents proposed before it started (a restart clears the in-memory record, so pre-start intents could otherwise be reused). Cost: a proposal still pending when its Ghost restarts must be proposed again.
 
 ### Slice E — Deploy hardening and token removal
 
-- [ ] `deploy_ghost` takes a ghost_id only; host/user/port come from configured manifests; unknown targets rejected.
-- [ ] Pinned SSH host keys per manifest (`StrictHostKeyChecking=yes`).
-- [ ] Deliver the Ghost's own key/cert, the root CA cert, and the pinned Mirage principal; mode 0600; never logged.
-- [ ] Remove `admin_frame_auth_token` / `ghost_admin_frame_auth_token` config keys and the command-frame auth path; configs carrying them fail to load with a migration message.
+- [x] `deploy_ghost` takes a ghost_id only; host/user/port come from configured manifests; unknown targets rejected.
+- [x] Pinned SSH host keys per manifest (`StrictHostKeyChecking=yes`).
+- [x] Deliver the Ghost's own key/cert, the root CA cert, and the pinned Mirage principal; mode 0600; never logged.
+- [x] Remove `admin_frame_auth_token` / `ghost_admin_frame_auth_token` config keys and the command-frame auth path; configs carrying them fail to load with a migration message.
+
+Slice E notes (2026-11-23):
+
+- `DeployGhostRequest` is `{ghost_id, force_redeploy}`. Mirage looks up the `ghost_manifests` entry; unknown ids return `1300` (`ErrUnknownDeployTarget`) before any ssh. Any host/user/manifest fields in request JSON are ignored. `binary_path` and `config_template_path` moved into the manifest (no request-supplied local paths).
+- New manifest keys (miragectl `[[ghost_manifests]]`): `ssh_host_key` (`"<type> <base64>"`, single line, known types only), `tls_cert_file`, `tls_key_file`, `binary_path`. Host must be a hostname or IPv4 literal not starting with `-` (IPv6 literals not supported by the scp target syntax); user matches `[a-z_][a-z0-9_-]{0,31}`.
+- Before ssh: Mirage requires admin TLS (CA to deliver, principal to pin); the leaf must load with a 0600 key, carry `edgectl://ghost/<ghost_id>`, verify under the admin CA for serverAuth and clientAuth, and not be a denied serial. Failures return `1300` (`ErrInvalidDeployManifest`).
+- ssh/scp run with `StrictHostKeyChecking=yes`, a temp 0600 known_hosts holding only the pinned key, `GlobalKnownHostsFile=/dev/null`, and `BatchMode=yes` (no TOFU, no prompts).
+- Remote layout: `~/.edgectl/tls` created under `umask 077` with mode 0700 before upload; a stale key file is removed first so scp cannot keep a loose mode; key chmod 600, certs 644. Generated config uses absolute paths (remote `$HOME` checked against `^/[A-Za-z0-9._/-]+$`) for `admin_tls_*` and `mirage_tls_*`, sets `mirage_principal` to Mirage's principal and `admin_tls_denied_serials` to Mirage's list; templates cannot override these and any `admin_frame_auth_token` is dropped. Logs and results carry paths and status only.
+- Token removal: ghostctl `admin_frame_auth_token` and miragectl `ghost_admin_frame_auth_token` now fail config load with a migration message. Ghost admin `execute_envelope` refuses frames with an auth block (`1300`); Mirage never sends one. The session protocol's `has_auth` flag (protocol.toml, framing.md) is unchanged.
+- `client-tm` Deploy Remote Ghost now asks only for ghost_id and whether to stop an existing process.
 
 ### Slice F — Verification
 
@@ -120,7 +131,7 @@ Slice D amendment — proposer signatures (2026-11-23, user: "Add proposer signa
 - [x] Authorization denial: reuse error code `1000` with reason `authorization_denied`; `errors.toml` unchanged.
 - [x] Development plaintext: allowed only on loopback listeners; privileged actions require mTLS in every mode.
 
-## Interim Risk (until Slice E lands)
+## Interim Risk
 
-- Do not set `ghost_admin_frame_auth_token` on a Mirage whose admin port is reachable by untrusted callers; `deploy_ghost` can write it to a caller-chosen host.
-- Keep both admin listeners bound to loopback or a trusted network segment.
+- Resolved by Slice E: no shared token exists, and `deploy_ghost` reaches only configured, host-key-pinned targets.
+- Until Slice F's end-to-end run, keep both admin listeners bound to loopback or a trusted network segment.
