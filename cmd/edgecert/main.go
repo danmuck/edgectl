@@ -1,10 +1,17 @@
 // edgecert is operator tooling that creates the edgectl root CA and issues principal certificates
 // (admin_security.toml [trust], [identity]). Runtimes never mint certificates.
 //
+// It also signs dependency installs for operator tools that are not the terminal client
+// (api_v1.toml [parity.signing]; admin_security.toml [install_approval]); see sign.go.
+//
 // Usage:
 //
 //	edgecert root  -out certs/root
 //	edgecert issue -ca-cert certs/root/ca.crt -ca-key certs/root/ca.key -role ghost -id ghost.pi -out certs [-dns a,b] [-ip 1.2.3.4] [-days 90]
+//	edgecert intent        -ghost ghost.pi -seeds seed.docker            (prints the unsigned intent and its digest)
+//	edgecert sign-intent   -cert ops.crt -key ops.key                    (intent JSON on stdin)
+//	edgecert approval      -cert lead.crt -key lead.key -ca ca.crt       (proposal JSON on stdin; prints payload and digest)
+//	edgecert sign-approval -cert lead.crt -key lead.key -digest <hex>    (payload JSON on stdin)
 package main
 
 import (
@@ -29,15 +36,23 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: edgecert root|issue [flags]")
+		return fmt.Errorf("usage: edgecert root|issue|intent|sign-intent|approval|sign-approval [flags]")
 	}
 	switch args[0] {
 	case "root":
 		return runRoot(args[1:])
 	case "issue":
 		return runIssue(args[1:])
+	case "intent":
+		return runIntent(args[1:])
+	case "sign-intent":
+		return runSignIntent(args[1:])
+	case "approval":
+		return runApproval(args[1:])
+	case "sign-approval":
+		return runSignApproval(args[1:])
 	}
-	return fmt.Errorf("unknown command %q (want root or issue)", args[0])
+	return fmt.Errorf("unknown command %q (want root, issue, intent, sign-intent, approval or sign-approval)", args[0])
 }
 
 // Creates <out>/ca.crt and <out>/ca.key (0600). Keep <out> offline; runtimes need only ca.crt.

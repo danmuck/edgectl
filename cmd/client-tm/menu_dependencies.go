@@ -12,18 +12,15 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"reflect"
 	"strings"
 	"time"
 
 	"github.com/danmuck/edgectl/internal/approval"
 	"github.com/danmuck/edgectl/internal/mirage"
+	"github.com/danmuck/edgectl/internal/opsign"
 	"github.com/danmuck/edgectl/internal/seeds"
 	logs "github.com/danmuck/smplog"
 )
-
-// approvalLifetime keeps approvals well under approval.MaxLifetime.
-const approvalLifetime = 10 * time.Minute
 
 func (a *App) runMirageDependencyConsole(target MirageTarget) error {
 	for {
@@ -124,17 +121,9 @@ func (a *App) proposeInstall(target MirageTarget, ghostID string, seedIDs []stri
 	return nil
 }
 
-// Builds an intent; ghost id and at least one seed id are required.
+// Builds an intent; shared with other operator tooling (internal/opsign).
 func newIntent(ghostID string, seedIDs []string, now time.Time) (approval.Intent, error) {
-	ghostID = strings.TrimSpace(ghostID)
-	if ghostID == "" || len(seedIDs) == 0 {
-		return approval.Intent{}, errors.New("ghost id and at least one seed id required")
-	}
-	nonce, err := approval.NewNonce()
-	if err != nil {
-		return approval.Intent{}, err
-	}
-	return approval.Intent{GhostID: ghostID, SeedIDs: seedIDs, ProposedAtMS: uint64(now.UnixMilli()), Nonce: nonce}, nil
+	return opsign.NewIntent(ghostID, seedIDs, now)
 }
 
 // Fetches the stored proposal, checks it independently, shows exactly what will be signed, and signs
@@ -182,38 +171,10 @@ func (a *App) approveProposal(target MirageTarget, id string) error {
 	return nil
 }
 
-// Builds the approval payload for p without trusting Mirage's view of it: p must be pending, its
-// intent must verify under the operator CA from a different operator, name p's ghost, and p's steps
-// must equal this binary's catalog steps for the intent seeds.
+// Builds the approval payload for p without trusting Mirage's view of it; shared with other
+// operator tooling (internal/opsign).
 func approvalPayload(p mirage.DependencyProposal, signer *approval.Signer, roots *x509.CertPool, now time.Time) (approval.Payload, error) {
-	if p.State != mirage.ProposalPending {
-		return approval.Payload{}, fmt.Errorf("proposal %s is %s; only pending proposals can be approved", p.ID, p.State)
-	}
-	proposer, err := approval.VerifyIntent(p.Intent, approval.Trust{Roots: roots, Now: now})
-	if err != nil {
-		return approval.Payload{}, fmt.Errorf("proposer intent: %w", err)
-	}
-	if proposer == signer.Principal {
-		return approval.Payload{}, approval.ErrSeparationOfDuties
-	}
-	if proposer.String() != p.ProposedBy || p.Intent.Intent.GhostID != p.GhostID {
-		return approval.Payload{}, fmt.Errorf("proposal %s does not match its signed intent", p.ID)
-	}
-	if !reflect.DeepEqual(p.Steps, approval.CatalogSteps(p.Intent.Intent.SeedIDs)) {
-		return approval.Payload{}, fmt.Errorf("proposal %s: %w", p.ID, approval.ErrStepsMismatch)
-	}
-	nonce, err := approval.NewNonce()
-	if err != nil {
-		return approval.Payload{}, err
-	}
-	return approval.Payload{
-		ProposalID:     p.ID,
-		GhostID:        p.GhostID,
-		ProposerIntent: p.Intent,
-		Steps:          p.Steps,
-		ExpiresAtMS:    uint64(now.Add(approvalLifetime).UnixMilli()),
-		Nonce:          nonce,
-	}, nil
+	return opsign.ApprovalPayload(p, signer.Principal, roots, now)
 }
 
 // Loads the operator signing key and the root used to check other operators' signatures.

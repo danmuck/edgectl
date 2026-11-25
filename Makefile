@@ -10,6 +10,8 @@
 	build-ghost \
 	build-mirage \
 	build-client \
+	build-edgecert \
+	gui-env \
 	build-all \
 	update-pi \
 	certs \
@@ -113,7 +115,35 @@ build-client:
 	@mkdir -p local/bin
 	go build -o local/bin/client-tm ./cmd/client-tm
 
-build-all: build-ghost build-mirage build-client
+# Operator tooling a web front end runs to issue Ghost certificates and sign dependency installs
+# (docs/architecture/definitions/api_v1.toml [parity.signing], [parity.certificates]).
+build-edgecert:
+	@mkdir -p local/bin
+	@go build -o local/bin/edgecert ./cmd/edgecert
+
+build-all: build-ghost build-mirage build-client build-edgecert
+
+# Builds edgecert and prints the settings a front end's server needs to drive the lab over api/v1,
+# as KEY=value lines with absolute paths. Start the lab once first (`make lab` or `make serve`).
+# These settings include the lab root CA key and both operator keys: local use only.
+#   make gui-env >> ../tracker_suite/.env.local
+LAB_DIR ?= local/lab
+gui-env: build-edgecert
+	@test -f "$(LAB_DIR)/mirage.toml" && test -f "$(LAB_DIR)/certs/root/ca.key" || \
+		{ echo "no lab in $(LAB_DIR): run 'make lab' or 'make serve' once first" >&2; exit 1; }
+	@addr=$$(sed -n 's/^api_v1_addr *= *"\(.*\)"/\1/p' "$(LAB_DIR)/mirage.toml"); \
+	test -n "$$addr" || { echo "$(LAB_DIR)/mirage.toml has no api_v1_addr" >&2; exit 1; }; \
+	certs="$(abspath $(LAB_DIR))/certs"; \
+	echo "EDGECTL_API_URL=https://$$addr/api/v1"; \
+	echo "EDGECTL_CLIENT_CERT=$$certs/ops.crt"; \
+	echo "EDGECTL_CLIENT_KEY=$$certs/ops.key"; \
+	echo "EDGECTL_CA=$$certs/ca.crt"; \
+	echo "EDGECTL_EDGECERT_BIN=$(abspath local/bin/edgecert)"; \
+	echo "EDGECTL_CA_ISSUER_CERT=$$certs/root/ca.crt"; \
+	echo "EDGECTL_CA_ISSUER_KEY=$$certs/root/ca.key"; \
+	echo "EDGECTL_CERTS_DIR=$$certs"; \
+	echo "EDGECTL_APPROVER_CERT=$$certs/lead.crt"; \
+	echo "EDGECTL_APPROVER_KEY=$$certs/lead.key"
 
 ### DEPLOY
 update-pi:

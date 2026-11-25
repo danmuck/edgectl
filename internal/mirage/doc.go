@@ -51,6 +51,15 @@
 // - GET /api/v1/executions/{command_id}: Mirage reads the execution record from the owning Ghost
 // (execution_by_command_id) so a client never calls a Ghost
 //
+// - operator parity routes (api_v1_parity.go; api_v1.toml [parity]): deploy and dependency proposals
+// map to their admin actions; Ghost status, events and verification are read from the Ghost by
+// Mirage; deploy targets and activity are reads with no admin action, authorized as the admin read
+// the contract names and audited under their own names
+//
+// - Mirage never signs and never receives a private key: intents and approvals arrive already signed
+// by operator tooling (internal/opsign, cmd/edgecert), and the approve call must come from the
+// approver's own connection
+//
 // Identity binding (transport_security.toml [identity_binding], errors.toml):
 // - session events must match the bound ghost_id, both declared and as planned for the command_id
 //

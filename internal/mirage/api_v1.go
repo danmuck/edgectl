@@ -138,6 +138,7 @@ func (s *Service) apiV1Handler() http.Handler {
 	route("POST /api/v1/ghosts/attach", apiV1Endpoint{action: "attach_ghost_admin", build: apiV1BuildAttach, shape: apiV1ShapeRouteRef})
 	route("POST /api/v1/ghosts/spawn-local", apiV1Endpoint{action: "spawn_local_ghost", privileged: true, build: apiV1BuildSpawn, shape: apiV1ShapeSpawn})
 	mux.HandleFunc("GET /api/v1/executions/{command_id}", s.serveAPIv1Execution)
+	s.registerAPIv1Parity(mux, route)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		call := apiV1NewCall(r)
 		resp := failAdmin(fmt.Errorf("%w: %s %s", errAPIv1NotFound, r.Method, r.URL.Path))
@@ -396,6 +397,7 @@ func apiV1HTTPStatus(resp adminControlResponse) int {
 		errors.Is(err, ErrIntentActorMismatch):
 		return http.StatusForbidden
 	case errors.Is(err, ErrIntentNotFound),
+		errors.Is(err, ErrDependencyProposalNotFound),
 		errors.Is(err, errAPIv1UnknownID),
 		errors.Is(err, errAPIv1NotFound):
 		return http.StatusNotFound

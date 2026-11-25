@@ -3,9 +3,12 @@ package observability
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/danmuck/edgectl/internal/activity"
 
 	"github.com/danmuck/edgectl/internal/protocol/schema"
 	logs "github.com/danmuck/smplog"
@@ -113,6 +116,33 @@ func (e LogEvent) Line() string {
 	return b.String()
 }
 
+// Key/value form of the event with the same keys Line writes; unset optional fields are omitted.
+func (e LogEvent) fields() map[string]string {
+	out := map[string]string{
+		"component":    e.Component,
+		"peer":         e.Peer,
+		"direction":    e.Direction,
+		"trace_id":     e.TraceID,
+		"request_id":   e.RequestID,
+		"message_id":   strconv.FormatUint(e.MessageID, 10),
+		"message_type": strconv.FormatUint(uint64(e.MessageType), 10),
+		"status":       e.Status,
+	}
+	for _, opt := range [][2]string{
+		{"intent_id", e.IntentID},
+		{"command_id", e.CommandID},
+		{"execution_id", e.ExecutionID},
+		{"event_id", e.EventID},
+		{"ack_status", e.AckStatus},
+		{"error", e.Error},
+	} {
+		if strings.TrimSpace(opt[1]) != "" {
+			out[opt[0]] = opt[1]
+		}
+	}
+	return out
+}
+
 // Logger receives structured custody events.
 type Logger interface {
 	Write(event LogEvent) error
@@ -170,6 +200,8 @@ func Emit(e LogEvent) {
 	if err := e.Validate(); err != nil && e.Error == "" {
 		e.Error = err.Error()
 	}
+	// Kept in memory as well so api/v1 can serve recent activity (api_v1.toml [parity.activity]).
+	activity.Add(activity.KindCustody, e.TimestampMS, e.fields())
 	loggerMu.RLock()
 	l := logger
 	loggerMu.RUnlock()

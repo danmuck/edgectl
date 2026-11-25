@@ -3,9 +3,11 @@ package adminauth
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/activity"
 	"github.com/danmuck/edgectl/internal/identity"
 )
 
@@ -147,10 +149,16 @@ func Audit(component string, peer Peer, action string, decision string, errorCod
 	if peer.Authenticated {
 		principal, role = peer.Principal.String(), string(peer.Principal.Role)
 	}
+	now := time.Now().UnixMilli()
 	line := fmt.Sprintf(
 		"admin.audit component=%s peer=%q principal=%q role=%s action=%q decision=%s error_code=%d timestamp_ms=%d",
-		component, peer.Addr, principal, role, strings.TrimSpace(action), decision, errorCode, time.Now().UnixMilli(),
+		component, peer.Addr, principal, role, strings.TrimSpace(action), decision, errorCode, now,
 	)
+	// Kept in memory as well so api/v1 can serve recent activity (api_v1.toml [parity.activity]).
+	activity.Add(activity.KindAudit, uint64(now), map[string]string{
+		"component": component, "peer": peer.Addr, "principal": principal, "role": role,
+		"action": strings.TrimSpace(action), "decision": decision, "error_code": strconv.FormatUint(uint64(errorCode), 10),
+	})
 	level := AuditInfo
 	if decision == DecisionDeny {
 		level = AuditWarn

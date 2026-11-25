@@ -29,6 +29,9 @@ const (
 	bindMirageAction      = "bind_mirage"
 	// Ghost read of one execution record, used for the api/v1 execution read.
 	executionByCommandIDAction = "execution_by_command_id"
+	// Ghost reads behind /api/v1/ghosts/{ghost_id}/events and /verification.
+	recentEventsAction = "recent_events"
+	verificationAction = "verification"
 )
 
 type ghostControlRequest struct {
@@ -36,6 +39,7 @@ type ghostControlRequest struct {
 	Spawn        SpawnGhostRequest `json:"spawn,omitempty"`
 	CommandFrame []byte            `json:"command_frame,omitempty"`
 	CommandID    string            `json:"command_id,omitempty"`
+	Limit        int               `json:"limit,omitempty"`
 	MirageID     string            `json:"mirage_id,omitempty"`
 	SessionPort  string            `json:"session_port,omitempty"`
 	Install      *ghostInstallPlan `json:"install,omitempty"`
@@ -110,6 +114,9 @@ type ghostLifecycleStatus struct {
 	GhostID string `json:"ghost_id"`
 	// GhostIDLegacy accepts the current Ghost admin status shape from untagged Go structs.
 	GhostIDLegacy string `json:"GhostID"`
+	// Lifecycle phase and seed count, as Ghost encodes them (untagged Go field names).
+	Phase     string `json:"Phase"`
+	SeedCount int    `json:"SeedCount"`
 }
 
 type ghostSeedMetadata struct {
@@ -305,6 +312,59 @@ func (c *GhostControlClient) ExecutionByCommandID(ctx context.Context, commandID
 		return GhostExecution{}, false, err
 	}
 	return out.Execution, out.Found, nil
+}
+
+// GhostRecordedEvent is one terminal event in a Ghost's recent-events record. Ghost encodes it with
+// untagged Go field names, which these field names match.
+type GhostRecordedEvent struct {
+	EventID     string
+	CommandID   string
+	IntentID    string
+	GhostID     string
+	SeedID      string
+	Outcome     string
+	TimestampMS uint64
+}
+
+// GhostVerificationRecord is one protocol correlation record from a Ghost's verification view
+// (api_v1.toml [shapes.ghost_verification]); the JSON names are Ghost's own.
+type GhostVerificationRecord struct {
+	RequestID          string `json:"request_id"`
+	TraceID            string `json:"trace_id"`
+	CommandMessageID   uint64 `json:"command_message_id"`
+	CommandMessageType uint32 `json:"command_message_type"`
+	EventMessageType   uint32 `json:"event_message_type"`
+	CommandID          string `json:"command_id"`
+	ExecutionID        string `json:"execution_id"`
+	EventID            string `json:"event_id"`
+	GhostID            string `json:"ghost_id"`
+	SeedID             string `json:"seed_id"`
+	Operation          string `json:"operation"`
+	Outcome            string `json:"outcome"`
+	SeedStatus         string `json:"seed_status"`
+	ExitCode           uint32 `json:"exit_code"`
+	TimestampMS        uint64 `json:"timestamp_ms"`
+	Status             string `json:"status"`
+}
+
+// RecentEvents reads a Ghost's recent terminal events (recent_events); limit <= 0 keeps the
+// Ghost's default.
+func (c *GhostControlClient) RecentEvents(ctx context.Context, limit int) ([]GhostRecordedEvent, error) {
+	var out []GhostRecordedEvent
+	if err := c.call(ctx, ghostControlRequest{Action: recentEventsAction, Limit: limit}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Verification reads a Ghost's protocol verification view (verification); limit <= 0 keeps the
+// Ghost's default.
+func (c *GhostControlClient) Verification(ctx context.Context, limit int) ([]GhostVerificationRecord, error) {
+	var out []GhostVerificationRecord
+	if err := c.call(ctx, ghostControlRequest{Action: verificationAction, Limit: limit}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // ListSeeds reads available seed metadata from the ghost admin endpoint.

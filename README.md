@@ -65,6 +65,7 @@ Prerequisites: Go `1.25.6` or newer (see `go.mod`). Run everything from the repo
 make test    # interactive test picker; `make test-override` runs every package
 make lab     # start a local Mirage and Ghost and open the lab menu
 make serve   # start the same stack as a dev server: no menu, live output
+make gui-env # build edgecert and print the settings a web front end needs for the lab
 ```
 
 `make lab` is the way to try the system by hand. It builds Mirage from this checkout, creates lab
@@ -90,6 +91,23 @@ curl --cert local/lab/certs/ops.crt --key local/lab/certs/ops.key --cacert local
 ```
 
 Outside the lab, set `api_v1_addr` in the Mirage config; it is off by default.
+
+`api/v1` covers what the terminal client does: routing, deploy, dependency installs, each Ghost's
+status, events and verification view, and recent audit and custody activity. Two things stay on the
+client side because Mirage never holds a signing or issuing key:
+
+- **Adding a Ghost.** Issue its certificate first, then call `spawn-local`. The child's id is
+  `<local ghost id>.<target_name>`:
+
+  ```bash
+  go run ./cmd/edgecert issue -ca-cert local/lab/certs/root/ca.crt -ca-key local/lab/certs/root/ca.key -role ghost -id ghost.local.web1 -ip 127.0.0.1 -dns localhost -out local/lab/certs
+  ```
+
+- **Dependency installs.** One operator proposes and a second approves. `edgecert intent`,
+  `sign-intent`, `approval` and `sign-approval` build and sign the two messages as JSON on
+  stdin/stdout. `approval` prints the payload digest to show the approver; `sign-approval` refuses
+  to sign unless given that digest. The approve request must be sent with the approver's
+  certificate.
 
 Other entry points:
 

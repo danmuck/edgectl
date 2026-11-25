@@ -5,6 +5,7 @@ name = "EdgeCTL Northbound API v1 Contract"
 version = "v1"
 status = "approved"
 approval = "approved by user 2026-11-24 (see docs/progress/api_v1_gui.md)"
+amendment = "2026-11-25 operator parity amendment: approved by the user 2026-11-25 and implemented. Tables added by it are marked amendment_2026_11_25."
 scope = "HTTP JSON boundary between one operator client and Mirage"
 supersedes_proposal = "docs/architecture/future_api_v1.md (left unchanged; this file is the contract to implement)"
 related = [
@@ -170,8 +171,144 @@ not_found = "404 with code 1300 when no known intent owns command_id or the Ghos
 note = "not in future_api_v1.md; the only way a client can read seed.result output without calling a Ghost"
 
 [endpoints.excluded]
-not_in_v1 = ["deploy_ghost", "propose_dependencies", "approve_dependencies", "execute_dependencies", "list_dependency_proposals", "metrics"]
-reason = "outside the first GUI scope; dependency approval needs a separate decision on separation_of_duties with a single operator"
+not_in_v1 = ["metrics"]
+reason = "Mirage has no metrics read model yet"
+
+# ---------------------------------------------------------------------------
+# Amendment 2026-11-25 (approved 2026-11-25): operator parity with the terminal client. Goal: everything the
+# operator can do in client-tm is reachable through api/v1. Nothing here changes
+# admin_security.toml; signing and certificate issuance stay with operator tooling.
+# ---------------------------------------------------------------------------
+
+[endpoints.deploy_targets]
+amendment_2026_11_25 = true
+method = "GET"
+path = "/api/v1/ghosts/deploy-targets"
+action = "none; new Mirage read of configured ghost_manifests"
+authorization = "operator, as for routing_table"
+response_data = "deploy_targets"
+note = "lets a client offer the ghost_ids deploy_ghost accepts; never returns credentials or key paths"
+
+[endpoints.deploy_ghost]
+amendment_2026_11_25 = true
+method = "POST"
+path = "/api/v1/ghosts/deploy"
+action = "deploy_ghost"
+request_body = "deploy_request"
+response_data = "deploy_result"
+privileged = "requires mTLS in every security mode"
+timeout = "same bound as the admin action"
+
+[endpoints.list_dependency_proposals]
+amendment_2026_11_25 = true
+method = "GET"
+path = "/api/v1/dependencies/proposals"
+action = "list_dependency_proposals"
+response_data = "dependency_proposals"
+
+[endpoints.get_dependency_proposal]
+amendment_2026_11_25 = true
+method = "GET"
+path = "/api/v1/dependencies/proposals/{proposal_id}"
+action = "list_dependency_proposals (with proposal_id)"
+response_data = "dependency_proposal"
+not_found = "404 with code 1300"
+
+[endpoints.propose_dependencies]
+amendment_2026_11_25 = true
+method = "POST"
+path = "/api/v1/dependencies/proposals"
+action = "propose_dependencies"
+request_body = "propose_request"
+response_data = "dependency_proposal"
+
+[endpoints.approve_dependencies]
+amendment_2026_11_25 = true
+method = "POST"
+path = "/api/v1/dependencies/proposals/{proposal_id}/approve"
+action = "approve_dependencies"
+request_body = "approve_request"
+response_data = "dependency_proposal"
+privileged = "requires mTLS in every security mode"
+caller = "the connection MUST be authenticated as the approver principal (admin_security.toml [install_approval] mirage_verification: approver == caller)"
+
+[endpoints.execute_dependencies]
+amendment_2026_11_25 = true
+method = "POST"
+path = "/api/v1/dependencies/proposals/{proposal_id}/execute"
+action = "execute_dependencies"
+request_body = "none"
+response_data = "dependency_proposal"
+privileged = "requires mTLS in every security mode"
+timeout = "same bound as the admin action (minutes); clients MUST NOT retry automatically"
+
+[endpoints.ghost_status]
+amendment_2026_11_25 = true
+method = "GET"
+path = "/api/v1/ghosts/{ghost_id}/status"
+action = "status (Ghost admin action, called by Mirage as the pinned mirage principal)"
+authorization = "operator, as for registered_ghosts"
+response_data = "ghost_status"
+not_found = "404 with code 1300 when Mirage has no admin route for ghost_id"
+
+[endpoints.ghost_events]
+amendment_2026_11_25 = true
+method = "GET"
+path = "/api/v1/ghosts/{ghost_id}/events"
+action = "recent_events (Ghost admin action, called by Mirage)"
+authorization = "operator, as for registered_ghosts"
+query = "limit (optional, positive integer)"
+response_data = "ghost_events"
+
+[endpoints.ghost_verification]
+amendment_2026_11_25 = true
+method = "GET"
+path = "/api/v1/ghosts/{ghost_id}/verification"
+action = "verification (Ghost admin action, called by Mirage)"
+authorization = "operator, as for registered_ghosts"
+query = "limit (optional, positive integer)"
+response_data = "ghost_verification"
+
+[endpoints.activity]
+amendment_2026_11_25 = true
+method = "GET"
+path = "/api/v1/activity"
+action = "none; new Mirage read of its recent audit and custody records"
+authorization = "operator, as for recent_reports"
+query = "limit (optional, positive integer); kind (optional: audit | custody)"
+response_data = "activity"
+note = "the terminal reads these from the Mirage log file; a client has no log access"
+
+# Rules for the amendment's endpoints.
+
+[parity]
+amendment_2026_11_25 = true
+
+[parity.signing]
+where = "operator tooling on the client side; Mirage never signs and api/v1 never receives a private key"
+intent = "propose_request carries a SignedIntent produced with the proposer operator key (admin_security.toml [install_approval] proposer_intent)"
+approval = "approve_request carries a Signed approval produced with the approver operator key"
+separation_of_duties = "unchanged; approver principal MUST differ from proposer principal. A single person may hold two operator identities; the client MUST make the approve call on a connection authenticated as the approver"
+operator_confirmation = "before signing an approval the client MUST show the proposal content and payload digest and require an explicit confirmation (admin_security.toml [install_approval] operator_confirmation)"
+verification = "unchanged; Mirage and every Ghost verify exactly as for the admin actions"
+payload_digest = "computed by the signing tool, never by Mirage: the payload includes the approver's nonce and expiry, which exist only once the approver builds it. The tool MUST check the proposal before building a payload (pending state, proposer intent verifies under the root, proposer differs from approver, steps equal the catalog steps for the intent seeds) and MUST refuse to sign a payload whose digest is not the one the operator confirmed"
+tooling = "edgecert intent | sign-intent | approval | sign-approval; they share one implementation with the terminal client (internal/opsign)"
+
+[parity.certificates]
+issuance = "outside api/v1. A client that adds a Ghost issues its leaf as operator tooling (admin_security.toml [trust] leaf_issuance) with its own access to an issuing key, then calls spawn-local"
+key_material = "never sent through api/v1 and never returned by it"
+mirage = "holds no issuing key and mints nothing"
+
+[parity.ghost_reads]
+path = "client -> api/v1 -> Mirage -> Ghost admin endpoint; a client still never calls a Ghost"
+identity = "Mirage dials as its own principal; the Ghost authorizes the pinned mirage principal"
+unreachable = "502 with code 1000, retryable"
+
+[parity.activity]
+source = "admin.audit and custody records written by the Mirage process (admin_security.toml [audit], observability.toml)"
+retention = "most recent 1000 records, in memory; lost on Mirage restart"
+content = "the same fields as the log record; secret material is never recorded"
+ordering = "oldest first within the returned window"
 
 # ---------------------------------------------------------------------------
 # Response envelope: shape from future_api_v1.md; class and code from errors.toml.
@@ -367,6 +504,91 @@ exit_code = "integer"
 stdout = "string"
 stderr = "string"
 output_encoding = "utf8 when both stdout and stderr are valid UTF-8, else base64 for both"
+
+# Shapes added by the 2026-11-25 amendment.
+
+[shapes.deploy_targets]
+amendment_2026_11_25 = true
+targets = "array of { ghost_id, host, admin_addr }"
+
+[shapes.deploy_request]
+amendment_2026_11_25 = true
+ghost_id = "string, required; MUST name a configured ghost manifest"
+force_redeploy = "boolean"
+
+[shapes.deploy_result]
+amendment_2026_11_25 = true
+ghost_id = "string"
+host = "string"
+admin_addr = "string"
+status = "string"
+message = "string, optional"
+
+[shapes.signed_intent]
+amendment_2026_11_25 = true
+intent = "{ ghost_id, seed_ids, proposed_at_ms, nonce }"
+signature = "string; base64 ECDSA P-256 signature over the intent digest"
+proposer_cert = "string; base64 DER of the proposer certificate"
+canonical_form = "exactly the admin action's SignedIntent; api/v1 passes it through unchanged"
+
+[shapes.signed_approval]
+amendment_2026_11_25 = true
+payload = "{ proposal_id, ghost_id, proposer_intent, steps, expires_at_ms, nonce }"
+signature = "string; base64 ECDSA P-256 signature over the payload digest"
+approver_cert = "string; base64 DER of the approver certificate"
+canonical_form = "exactly the admin action's Signed approval; api/v1 passes it through unchanged"
+
+[shapes.propose_request]
+amendment_2026_11_25 = true
+intent = "signed_intent, required"
+
+[shapes.approve_request]
+amendment_2026_11_25 = true
+approval = "signed_approval, required; payload.proposal_id MUST equal the path proposal_id"
+
+[shapes.dependency_proposals]
+amendment_2026_11_25 = true
+proposals = "array of dependency_proposal"
+
+[shapes.dependency_proposal]
+amendment_2026_11_25 = true
+id = "string"
+ghost_id = "string"
+seed_ids = "array of string"
+steps = "array of install step, as derived from the catalog"
+unresolved = "array of string, optional"
+state = "string; Mirage proposal state"
+proposed_by = "string"
+intent = "signed_intent"
+approved_by = "string, optional"
+approval = "signed_approval, optional"
+executed_by = "string, optional"
+execution = "{ succeeded, steps, rollback, error }, optional"
+audit = "array of { kind, actor, state, detail, at_ms }"
+
+[shapes.ghost_status]
+amendment_2026_11_25 = true
+ghost_id = "string"
+phase = "string; Ghost lifecycle phase"
+seed_count = "integer"
+
+[shapes.ghost_events]
+amendment_2026_11_25 = true
+events = "array of { event_id, command_id, intent_id, ghost_id, seed_id, outcome, timestamp_ms }"
+
+[shapes.ghost_verification]
+amendment_2026_11_25 = true
+records = "array of { request_id, trace_id, command_message_id, command_message_type, event_message_type, command_id, execution_id, event_id, ghost_id, seed_id, operation, outcome, seed_status, exit_code, timestamp_ms, status }"
+
+[shapes.activity]
+amendment_2026_11_25 = true
+records = "array of activity_record"
+
+[shapes.activity_record]
+amendment_2026_11_25 = true
+kind = "audit | custody"
+timestamp_ms = "integer"
+fields = "object of string to string; the record's logged key/value pairs"
 
 # ---------------------------------------------------------------------------
 # Reliability and observability

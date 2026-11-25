@@ -1,7 +1,8 @@
 # Northbound api/v1 for a web GUI (2026-11-24)
 
-Status: contract approved by the user 2026-11-24. Mirage side implemented and verified (commit `3c3ad89`); the hardening pass below is uncommitted.
-The tracker_suite module is not started.
+Status: contract approved 2026-11-24 and implemented (commits `3c3ad89`, `aed7341`). Operator parity
+amendment approved 2026-11-25 and implemented, uncommitted. The tracker_suite module exists for v1
+and is being extended for parity.
 
 ## Why
 
@@ -119,3 +120,94 @@ server-side HTTPS client does both by default.
 - [ ] tracker_suite `edgectl` module against the lab.
 - [ ] Decide certificate issuance for "Add a Ghost" from a GUI.
 - [ ] Decide whether to link the contract and diagram from `docs/index.md`.
+
+## Operator parity amendment (2026-11-25) — approved and implemented
+
+The user wants the tracker_suite module to have full admin control, matching the terminal client.
+The amendment is in `api_v1.toml` (tables marked `amendment_2026_11_25`). The user approved it in
+thread on 2026-11-25; the outcome is at the end of this note.
+
+### What the terminal can do that the GUI cannot
+
+| Terminal | Today | After the amendment |
+|---|---|---|
+| Routing table, available services, reconcile all | in `api/v1`, no GUI page | GUI only |
+| Add a Ghost (issues a certificate, then spawns) | spawn fails without a certificate | GUI server issues the leaf as operator tooling |
+| Deploy remote Ghost (SSH) | not in `api/v1` | `POST /ghosts/deploy`, `GET /ghosts/deploy-targets` |
+| Dependencies: list, propose, approve, execute | not in `api/v1` | four routes under `/dependencies/proposals` |
+| Ghost console: status, recent events, verification view | terminal calls the Ghost directly | read through Mirage, `/ghosts/{ghost_id}/...` |
+| Recent activity: audit and custody lines | read from the Mirage log file | `GET /activity`, from an in-memory record |
+| Ghost console: execute a seed command, look up an execution | already covered (`issue`, `/executions`) | no change |
+| Target lists and config menus | client-side only | not applicable to a GUI |
+
+### User decisions (in thread)
+
+- Add a Ghost: the GUI server issues the certificate; Mirage never holds an issuing key.
+- Dependency approvals: keep the two-operator rule; one person holds two operator keys.
+- Contract amendment: draft first, review before code.
+
+### Decisions made by the builder (review these)
+
+- **Signing and certificate issuance should be done by edgectl tooling, not reimplemented in the
+  GUI.** The signature covers Go's canonical JSON of the intent and payload; a second
+  implementation in TypeScript could drift and produce signatures every Ghost rejects. Proposed:
+  the GUI server shells out to `edgecert` (it already issues certificates) and to new
+  non-interactive `edgecert` subcommands that sign an intent and an approval. This adds no new
+  role: `edgecert` is the operator tooling the trust rules already name.
+- **The payload digest comes from the signing tool, not Mirage.** The draft had Mirage return a
+  `payload_digest` on each proposal. That cannot work: the payload includes the approver's nonce
+  and expiry, which exist only when the approver builds it. The field is removed from the
+  contract; `edgecert approval` prints the digest for the GUI to show, and `edgecert sign-approval`
+  refuses to sign unless it is handed that same digest.
+- **Approve must come from the second identity's connection.** Mirage checks approver == caller, so
+  the GUI server needs a second client certificate and key (the lab's `lead`) and makes that one
+  call as `lead`.
+- **Two new Mirage reads with no admin action behind them:** deploy targets (from configured
+  manifests, no credentials) and activity (a 1000-record in-memory buffer of audit and custody
+  records). Everything else maps to an existing action.
+- **Adding a Ghost stays local-only.** The spawned Ghost reads its certificate from Mirage's
+  certificate directory, so the GUI server must be able to write there. That holds when both run on
+  one machine and not otherwise.
+- **Metrics remain excluded**; Mirage has no metrics read model.
+
+### Outcome (2026-11-25)
+
+- [x] Routes in `internal/mirage/api_v1_parity.go`: deploy, deploy targets, dependency proposals
+  (list, get, propose, approve, execute), Ghost status, events and verification, activity.
+- [x] `internal/activity`: in-memory record (1000 entries) fed by `adminauth.Audit` and
+  `observability.Emit`.
+- [x] `internal/opsign`: the terminal client's intent and approval-payload checks, moved so
+  `client-tm` and `edgecert` share one implementation.
+- [x] `edgecert intent | sign-intent | approval | sign-approval`.
+- [x] Tests for every new route and command; `go vet ./...` and `go test -race ./...` pass; no
+  change under `internal/protocol`.
+- [ ] tracker_suite module extended for parity (separate repository, in progress).
+
+Verified against a throwaway lab over mutual TLS: Ghost status, events and verification after a
+`seed.kv` issue; activity (audit and custody); deploy targets; a full propose (as `ops`) and approve
+(as `lead`) using the `edgecert` commands; and adding a Ghost by issuing its certificate with
+`edgecert issue` and calling `spawn-local`. Refusals seen: self-approval, a wrong confirmed digest,
+and `lead`'s approval sent on `ops`' connection.
+
+Not exercised live: `execute` (it would run a real `brew install`) and a remote deploy (no SSH
+target). Both are covered by tests with stubs only.
+
+### Found while implementing
+
+- **A spawned child's id is `<local ghost id>.<target_name>`.** The certificate must be issued for
+  that full id (`ghost.local.web1` for target `web1`), or the spawn fails naming the missing file.
+- **The activity feed includes the local Ghost's audit lines** when Mirage runs it in-process, as
+  the lab does. Each record carries `component` so a client can tell them apart.
+- **Activity is per process and in memory.** It is empty after a Mirage restart and does not include
+  a remote Ghost's own records.
+- `sign-approval` signs the payload it is given; the proposal checks happen in `approval`. A caller
+  that skips `approval` gains nothing: Mirage and every Ghost verify the approval again.
+- Still open from v1: Mirage sets `registered_at_ms` anew on every Ghost read (reported by the GUI
+  session, not yet examined), and `docs/index.md` does not link the contract.
+
+### Make targets (2026-11-25)
+
+- `make build-edgecert` builds `local/bin/edgecert` (also part of `make build-all`).
+- `make gui-env` builds it and prints the ten settings a front end's server needs for the lab, as
+  `KEY=value` lines with absolute paths, reading the api/v1 address from `local/lab/mirage.toml`.
+  It prints only; it does not write into another repository. `LAB_DIR=` selects another lab.
