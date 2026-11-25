@@ -93,7 +93,8 @@ func adminErrorCode(err error) uint32 {
 	if errors.As(err, &ghostErr) && ghostErr.Code != 0 {
 		return ghostErr.Code
 	}
-	if errors.Is(err, adminauth.ErrAuthRequired) || errors.Is(err, adminauth.ErrAuthorizationDenied) {
+	if errors.Is(err, adminauth.ErrAuthRequired) || errors.Is(err, adminauth.ErrAuthorizationDenied) ||
+		errors.Is(err, ErrIntentActorMismatch) {
 		return schema.ErrCodeTransportFailure
 	}
 	switch {
@@ -174,8 +175,12 @@ func (s *Service) handleAdminConn(conn net.Conn) {
 	}()
 	reader := bufio.NewReader(conn)
 	for {
-		line, err := reader.ReadBytes('\n')
+		// Bounded line and idle deadline; an oversize line is answered once and the connection closed.
+		line, err := adminauth.ReadRequestLine(conn, reader, adminauth.DefaultRequestLimits())
 		if err != nil {
+			if errors.Is(err, adminauth.ErrRequestTooLarge) {
+				_ = writeAdminControlResponse(conn, adminControlResponse{Error: err.Error(), ErrorCode: schema.ErrCodeFramingOversize})
+			}
 			if err != io.EOF {
 				logs.Warnf("mirage.admin read err=%v", err)
 			}

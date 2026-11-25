@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/danmuck/edgectl/internal/identity"
-	logs "github.com/danmuck/smplog"
 )
 
 // ErrAuthorizationDenied reports an action the caller's principal may not perform
@@ -142,6 +141,7 @@ const (
 )
 
 // Audit writes one admin request decision with admin_security.toml [audit] admin_request_fields.
+// The record is written regardless of the configured log level (see Record).
 func Audit(component string, peer Peer, action string, decision string, errorCode uint32) {
 	principal, role := "unauthenticated", "none"
 	if peer.Authenticated {
@@ -151,9 +151,9 @@ func Audit(component string, peer Peer, action string, decision string, errorCod
 		"admin.audit component=%s peer=%q principal=%q role=%s action=%q decision=%s error_code=%d timestamp_ms=%d",
 		component, peer.Addr, principal, role, strings.TrimSpace(action), decision, errorCode, time.Now().UnixMilli(),
 	)
+	level := AuditInfo
 	if decision == DecisionDeny {
-		logs.Warn(line)
-		return
+		level = AuditWarn
 	}
-	logs.Info(line)
+	_ = Record(level, line) // Record reports its own write failure on stderr.
 }

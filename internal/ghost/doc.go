@@ -70,7 +70,9 @@
 // Admin authorization (admin_security.toml [authorization.ghost_admin], ghost_pinning):
 // - default deny; mirage role only for the pinned mirage_principal; operators only with admin_operator_access
 //
-// - every request writes an admin.audit line (principal, role, action, decision, error_code)
+// - admin request lines are size-capped and idle connections dropped (adminauth.ReadRequestLine)
+//
+// - every request writes an admin.audit line (principal, role, action, decision, error_code), at any log level
 //
 // Admin boundary errors (errors.toml):
 // - failed admin responses carry error_code; execute_envelope frames are version/flag gated (1100)

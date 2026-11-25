@@ -182,6 +182,8 @@ func TestCustodyChainSessionEventAckAndDuplicate(t *testing.T) {
 
 	const intentID = "intent.obs.session"
 	submitStatusIssue(t, svc.server, intentID)
+	// The session event below stands for the result of a command Mirage already sent.
+	svc.server.loop.markDispatched("cmd." + intentID + ".1")
 
 	client, err := ghost.NewMirageClient(ghost.MirageClientConfig{
 		Address: ln.Addr().String(), GhostID: "ghost.alpha", PeerIdentity: "ghost.alpha",

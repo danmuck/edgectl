@@ -9,11 +9,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/adminauth"
 	"github.com/danmuck/edgectl/internal/approval"
 	"github.com/danmuck/edgectl/internal/depcatalog"
 	"github.com/danmuck/edgectl/internal/identity"
 	"github.com/danmuck/edgectl/internal/seeds"
-	logs "github.com/danmuck/smplog"
 )
 
 var (
@@ -308,7 +308,8 @@ func (l *DependencyLedger) transition(
 func (l *DependencyLedger) auditLocked(p *DependencyProposal, kind DependencyAuditKind, actor string, detail string) {
 	rec := DependencyAuditRecord{Kind: kind, Actor: actor, State: p.State, Detail: detail, AtMS: uint64(l.now().UnixMilli())}
 	p.Audit = append(p.Audit, rec)
-	logs.Infof(
+	// admin_security.toml [audit] approval_fields: written regardless of log level.
+	_ = adminauth.Recordf(adminauth.AuditInfo,
 		"mirage.dependency.audit component=mirage proposal_id=%q ghost_id=%q kind=%s state=%s actor=%q detail=%q timestamp_ms=%d",
 		p.ID, p.GhostID, kind, p.State, actor, detail, rec.AtMS,
 	)

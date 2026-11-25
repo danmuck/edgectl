@@ -10,6 +10,10 @@
 //
 // - privileged action set that always requires an authenticated (mTLS) peer
 //
+// - audit records (admin_security.toml [audit]): written at any log level; write failures reported
+//
+// - bounded admin request reads: line size cap and idle deadline (request.go)
+//
 // Canonical references (consult before changes):
 // - docs/index.md
 //

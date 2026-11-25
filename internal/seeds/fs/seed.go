@@ -114,34 +114,53 @@ func (s Seed) CommandCatalog() []seeds.CommandTemplate {
 func (s Seed) Execute(action string, args map[string]string) (seeds.SeedResult, error) {
 	switch strings.TrimSpace(action) {
 	case "write":
-		p, err := s.resolvePath(args["path"])
+		rel, err := s.resolvePath(args["path"])
 		if err != nil {
 			return seeds.ErrorResultErr(err), err
 		}
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		root, err := s.openRoot(true)
+		if err != nil {
+			return seeds.ErrorResultErr(err), err
+		}
+		defer root.Close()
+		if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
 			return seeds.ErrorResultErr(err), err
 		}
 		content := []byte(args["content"])
-		if err := os.WriteFile(p, content, 0o644); err != nil {
+		if err := root.WriteFile(rel, content, 0o644); err != nil {
 			return seeds.ErrorResultErr(err), err
 		}
 		return seeds.OKResult("ok\n"), nil
 	case "read":
-		p, err := s.resolvePath(args["path"])
+		rel, err := s.resolvePath(args["path"])
 		if err != nil {
 			return seeds.ErrorResultErr(err), err
 		}
-		out, err := os.ReadFile(p)
+		root, err := s.openRoot(false)
+		if err != nil {
+			return seeds.ErrorResultErr(err), err
+		}
+		defer root.Close()
+		out, err := root.ReadFile(rel)
 		if err != nil {
 			return seeds.ErrorResultErr(err), err
 		}
 		return seeds.SeedResult{Status: "ok", Stdout: out, ExitCode: 0}, nil
 	case "delete":
-		p, err := s.resolvePath(args["path"])
+		rel, err := s.resolvePath(args["path"])
 		if err != nil {
 			return seeds.ErrorResultErr(err), err
 		}
-		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+		root, err := s.openRoot(false)
+		if os.IsNotExist(err) {
+			// Nothing under a root that was never created; delete stays idempotent.
+			return seeds.OKResult("ok\n"), nil
+		}
+		if err != nil {
+			return seeds.ErrorResultErr(err), err
+		}
+		defer root.Close()
+		if err := root.Remove(rel); err != nil && !os.IsNotExist(err) {
 			return seeds.ErrorResultErr(err), err
 		}
 		return seeds.OKResult("ok\n"), nil
@@ -174,6 +193,24 @@ func (s Seed) Execute(action string, args map[string]string) (seeds.SeedResult, 
 	}
 }
 
+// Opens the seed root as a traversal-resistant handle: every operation through it is refused by
+// the OS layer if a path component (including a symlink) would leave the root. With create set,
+// the root directory is created first; the configured root itself is trusted and may be a symlink.
+func (s Seed) openRoot(create bool) (*os.Root, error) {
+	root, err := filepath.Abs(s.root)
+	if err != nil {
+		return nil, err
+	}
+	if create {
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			return nil, err
+		}
+	}
+	return os.OpenRoot(root)
+}
+
+// Validates a caller path lexically and returns it relative to the seed root. Absolute paths and
+// paths that clean to outside the root are rejected here; symlink escapes are rejected by openRoot.
 func (s Seed) resolvePath(pathArg string) (string, error) {
 	rel := strings.TrimSpace(pathArg)
 	if rel == "" {
@@ -190,7 +227,11 @@ func (s Seed) resolvePath(pathArg string) (string, error) {
 	if !isWithin(p, root) {
 		return "", fmt.Errorf("seed.fs: path escapes root")
 	}
-	return p, nil
+	out, err := filepath.Rel(root, p)
+	if err != nil {
+		return "", err
+	}
+	return out, nil
 }
 
 func isWithin(path string, root string) bool {

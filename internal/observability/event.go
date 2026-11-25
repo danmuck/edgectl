@@ -173,7 +173,10 @@ func Emit(e LogEvent) {
 	loggerMu.RLock()
 	l := logger
 	loggerMu.RUnlock()
-	_ = l.Write(e)
+	// A custody line that cannot be written is reported, not dropped silently.
+	if err := l.Write(e); err != nil {
+		logs.Errf("custody write failed err=%v line=%q", err, e.Line())
+	}
 }
 
 // TraceID derives the per-intent trace shared by every custody step on both runtimes.

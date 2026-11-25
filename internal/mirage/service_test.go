@@ -274,6 +274,8 @@ func TestServiceIngestEventEmitsReportHistory(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("submit issue: %v", err)
 	}
+	// The session event below stands for the result of a command Mirage already sent.
+	svc.server.loop.markDispatched("cmd.intent.1.1")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

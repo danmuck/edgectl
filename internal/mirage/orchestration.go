@@ -18,11 +18,15 @@ import (
 )
 
 var (
-	ErrInvalidIssue        = errors.New("mirage: invalid issue")
+	ErrInvalidIssue = errors.New("mirage: invalid issue")
+	// Issue names an existing intent_id that a different actor submitted.
+	ErrIntentActorMismatch = errors.New("mirage: intent belongs to another actor")
 	ErrIntentNotFound      = errors.New("mirage: intent not found")
 	ErrTargetGhostRequired = errors.New("mirage: target ghost required")
 	// Event reports on a command planned for a different ghost than the reporting session.
 	ErrCommandGhostMismatch = errors.New("mirage: command planned for another ghost")
+	// Event names a planned command that Mirage has not dispatched; it cannot be controller feedback.
+	ErrCommandNotDispatched = errors.New("mirage: command not dispatched")
 )
 
 const (
@@ -153,8 +157,11 @@ type Orchestrator struct {
 	observed  map[string]*ObservedIntent
 	executors map[string]CommandExecutor
 	seedLocks map[string]seedLock
-	seq       atomic.Uint64
-	retry     CommandRetryPolicy
+	// command_ids handed to an executor at least once for the current plan (protocol.toml: an event
+	// is feedback for a delegated command). Cleared for an intent when its plan is replaced.
+	dispatched map[string]struct{}
+	seq        atomic.Uint64
+	retry      CommandRetryPolicy
 	// Backoff sleeper and clock; replaceable in tests for deterministic retry timing.
 	sleep func(ctx context.Context, d time.Duration) error
 	now   func() time.Time
@@ -174,13 +181,14 @@ type OrchestratorSnapshot struct {
 // NewOrchestrator returns an empty Mirage orchestration loop with in-memory stores.
 func NewOrchestrator() *Orchestrator {
 	return &Orchestrator{
-		desired:   make(map[string]DesiredIntent),
-		observed:  make(map[string]*ObservedIntent),
-		executors: make(map[string]CommandExecutor),
-		seedLocks: make(map[string]seedLock),
-		retry:     DefaultCommandRetryPolicy(),
-		sleep:     sleepContext,
-		now:       time.Now,
+		desired:    make(map[string]DesiredIntent),
+		observed:   make(map[string]*ObservedIntent),
+		executors:  make(map[string]CommandExecutor),
+		seedLocks:  make(map[string]seedLock),
+		dispatched: make(map[string]struct{}),
+		retry:      DefaultCommandRetryPolicy(),
+		sleep:      sleepContext,
+		now:        time.Now,
 	}
 }
 
@@ -241,6 +249,15 @@ func (o *Orchestrator) SubmitIssue(issue IssueEnv) error {
 		if owner, _, ok := o.findPlannedCommandByCommandID(id); ok && owner != issue.IntentID {
 			return fmt.Errorf("%w: command_id %q collides with intent %q", ErrInvalidIssue, id, owner)
 		}
+	}
+	// The actor is the caller's TLS principal (admin_security.toml [authorization] actor_source);
+	// an existing intent may only be replaced by the actor that submitted it.
+	if prior, ok := o.desired[issue.IntentID]; ok && strings.TrimSpace(prior.Issue.Actor) != strings.TrimSpace(issue.Actor) {
+		return fmt.Errorf("%w: intent %q was submitted by %q", ErrIntentActorMismatch, issue.IntentID, prior.Issue.Actor)
+	}
+	// A replaced plan has not been dispatched, even when it reuses the same command_ids.
+	for _, prior := range o.desired[issue.IntentID].Commands {
+		delete(o.dispatched, prior.Command.CommandID)
 	}
 	o.desired[issue.IntentID] = DesiredIntent{
 		Issue:      issue,
@@ -340,6 +357,8 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context, intentID string) (sess
 		}
 		return session.Report{}, err
 	}
+	// Recorded before the first attempt so a terminal event arriving over the session mid-dispatch is accepted.
+	o.markDispatched(next.Command.CommandID)
 	emitCommand(commandMsgID, wireCommand, observability.StatusDispatched, "")
 	result := o.dispatchWithRetry(ctx, key, exec, wireCommand, commandMsgID)
 
@@ -393,8 +412,10 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context, intentID string) (sess
 // IngestObservedEvent maps an external ghost event into intent observed state.
 // The command's planned ghost is checked against boundGhostID under the same lock and against
 // the same plan entry used for observation; a mismatch returns ErrCommandGhostMismatch with no
-// mutation. duplicate=true means the command was already observed; observed state is not
-// re-mutated and the latest report is returned for read-only emission.
+// mutation. A planned command that was never dispatched returns ErrCommandNotDispatched with no
+// mutation: an unsolicited event must not complete it. duplicate=true means the command was
+// already observed; observed state is not re-mutated and the latest report is returned for
+// read-only emission.
 func (o *Orchestrator) IngestObservedEvent(boundGhostID string, event session.Event) (session.Report, bool, bool, error) {
 	return o.ingestObservedEvent(boundGhostID, event, 0)
 }
@@ -413,6 +434,12 @@ func (o *Orchestrator) ingestObservedEvent(boundGhostID string, event session.Ev
 		return session.Report{}, true, false, fmt.Errorf(
 			"%w: command_id=%q planned for ghost_id=%q, not %q",
 			ErrCommandGhostMismatch, event.CommandID, planned, strings.TrimSpace(boundGhostID),
+		)
+	}
+	if _, sent := o.dispatched[event.CommandID]; !sent {
+		return session.Report{}, true, false, fmt.Errorf(
+			"%w: command_id=%q is planned but was never sent to ghost_id=%q",
+			ErrCommandNotDispatched, event.CommandID, strings.TrimSpace(plan.Command.GhostID),
 		)
 	}
 	desired := o.desired[intentID]
@@ -445,6 +472,13 @@ func (o *Orchestrator) ingestObservedEvent(boundGhostID string, event session.Ev
 	emitEventIn(eventMessageID, boundGhostID, ingestedEvent, ingestedEvent.Outcome, "")
 	emitReport(reportMsgID, desired.Issue.Actor, report)
 	return report, true, false, nil
+}
+
+// Records that command_id is being handed to an executor; session events for it are accepted from here on.
+func (o *Orchestrator) markDispatched(commandID string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.dispatched[commandID] = struct{}{}
 }
 
 // dispatchCommandEnvelope round-trips command payload through protocol framing and returns the

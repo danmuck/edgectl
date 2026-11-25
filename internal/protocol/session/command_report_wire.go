@@ -127,6 +127,9 @@ func DecodeCommandFrame(f frame.Frame) (Command, error) {
 		}
 		command.Args = args
 	}
+	if err := command.Validate(); err != nil {
+		return Command{}, decodedInvalid(schema.MsgCommand, err)
+	}
 	return command, nil
 }
 
@@ -187,6 +190,9 @@ func DecodeReportFrame(f frame.Frame) (Report, error) {
 		}
 		report.TimestampMS = ts
 	}
+	if err := report.Validate(); err != nil {
+		return Report{}, decodedInvalid(schema.MsgReport, err)
+	}
 	return report, nil
 }
 
@@ -197,4 +203,11 @@ func getOptionalString(fields []tlv.Field, id uint16) string {
 		return ""
 	}
 	return string(f.Value)
+}
+
+// Decoders apply the same required-field check as the encoders, so a frame that decodes always
+// re-encodes: a required field that is present but blank is a semantic validation failure
+// (errors.toml 1300), reported as a schema.ValidationError.
+func decodedInvalid(messageType uint32, err error) error {
+	return schema.ValidationError{MessageType: messageType, Reason: err.Error()}
 }

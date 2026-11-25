@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/adminauth"
 	"github.com/danmuck/edgectl/internal/approval"
 	"github.com/danmuck/edgectl/internal/identity"
 	"github.com/danmuck/edgectl/internal/seeds"
@@ -197,7 +198,8 @@ func (s *Service) ExecuteInstallPlan(req InstallPlanRequest) (InstallPlanResult,
 			return InstallPlanResult{}, fmt.Errorf("specs[%d]: %w", i, err)
 		}
 	}
-	logs.Infof("ghost.dependency.approval component=ghost ghost_id=%q proposal_id=%q proposer=%q approver=%q intent_signature=%s signature=%s decision=accepted",
+	// admin_security.toml [audit] approval_fields: written regardless of log level.
+	_ = adminauth.Recordf(adminauth.AuditInfo, "ghost.dependency.approval component=ghost ghost_id=%q proposal_id=%q proposer=%q approver=%q intent_signature=%s signature=%s decision=accepted",
 		s.cfg.GhostID, pl.ProposalID, res.Proposer, res.Approver, pl.ProposerIntent.SignatureDigest(), signed.SignatureDigest())
 
 	intentKey, err := pl.ProposerIntent.ReplayKey(res.Proposer)

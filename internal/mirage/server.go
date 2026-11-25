@@ -288,7 +288,8 @@ func (s *Server) ListIntentIDs() []string {
 }
 
 // ObserveEvent ingests a ghost event into orchestration observed state when command is known.
-// The command must be planned for boundGhostID (ErrCommandGhostMismatch otherwise, no mutation).
+// The command must be planned for boundGhostID (ErrCommandGhostMismatch otherwise, no mutation)
+// and already dispatched by Mirage (ErrCommandNotDispatched otherwise, no mutation).
 // Duplicate observations return the latest report without appending to report history.
 func (s *Server) ObserveEvent(boundGhostID string, event session.Event) (session.Report, bool, bool, error) {
 	return s.observeEvent(boundGhostID, event, 0)
@@ -307,7 +308,8 @@ func (s *Server) observeEvent(boundGhostID string, event session.Event, messageI
 // EventIngest is the outcome of one session event delivery at the Mirage boundary.
 type EventIngest struct {
 	Ack session.EventAck
-	// Rejected is true when the event does not match the session's bound ghost_id;
+	// Rejected is true when the event does not match the session's bound ghost_id or names a
+	// planned command that was never dispatched;
 	// nothing was observed or recorded and the session must be closed.
 	Rejected     bool
 	RejectReason string
@@ -322,7 +324,9 @@ type EventIngest struct {
 // IngestEvent applies identity binding, event_id dedupe, and observation, and returns the ack.
 // Binding (transport_security.toml identity_binding; errors.toml declared_peer_mismatch=1000):
 // the declared ghost_id is checked first; the command's planned ghost is checked atomically with
-// observation. Either mismatch is rejected with no observation and no stored ack. A previously
+// observation. An event for a planned command Mirage never dispatched is not feedback for a
+// delegated command (protocol.toml envelope flow) and is rejected the same way, so a session peer
+// cannot complete work that was never sent. Each is rejected with no observation and no stored ack. A previously
 // accepted event_id short-circuits to its stored ack with no state mutation; stored acks only
 // exist for events that already passed binding for this same session ghost.
 func (s *Server) IngestEvent(ghostID string, event session.Event) EventIngest {
@@ -341,7 +345,7 @@ func (s *Server) ingestEvent(ghostID string, event session.Event, messageID uint
 		return EventIngest{Ack: ack, Duplicate: true}
 	}
 	report, matched, duplicate, err := s.observeEvent(bound, event, messageID)
-	if errors.Is(err, ErrCommandGhostMismatch) {
+	if errors.Is(err, ErrCommandGhostMismatch) || errors.Is(err, ErrCommandNotDispatched) {
 		return s.rejectedIngest(bound, event, err.Error())
 	}
 	return EventIngest{

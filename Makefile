@@ -16,7 +16,8 @@
 	certs-mirage \
 	certs-ghost
 
-include .env
+# Optional: hosts that receive this Makefile via update-pi have no .env.
+-include .env
 
 CLEAR_CMD ?= clear
 
@@ -102,8 +103,14 @@ build-all: build-ghost build-mirage build-client
 ### DEPLOY
 update-pi:
 	# rsync -avz --delete cmd internal pkg .air.toml .env Makefile $(PI_USER)@$(PI_HOST):$(PI_PATH)/
+	# The root CA key and .env stay on this host (see the certs note above): runtimes need only
+	# certs/ca.crt plus their own cert and key. Copies already on the target are not removed.
 	rsync -avz --delete \
 	  --filter='P cmd/ghostctl/*.tls.config.toml' \
 	  --filter='P cmd/ghostctl/*.config.toml' \
-	  cmd internal pkg certs .air.toml .env Makefile \
+	  --exclude='/certs/ca.key' \
+	  --exclude='/certs/ca.srl' \
+	  --exclude='/certs/root/' \
+	  --exclude='/certs/mirage.mac.key' \
+	  cmd internal pkg certs .air.toml Makefile \
 	  "${PI_USER}@${PI_HOST}:${PI_PATH}/"

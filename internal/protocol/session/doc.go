@@ -17,6 +17,8 @@
 //
 // - ErrorCode classifies framing, tlv_decode, semantic, and transport errors into wire codes
 //
+// - decoders apply the encoders' required-field checks; a blank required field is a semantic failure (1300)
+//
 // Canonical references (consult before changes):
 // - docs/index.md
 //

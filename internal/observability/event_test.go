@@ -1,11 +1,13 @@
 package observability
 
 import (
+	"bytes"
 	"errors"
 	"strings"
 	"testing"
 
 	"github.com/danmuck/edgectl/internal/protocol/schema"
+	logs "github.com/danmuck/smplog"
 )
 
 type recorder struct{ events []LogEvent }
@@ -87,5 +89,34 @@ func TestEmitDerivesIDsStampsTimeAndFlagsGaps(t *testing.T) {
 	}
 	if !strings.Contains(r.events[1].Error, "missing required log fields") {
 		t.Fatalf("incomplete event not flagged: %+v", r.events[1])
+	}
+}
+
+// Custody logger whose sink always fails.
+type failingLogger struct{ calls int }
+
+func (f *failingLogger) Write(LogEvent) error {
+	f.calls++
+	return errors.New("sink closed")
+}
+
+// A custody write failure is reported, not discarded, and does not disturb the caller.
+func TestEmitReportsWriteFailure(t *testing.T) {
+	var buf bytes.Buffer
+	prev := logs.Configured()
+	cfg := prev
+	cfg.Writer, cfg.Level, cfg.Bypass = &buf, logs.ErrorLevel, true
+	logs.Configure(cfg)
+	defer logs.Configure(prev)
+
+	f := &failingLogger{}
+	restore := SetLogger(f)
+	defer restore()
+	Emit(LogEvent{Component: "mirage", Peer: "ghost.a", Direction: DirectionOutbound, MessageID: 1, MessageType: 2, IntentID: "i1", CommandID: "c1", Status: StatusDispatched})
+	if f.calls != 1 {
+		t.Fatalf("expected one write attempt, got %d", f.calls)
+	}
+	if out := buf.String(); !strings.Contains(out, "custody write failed") || !strings.Contains(out, "sink closed") {
+		t.Fatalf("expected reported write failure, got %q", out)
 	}
 }

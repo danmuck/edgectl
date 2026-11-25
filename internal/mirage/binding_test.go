@@ -209,3 +209,59 @@ func TestServiceClosesSessionOnIdentityBindingMismatch(t *testing.T) {
 		t.Fatalf("serve exit err: %v", err)
 	}
 }
+
+// Executor that reports success for whatever command it is handed.
+type succeedingExecutor struct{}
+
+func (succeedingExecutor) ExecuteCommand(_ context.Context, cmd session.Command) (session.Event, error) {
+	return session.Event{
+		EventID: "evt." + cmd.CommandID, CommandID: cmd.CommandID, IntentID: cmd.IntentID,
+		GhostID: cmd.GhostID, SeedID: cmd.SeedSelector, Outcome: OutcomeSuccess,
+		TimestampMS: uint64(time.Now().UnixMilli()),
+	}, nil
+}
+
+// A session peer bound to the right ghost must not complete a planned command Mirage never sent
+// (protocol.toml: an event is feedback for a delegated command).
+func TestEventForPlannedButUndispatchedCommandIsRejected(t *testing.T) {
+	testlog.Start(t)
+	srv, event := newIdempotencyServer(t)
+	// Resubmitting replaces the plan, so the command is planned but not dispatched.
+	snap, _ := srv.SnapshotIntent("intent.idem.1")
+	if err := srv.SubmitIssue(snap.Desired.Issue); err != nil {
+		t.Fatalf("resubmit: %v", err)
+	}
+
+	ingest := srv.IngestEvent("ghost.alpha", event)
+	if !ingest.Rejected || ingest.Matched {
+		t.Fatalf("expected rejection, got %+v", ingest)
+	}
+	if ingest.Ack.AckStatus != session.AckStatusRejected || ingest.Ack.AckCode != schema.ErrCodeTransportFailure {
+		t.Fatalf("unexpected reject ack: %+v", ingest.Ack)
+	}
+	assertNothingObserved(t, srv)
+	if got := eventCount(t, srv, "ghost.alpha"); got != 0 {
+		t.Fatalf("rejected event counted for session ghost: %d", got)
+	}
+	snap, _ = srv.SnapshotIntent("intent.idem.1")
+	if snap.PendingCount != 1 {
+		t.Fatalf("pending = %d, want the command still pending", snap.PendingCount)
+	}
+	if _, _, _, err := srv.ObserveEvent("ghost.alpha", event); !errors.Is(err, ErrCommandNotDispatched) {
+		t.Fatalf("expected ErrCommandNotDispatched, got %v", err)
+	}
+
+	// Once Mirage really dispatches, the command completes and the rejected event left no stored ack.
+	if err := srv.RegisterExecutor("ghost.alpha", succeedingExecutor{}); err != nil {
+		t.Fatalf("register executor: %v", err)
+	}
+	report, err := srv.ReconcileIntent(context.Background(), "intent.idem.1")
+	if err != nil || report.CompletionState != CompletionSatisfied {
+		t.Fatalf("reconcile after rejection: report=%+v err=%v", report, err)
+	}
+	// The same event redelivered over the session is now a duplicate of dispatched work.
+	late := srv.IngestEvent("ghost.alpha", event)
+	if late.Rejected || !late.Duplicate {
+		t.Fatalf("session event after dispatch should be an accepted duplicate: %+v", late)
+	}
+}

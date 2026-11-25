@@ -30,12 +30,19 @@
 // Admin authorization (admin_security.toml [authorization.mirage_admin]):
 // - default deny; operators only; actor fields bound to the caller principal
 //
-// - every request writes an admin.audit line (principal, role, action, decision, error_code)
+// - submit_issue for an existing intent_id is refused unless the caller is the actor that submitted it
+//
+// - admin request lines are size-capped and idle connections dropped (adminauth.ReadRequestLine)
+//
+// - every request writes an admin.audit line (principal, role, action, decision, error_code), at any log level
 //
 // Identity binding (transport_security.toml [identity_binding], errors.toml):
 // - session events must match the bound ghost_id, both declared and as planned for the command_id
 //
-// - mismatches get a rejected event.ack (code 1000), are not observed, and close the session
+// - a session event for a planned command Mirage has not dispatched is not accepted as its result
+//
+// - mismatches and undispatched-command events get a rejected event.ack (code 1000), are not
+// observed, and close the session
 //
 // Dependency governance (docs/progress/mvp_p8.md Slice F, mvp_p9_dependency_approval_flow.mmd):
 // - internal/depcatalog is the single Mirage-owned source of install paths and methods

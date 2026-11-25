@@ -268,8 +268,12 @@ func (s *Service) handleAdminConn(conn net.Conn) {
 
 	reader := bufio.NewReader(conn)
 	for {
-		line, err := reader.ReadBytes('\n')
+		// Bounded line and idle deadline; an oversize line is answered once and the connection closed.
+		line, err := adminauth.ReadRequestLine(conn, reader, adminauth.DefaultRequestLimits())
 		if err != nil {
+			if errors.Is(err, adminauth.ErrRequestTooLarge) {
+				_ = writeControlResponse(conn, controlResponse{Error: err.Error(), ErrorCode: schema.ErrCodeFramingOversize})
+			}
 			if err != io.EOF {
 				logs.Warnf("ghost.admin read err=%v", err)
 			}

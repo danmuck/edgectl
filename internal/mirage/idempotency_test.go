@@ -31,6 +31,9 @@ func newIdempotencyServer(t *testing.T) (*Server, session.Event) {
 	}); err != nil {
 		t.Fatalf("submit issue: %v", err)
 	}
+	// These tests model an event for a command Mirage already sent; undispatched commands are
+	// covered in binding_test.go.
+	srv.loop.markDispatched("cmd.intent.idem.1.1")
 	event := session.Event{
 		EventID:     "evt.cmd.intent.idem.1.1",
 		CommandID:   "cmd.intent.idem.1.1",

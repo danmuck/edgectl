@@ -2,6 +2,7 @@ package mirage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -240,6 +241,8 @@ func TestOrchestratorIngestObservedEventByCommandID(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("submit issue: %v", err)
 	}
+	// Observation applies to a command Mirage already sent.
+	loop.markDispatched("cmd.intent.observe.1.1")
 
 	event := session.Event{
 		EventID:     "evt.cmd.intent.observe.1.1",
@@ -835,5 +838,38 @@ func TestOrchestratorE2EMultiSeedStoreAndIndex(t *testing.T) {
 	}
 	if len(finalSnap.Observed.Events) != 3 {
 		t.Fatalf("expected 3 observed events, got %d", len(finalSnap.Observed.Events))
+	}
+}
+
+// admin_security.toml [authorization] actor_source: an intent may be replaced by the actor that
+// submitted it, and by no one else; a refused re-submit leaves desired and observed state intact.
+func TestSubmitIssueRejectsReplacementByAnotherActor(t *testing.T) {
+	loop := NewOrchestrator()
+	issue := func(actor, objective string) IssueEnv {
+		return IssueEnv{
+			IntentID:    "intent.owned",
+			Actor:       actor,
+			TargetScope: "ghost:ghost.alpha",
+			Objective:   objective,
+			Stages: []IssueStage{{ID: "stage.1", Commands: []IssueCommand{
+				{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status"},
+			}}},
+		}
+	}
+	if err := loop.SubmitIssue(issue("edgectl://operator/ops", "first")); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if err := loop.SubmitIssue(issue("edgectl://operator/lead", "hijack")); !errors.Is(err, ErrIntentActorMismatch) {
+		t.Fatalf("expected ErrIntentActorMismatch, got %v", err)
+	}
+	snap, ok := loop.SnapshotIntent("intent.owned")
+	if !ok || snap.Desired.Issue.Actor != "edgectl://operator/ops" || snap.Desired.Issue.Objective != "first" {
+		t.Fatalf("intent changed by refused re-submit: %+v", snap.Desired.Issue)
+	}
+	if err := loop.SubmitIssue(issue("edgectl://operator/ops", "second")); err != nil {
+		t.Fatalf("same-actor re-submit: %v", err)
+	}
+	if code := adminErrorCode(ErrIntentActorMismatch); code != 1000 {
+		t.Fatalf("expected error_code 1000, got %d", code)
 	}
 }

@@ -124,6 +124,9 @@ func DecodeEventFrame(f frame.Frame) (Event, error) {
 		}
 		event.TimestampMS = ts
 	}
+	if err := event.Validate(); err != nil {
+		return Event{}, decodedInvalid(schema.MsgEvent, err)
+	}
 	return event, nil
 }
 
@@ -167,6 +170,9 @@ func DecodeEventAckFrame(f frame.Frame) (EventAck, error) {
 			return EventAck{}, err
 		}
 		ack.AckCode = v
+	}
+	if err := ack.Validate(); err != nil {
+		return EventAck{}, decodedInvalid(schema.MsgEventAck, err)
 	}
 	return ack, nil
 }
