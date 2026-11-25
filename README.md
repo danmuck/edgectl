@@ -64,13 +64,22 @@ Prerequisites: Go `1.25.6` or newer (see `go.mod`). Run everything from the repo
 ```bash
 make test    # interactive test picker; `make test-override` runs every package
 make lab     # start a local Mirage and Ghost and open the lab menu
+make serve   # start the same stack as a dev server: no menu, live output
 ```
 
-`make lab` is the way to try the system by hand. It builds Mirage from this checkout, creates
-throwaway certificates, starts a Mirage and a Ghost on loopback with mutual TLS, and opens a menu
-that shows what is running and lets you add Ghosts, run seed commands and see their output, and
-review recent activity. Everything it creates lives in `local/lab/` (gitignored) and stops when you
-exit. It never touches `certs/`.
+`make lab` is the way to try the system by hand. It builds Mirage from this checkout, creates lab
+certificates, starts a Mirage and a Ghost on loopback with mutual TLS, and opens a menu that shows
+what is running and lets you add Ghosts, run seed commands and see their output, and review recent
+activity. Everything it creates lives in `local/lab/` (gitignored) and stops when you exit. It
+never touches `certs/`.
+
+`make serve` starts the same stack without the menu and streams Mirage's log to the terminal, for
+driving it from a front end over `api/v1`. Set `EDGECTL_LOG_LEVEL=debug` for more detail.
+
+Both keep `local/lab/certs/` and `local/lab/mirage.toml` between starts. Certificates are replaced
+when one is missing, invalid, or within a day of expiry (they last 30 days); the config is rewritten
+only when it is missing or incomplete, so its ports stay put and your edits survive. Delete
+`local/lab/` to start clean.
 
 The lab also serves the HTTP `api/v1` for a web front end
 (`docs/architecture/definitions/api_v1.toml`) on `https://127.0.0.1:7021/api/v1`. It needs a client

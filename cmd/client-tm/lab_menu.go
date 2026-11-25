@@ -28,10 +28,13 @@ type seedCatalogReader interface {
 
 // Entry point for -mode lab: bring the lab up, run the menu, and always stop the lab on the way out.
 func runLabMode(dir string) error {
-	fmt.Println("Starting the EdgeCTL lab (throwaway certificates, loopback only)...")
-	lab, err := prepareLab(dir)
+	fmt.Println("Starting the EdgeCTL lab (loopback only)...")
+	lab, err := ensureLab(dir)
 	if err != nil {
 		return err
+	}
+	for _, note := range lab.notes {
+		fmt.Println("  " + note)
 	}
 	fmt.Println("  building miragectl from this checkout")
 	if err := lab.build(); err != nil {

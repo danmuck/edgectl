@@ -24,15 +24,22 @@ var (
 func main() {
 	var mode string
 	var labDir string
-	flag.StringVar(&mode, "mode", "mirage", "client mode: mirage (default), ghost (headless operations), or lab (start a local stack)")
-	flag.StringVar(&labDir, "lab-dir", labDefaultDir, "lab mode: directory for the throwaway stack's files")
+	flag.StringVar(&mode, "mode", "mirage", "client mode: mirage (default), ghost (headless operations), lab (start a local stack with a menu), or serve (start a local stack and stream its output)")
+	flag.StringVar(&labDir, "lab-dir", labDefaultDir, "lab and serve modes: directory for the local stack's files")
 	flag.Parse()
 
 	logging.ConfigureRuntime()
-	// Lab mode owns its own Mirage process and configs (docs/progress/lab_mode.md).
-	if normalizeClientMode(mode) == "lab" {
+	// Lab and serve modes own their Mirage process and configs (docs/progress/lab_mode.md).
+	switch normalizeClientMode(mode) {
+	case "lab":
 		if err := runLabMode(labDir); err != nil {
 			logs.Errf("client-tm lab: %v", err)
+			os.Exit(1)
+		}
+		return
+	case "serve":
+		if err := runServeMode(labDir); err != nil {
+			logs.Errf("client-tm serve: %v", err)
 			os.Exit(1)
 		}
 		return

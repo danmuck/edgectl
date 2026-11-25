@@ -12,8 +12,12 @@
 
 - `mirage` mode (default, primary): `go run ./cmd/client-tm -mode mirage`
 - `ghost` mode (headless-ghost operations): `go run ./cmd/client-tm -mode ghost`
-- `lab` mode (`make lab`): starts a throwaway local Mirage and Ghost with mutual TLS under `local/lab/`
+- `lab` mode (`make lab`): starts a local Mirage and Ghost with mutual TLS under `local/lab/`
   and opens the lab menu. It does not read or rewrite `a.ghost.toml` / `a.mirage.toml`.
+- `serve` mode (`make serve`): the same stack with no menu; Mirage's output streams to the terminal
+  and the stack is driven over `api/v1`.
+- Both keep the certificates and `mirage.toml` in `local/lab/` between starts and replace them only
+  when missing, invalid or (certificates) within a day of expiry.
 
 ## Lab Menu
 

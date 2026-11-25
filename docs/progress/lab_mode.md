@@ -85,3 +85,62 @@ Building the lab exposed four existing defects, all fixed:
   now left empty.
 
 Not covered: the Dependencies and deploy menus were not exercised through the lab.
+
+## Persistent bootstrap and serve mode (2026-11-25)
+
+Status: plan approved by the user in thread; implemented 2026-11-25, uncommitted.
+
+### Why
+
+With `api/v1` in place the user drives the lab from tracker_suite and wants to watch Mirage's
+output live instead of using the menu. They also asked that the lab stop replacing its
+certificates on every start: check what is there, bootstrap only what is missing or incomplete,
+and keep it between sessions, for both the menu and the dev server.
+
+This supersedes two statements above: certificates are no longer "regenerated every start", and a
+free port is no longer chosen on every start (see below).
+
+### What changed
+
+- `client-tm -mode serve` (`make serve`): same bootstrap and build as lab mode, then `miragectl`
+  runs with its output on the terminal until Ctrl-C. No menu. Its own lines use smplog like the
+  runtime's. SIGINT, SIGTERM and SIGHUP stop Mirage; a stale Mirage is stopped at the next start.
+- `ensureLab` replaces `prepareLab` for both modes.
+  - Certificates are kept when the root loads and matches its key, `certs/ca.crt` is the same
+    root, and each fixed identity (`mirage.lab`, `ghost.local`, `ops`, `lead`) has a 0600 key
+    pair that chains to the root, carries its principal, and is valid for at least 24 more hours.
+    Otherwise the whole PKI is replaced, as before.
+  - `mirage.toml` is kept when it names the lab identities, four loopback addresses and this lab
+    directory's certificate files. Other keys are left alone, so edits survive. Otherwise it is
+    rewritten with the default ports (or free ones).
+  - Client target files are rewritten on every start from the addresses in use.
+
+- [x] Certificate reuse check (`labCertsValid`) with tests.
+- [x] Config reuse check (`loadMirageConfig`) with tests.
+- [x] `serve` mode, `make serve`, README notes.
+- [x] Lab menu uses the same bootstrap.
+
+### Decisions made by the builder (review these)
+
+- **A kept config with a busy port is an error, not a silent move.** The start fails naming the
+  address and the file. A front end is configured against fixed addresses, and rewriting the file
+  would discard the user's edits. A first start still falls back to a free port.
+- **Any certificate problem replaces the whole PKI**, including child Ghost certificates from the
+  old root. Children are not checked on start; they are reissued when a Ghost is added.
+- **The lab root key now stays on disk** (`local/lab/certs/root/ca.key`, 0600, gitignored) for up
+  to 30 days instead of one session. Its certificates are valid for `localhost`/`127.0.0.1` only.
+- Serve mode also writes `mirage.log` (user request, 2026-11-25): the same lines as the terminal
+  with color codes removed, replaced on each start as in lab mode. Serve mode's own startup lines
+  are not in it.
+- Ghosts added through `spawn-local` do not survive a restart; only certificates and config persist.
+
+### Verified
+
+`go test ./...` passes. Against the real stack: serve start with kept certificates and config
+(same certificate serial across two starts), `api/v1` status and ghosts over mutual TLS with the
+audit lines appearing in the stream, Ctrl-C and SIGTERM leaving no Mirage behind, refusal when
+7021 was held by another process, new PKI after removing one certificate or one key, and lab mode
+through its overview and exit.
+
+Not covered: expiry was tested with a shifted clock in unit tests, not by waiting; the lab menu's
+"Add a Ghost" was not re-run against a kept root (covered by a unit test that issues from it).
