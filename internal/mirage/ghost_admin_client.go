@@ -27,12 +27,15 @@ const (
 	listSeedsAction       = "list_seeds"
 	listSeedCatalogAction = "list_seed_catalog"
 	bindMirageAction      = "bind_mirage"
+	// Ghost read of one execution record, used for the api/v1 execution read.
+	executionByCommandIDAction = "execution_by_command_id"
 )
 
 type ghostControlRequest struct {
 	Action       string            `json:"action"`
 	Spawn        SpawnGhostRequest `json:"spawn,omitempty"`
 	CommandFrame []byte            `json:"command_frame,omitempty"`
+	CommandID    string            `json:"command_id,omitempty"`
 	MirageID     string            `json:"mirage_id,omitempty"`
 	SessionPort  string            `json:"session_port,omitempty"`
 	Install      *ghostInstallPlan `json:"install,omitempty"`
@@ -258,6 +261,50 @@ func (c *GhostControlClient) Status(ctx context.Context) (ghostLifecycleStatus, 
 		out.GhostID = strings.TrimSpace(out.GhostIDLegacy)
 	}
 	return out, nil
+}
+
+// GhostExecution is the Ghost-held record of one command execution, including its seed.result
+// output (api_v1.toml [shapes.execution]).
+type GhostExecution struct {
+	CommandID    string
+	ExecutionID  string
+	IntentID     string
+	GhostID      string
+	SeedSelector string
+	Operation    string
+	Args         map[string]string
+	Phase        string
+	Outcome      string
+	CompletedAt  time.Time
+	SeedResult   GhostSeedResult
+}
+
+// GhostSeedResult is the seed.result part of a Ghost execution record.
+type GhostSeedResult struct {
+	SeedID   string
+	Status   string
+	Stdout   []byte
+	Stderr   []byte
+	ExitCode uint32
+}
+
+// Wire shape of Ghost's execution_by_command_id reply; Ghost encodes its execution state with
+// untagged Go field names, which these field names match.
+type ghostExecutionResponse struct {
+	Found     bool           `json:"found"`
+	Execution GhostExecution `json:"execution"`
+}
+
+// ExecutionByCommandID reads one execution record from the ghost admin endpoint
+// (admin_security.toml [authorization.ghost_admin] execution_by_command_id). found is false when
+// the Ghost holds no record for commandID.
+func (c *GhostControlClient) ExecutionByCommandID(ctx context.Context, commandID string) (GhostExecution, bool, error) {
+	var out ghostExecutionResponse
+	req := ghostControlRequest{Action: executionByCommandIDAction, CommandID: strings.TrimSpace(commandID)}
+	if err := c.call(ctx, req, &out); err != nil {
+		return GhostExecution{}, false, err
+	}
+	return out.Execution, out.Found, nil
 }
 
 // ListSeeds reads available seed metadata from the ghost admin endpoint.

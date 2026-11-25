@@ -38,6 +38,19 @@
 //
 // - every request writes an admin.audit line (principal, role, action, decision, error_code), at any log level
 //
+// Northbound api/v1 (api_v1.toml):
+// - HTTP JSON on its own listener (ServiceConfig.APIv1ListenAddr; empty disables it), under the same
+// transport rules as the admin endpoint (adminauth.Listen)
+//
+// - each endpoint builds an admin request and runs the admin authorization, dispatch and audit, so
+// behavior cannot drift from the admin action it maps to; only the encoding differs
+//
+// - responses use the contract envelope and snake_case shapes (api_v1_shapes.go); admin wire shapes
+// are unchanged
+//
+// - GET /api/v1/executions/{command_id}: Mirage reads the execution record from the owning Ghost
+// (execution_by_command_id) so a client never calls a Ghost
+//
 // Identity binding (transport_security.toml [identity_binding], errors.toml):
 // - session events must match the bound ghost_id, both declared and as planned for the command_id
 //
@@ -97,6 +110,10 @@
 // - docs/architecture/definitions/transport_security.toml
 //
 // - docs/architecture/definitions/admin_security.toml
+//
+// - docs/architecture/definitions/api_v1.toml
+//
+// - docs/architecture/models/api_v1_boundary.mmd
 //
 // - docs/architecture/definitions/errors.toml
 //

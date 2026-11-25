@@ -88,6 +88,32 @@ admin_listen_addr = "127.0.0.1:7020"
 	}
 }
 
+// api/v1 is off unless api_v1_addr is set (api_v1.toml [transport] listener).
+func TestLoadServiceConfigAPIv1Addr(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte("id = \"mirage.alpha\"\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := loadServiceConfig(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.APIv1ListenAddr != "" {
+		t.Fatalf("api/v1 must default to disabled, got %q", cfg.APIv1ListenAddr)
+	}
+	if err := os.WriteFile(path, []byte("api_v1_addr = \" 127.0.0.1:7002 \"\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err = loadServiceConfig(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.APIv1ListenAddr != "127.0.0.1:7002" {
+		t.Fatalf("api_v1_addr = %q", cfg.APIv1ListenAddr)
+	}
+}
+
 func TestLoadServiceConfigBuildlogAllowsSeedFS(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")

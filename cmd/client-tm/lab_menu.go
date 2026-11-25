@@ -153,6 +153,9 @@ func (a *App) labOverview(target MirageTarget) error {
 		}
 		fmt.Printf("    %-24s %-16s %-14s %s\n", g.GhostID, g.AdminAddr, state, strings.Join(seedIDs(g.SeedCatalog), " "))
 	}
+	fmt.Printf("  Web API  https://%s/api/v1 (mutual TLS)\n", l.apiV1Addr)
+	fmt.Printf("    client cert %s  key %s  CA %s\n",
+		l.display("certs", labOperator+".crt"), l.display("certs", labOperator+".key"), l.display("certs", "ca.crt"))
 	fmt.Println("  Files")
 	fmt.Printf("    log           %s\n", l.display("mirage.log"))
 	fmt.Printf("    certificates  %s (second operator: %s)\n", l.display("certs"), labSecondOperator)

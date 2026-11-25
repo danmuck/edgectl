@@ -28,6 +28,8 @@ The canonical high-level MVP phase schedule is [`mvp_buildplan.md`](mvp_buildpla
 - [x] Claude policy hardening and repo-wide validation pass: [`claude_code_policy_validation.md`](claude_code_policy_validation.md)
 - [ ] Admin boundary security (mTLS identities, authorization, signed approvals; contract approved): [`admin_security.md`](admin_security.md)
 
+- [ ] Northbound api/v1 for a web GUI (contract approved; Mirage side implemented, GUI module pending): [`api_v1_gui.md`](api_v1_gui.md)
+
 ## Intended Read Order
 
 1. [`mvp_buildplan.md`](mvp_buildplan.md)

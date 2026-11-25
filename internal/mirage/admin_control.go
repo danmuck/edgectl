@@ -80,6 +80,8 @@ type adminControlResponse struct {
 	// Canonical wire code (errors.toml 1000-1500) when OK is false.
 	ErrorCode uint32 `json:"error_code,omitempty"`
 	Data      any    `json:"data,omitempty"`
+	// Underlying failure, kept off the wire so the api/v1 boundary can choose an HTTP status.
+	cause error
 }
 
 // Admin request is malformed, missing a required parameter, or names no known action.
@@ -110,6 +112,8 @@ func adminErrorCode(err error) uint32 {
 		errors.Is(err, ErrInvalidDeployManifest),
 		errors.Is(err, ErrInvalidIssue),
 		errors.Is(err, ErrIntentNotFound),
+		errors.Is(err, errAPIv1NotFound),
+		errors.Is(err, errAPIv1UnknownID),
 		errors.Is(err, ErrTargetGhostRequired):
 		return schema.ErrCodeSemanticValidation
 	}
@@ -118,7 +122,7 @@ func adminErrorCode(err error) uint32 {
 
 // Failure response carrying the error text and its canonical wire code.
 func failAdmin(err error) adminControlResponse {
-	return adminControlResponse{OK: false, Error: err.Error(), ErrorCode: adminErrorCode(err)}
+	return adminControlResponse{OK: false, Error: err.Error(), ErrorCode: adminErrorCode(err), cause: err}
 }
 
 // Failure response for a malformed or incomplete admin request.

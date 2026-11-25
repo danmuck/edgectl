@@ -30,8 +30,10 @@ const (
 	labSecondOperator = "lead"
 
 	labMirageAdminPort = 7020
-	labSessionPort     = 9000
-	labGhostAdminPort  = 7010
+	// Northbound api/v1 (api_v1.toml), for a web front end acting as the lab operator.
+	labAPIv1Port      = 7021
+	labSessionPort    = 9000
+	labGhostAdminPort = 7010
 	// Admin ports for Ghosts added from the menu start here.
 	labChildPortBase = 7030
 )
@@ -48,6 +50,7 @@ type labEnv struct {
 	ca         *pki.Authority
 
 	mirageAdminAddr string
+	apiV1Addr       string
 	sessionAddr     string
 	ghostAdminAddr  string
 
@@ -90,6 +93,7 @@ func prepareLab(dir string) (*labEnv, error) {
 		return nil, fmt.Errorf("lab certificates: %w", err)
 	}
 	l.mirageAdminAddr = loopbackAddr(freeLoopbackPort(labMirageAdminPort))
+	l.apiV1Addr = loopbackAddr(freeLoopbackPort(labAPIv1Port))
 	l.sessionAddr = loopbackAddr(freeLoopbackPort(labSessionPort))
 	l.ghostAdminAddr = loopbackAddr(freeLoopbackPort(labGhostAdminPort))
 	if err := os.WriteFile(l.mirageConfig(), []byte(l.mirageConfigTOML()), 0o644); err != nil {
@@ -170,6 +174,7 @@ func (l *labEnv) mirageConfigTOML() string {
 		"id = " + q(labMirageID),
 		"addr = " + q(l.sessionAddr),
 		"admin_listen_addr = " + q(l.mirageAdminAddr),
+		"api_v1_addr = " + q(l.apiV1Addr),
 		"admin_tls_cert_file = " + cert(labMirageID+".crt"),
 		"admin_tls_key_file = " + cert(labMirageID+".key"),
 		"admin_tls_ca_file = " + cert("ca.crt"),

@@ -15,9 +15,11 @@ import (
 
 // miragectl config.toml key mapping to Mirage runtime settings.
 type fileConfig struct {
-	Addr                string `toml:"addr"`
-	ID                  string `toml:"id"`
-	AdminListenAddr     string `toml:"admin_listen_addr"`
+	Addr            string `toml:"addr"`
+	ID              string `toml:"id"`
+	AdminListenAddr string `toml:"admin_listen_addr"`
+	// Northbound api/v1 listener (api_v1.toml [transport]); empty or absent disables it.
+	APIv1Addr           string `toml:"api_v1_addr"`
 	RequireIdentityBind bool   `toml:"require_identity_binding"`
 	RootGhostAdminAddr  string `toml:"root_ghost_admin_addr"`
 	LocalGhostID        string `toml:"local_ghost_id"`
@@ -100,6 +102,9 @@ func loadServiceConfig(path string) (mirage.ServiceConfig, error) {
 	}
 	if meta.IsDefined("admin_listen_addr") {
 		cfg.AdminListenAddr = strings.TrimSpace(raw.AdminListenAddr)
+	}
+	if meta.IsDefined("api_v1_addr") {
+		cfg.APIv1ListenAddr = strings.TrimSpace(raw.APIv1Addr)
 	}
 	if meta.IsDefined("require_identity_binding") {
 		cfg.RequireIdentityBinding = raw.RequireIdentityBind

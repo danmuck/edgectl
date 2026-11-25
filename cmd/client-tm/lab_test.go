@@ -18,7 +18,7 @@ func newTestLab(t *testing.T) *labEnv {
 	dir := t.TempDir()
 	l := &labEnv{
 		dir: dir, displayDir: "local/lab",
-		mirageAdminAddr: "127.0.0.1:7020", sessionAddr: "127.0.0.1:9000", ghostAdminAddr: "127.0.0.1:7010",
+		mirageAdminAddr: "127.0.0.1:7020", apiV1Addr: "127.0.0.1:7021", sessionAddr: "127.0.0.1:9000", ghostAdminAddr: "127.0.0.1:7010",
 	}
 	if err := l.resetCerts(); err != nil {
 		t.Fatalf("reset certs: %v", err)
@@ -80,7 +80,7 @@ func TestLabMirageConfig(t *testing.T) {
 			t.Errorf("%s points at a missing file: %v", key, err)
 		}
 	}
-	for _, key := range []string{"addr", "admin_listen_addr", "local_ghost_admin_addr"} {
+	for _, key := range []string{"addr", "admin_listen_addr", "api_v1_addr", "local_ghost_admin_addr"} {
 		addr, _ := cfg[key].(string)
 		if !adminauth.IsLoopbackAddr(addr) {
 			t.Errorf("%s = %q: lab addresses must be loopback", key, addr)

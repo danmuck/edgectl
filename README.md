@@ -72,6 +72,16 @@ that shows what is running and lets you add Ghosts, run seed commands and see th
 review recent activity. Everything it creates lives in `local/lab/` (gitignored) and stops when you
 exit. It never touches `certs/`.
 
+The lab also serves the HTTP `api/v1` for a web front end
+(`docs/architecture/definitions/api_v1.toml`) on `https://127.0.0.1:7021/api/v1`. It needs a client
+certificate; the lab overview prints the paths of the `ops` operator certificate, key and CA:
+
+```bash
+curl --cert local/lab/certs/ops.crt --key local/lab/certs/ops.key --cacert local/lab/certs/ca.crt https://127.0.0.1:7021/api/v1/status
+```
+
+Outside the lab, set `api_v1_addr` in the Mirage config; it is off by default.
+
 Other entry points:
 
 - `make run-mirage`, `make run-ghost`, `make run-client` run the runtimes from your own

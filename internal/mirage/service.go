@@ -36,6 +36,8 @@ type ServiceConfig struct {
 	RequireIdentityBinding bool
 	MirageID               string
 	AdminListenAddr        string
+	// Northbound api/v1 listen address (api_v1.toml [transport]); empty disables api/v1.
+	APIv1ListenAddr        string
 	LocalGhostID           string
 	LocalGhostAdminAddr    string
 	PreloadGhostAdmins     []GhostAdminTarget
@@ -234,6 +236,13 @@ func (s *Service) Run() error {
 			controlErr <- s.serveAdminControl(ctx, strings.TrimSpace(s.cfg.AdminListenAddr))
 		}()
 	}
+	// Separate listener from the admin endpoint; a nil result means it stopped with ctx.
+	apiErr := make(chan error, 1)
+	if strings.TrimSpace(s.cfg.APIv1ListenAddr) != "" {
+		go func() {
+			apiErr <- s.serveAPIv1(ctx, strings.TrimSpace(s.cfg.APIv1ListenAddr))
+		}()
+	}
 	ghostHeartbeatErr := make(chan error, 1)
 	go func() {
 		ghostHeartbeatErr <- s.runGhostHeartbeatLoop(ctx)
@@ -246,6 +255,11 @@ func (s *Service) Run() error {
 	case err := <-serveErr:
 		return err
 	case err := <-controlErr:
+		if err != nil {
+			return err
+		}
+		return <-serveErr
+	case err := <-apiErr:
 		if err != nil {
 			return err
 		}
