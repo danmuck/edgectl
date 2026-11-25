@@ -41,9 +41,11 @@ lab:
 	@go run ./cmd/client-tm -mode lab
 
 # Same stack as `lab` without the menu: Mirage's output streams to the terminal, like a dev server.
-# Drive it over api/v1.
+# Drive it over api/v1. The client is built and run directly because `go run` exits 1 on Ctrl-C.
 serve:
-	@go run ./cmd/client-tm -mode serve
+	@mkdir -p local/lab/bin
+	@go build -o local/lab/bin/client-tm ./cmd/client-tm
+	@local/lab/bin/client-tm -mode serve
 
 run-mirage:
 	clear; go run ./cmd/miragectl

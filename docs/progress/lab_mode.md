@@ -144,3 +144,13 @@ through its overview and exit.
 
 Not covered: expiry was tested with a shifted clock in unit tests, not by waiting; the lab menu's
 "Add a Ghost" was not re-run against a kept root (covered by a unit test that issues from it).
+
+### Follow-up (2026-11-25, uncommitted)
+
+- `make serve` printed `make: *** [serve] Error 1` after Ctrl-C. The client exits 0; `go run`
+  itself exits 1 when interrupted. The target now builds `local/lab/bin/client-tm` and runs it
+  directly. Verified by sending SIGINT to the whole process group: no error line, no Mirage left.
+- Open question from the user: the `ghost.admin client connected/disconnected ... active_clients=0`
+  lines are logged at WARN but are normal. Mirage opens one short connection per Ghost admin
+  request and closes it, so the count returns to 0 after each. The same pattern is in
+  `mirage.admin` and `mirage.session`. Whether to lower these to INFO is undecided.
