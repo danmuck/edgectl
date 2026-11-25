@@ -45,3 +45,5 @@ cmd/miragectl/mac.*
 certs/
 
 .claude/
+
+.DS_Store
