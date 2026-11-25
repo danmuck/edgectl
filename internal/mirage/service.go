@@ -141,6 +141,9 @@ type Service struct {
 
 	adminGhostMu    sync.RWMutex
 	adminGhostAddrs map[string]string
+	// When each admin route was first bound; the registration time for a Ghost Mirage knows only
+	// by its admin route (api_v1.toml [shapes.ghost] registered_at_ms).
+	adminGhostBoundAt map[string]time.Time
 	// Test seam for dependency plan dispatch; nil uses the Ghost admin client.
 	dependencyInstaller dependencyInstaller
 	// Test seam for the ssh/scp runner used by remote deploys; nil uses the system binaries.
@@ -159,10 +162,11 @@ func NewServiceWithConfig(cfg ServiceConfig) *Service {
 	}
 	cfg.Session = cfg.Session.WithDefaults()
 	svc := &Service{
-		cfg:             cfg,
-		server:          NewServer(),
-		conns:           make(map[net.Conn]struct{}),
-		adminGhostAddrs: make(map[string]string),
+		cfg:               cfg,
+		server:            NewServer(),
+		conns:             make(map[net.Conn]struct{}),
+		adminGhostAddrs:   make(map[string]string),
+		adminGhostBoundAt: make(map[string]time.Time),
 	}
 	svc.server.SetCommandRetryPolicy(CommandRetryPolicy{
 		MaxAttempts: cfg.CommandMaxAttempts,
@@ -324,7 +328,6 @@ func (s *Service) SnapshotConnectedGhosts() []RegisteredGhost {
 		byID[g.GhostID] = g
 	}
 	bound := s.snapshotGhostAdmins()
-	now := time.Now()
 	for ghostID, adminAddr := range bound {
 		client := s.newGhostControlClient(ghostID, adminAddr)
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -335,12 +338,11 @@ func (s *Service) SnapshotConnectedGhosts() []RegisteredGhost {
 			s.bindGhostAdmin(resolvedID, adminAddr)
 			ghostID = resolvedID
 		}
+		// A Ghost with no session registration is registered as of its first admin bind, so the
+		// time is the same on every read.
 		entry, ok := byID[ghostID]
 		if !ok {
-			entry = RegisteredGhost{
-				GhostID:      ghostID,
-				RegisteredAt: now,
-			}
+			entry = RegisteredGhost{GhostID: ghostID}
 		}
 		entry.RemoteAddr = adminAddr
 		entry.Connected = err == nil
@@ -353,7 +355,7 @@ func (s *Service) SnapshotConnectedGhosts() []RegisteredGhost {
 			}
 		}
 		if entry.RegisteredAt.IsZero() {
-			entry.RegisteredAt = now
+			entry.RegisteredAt = s.ghostAdminBoundAt(ghostID)
 		}
 		byID[ghostID] = entry
 	}
@@ -473,6 +475,17 @@ func (s *Service) bindGhostAdmin(ghostID string, adminAddr string) {
 	s.adminGhostMu.Lock()
 	defer s.adminGhostMu.Unlock()
 	s.adminGhostAddrs[id] = addr
+	// Rebinding keeps the first bind time; a new address is not a new registration.
+	if _, ok := s.adminGhostBoundAt[id]; !ok {
+		s.adminGhostBoundAt[id] = time.Now()
+	}
+}
+
+// First bind time of ghostID's admin route; zero when it has none.
+func (s *Service) ghostAdminBoundAt(ghostID string) time.Time {
+	s.adminGhostMu.RLock()
+	defer s.adminGhostMu.RUnlock()
+	return s.adminGhostBoundAt[strings.TrimSpace(ghostID)]
 }
 
 func cloneSeedCapabilities(in []SeedCapability) []SeedCapability {

@@ -324,3 +324,42 @@ func TestAPIv1Activity(t *testing.T) {
 	}
 	wantAPIv1Status(t, "bad kind", apiV1Do(t, ops, http.MethodGet, base+"/activity?kind=secrets", ""), 400, 1300)
 }
+
+// A Ghost known only by its admin route keeps one registration time across reads and rebinds
+// (api_v1.toml [shapes.ghost] registered_at_ms).
+func TestAPIv1GhostRegisteredAtIsStable(t *testing.T) {
+	testlog.Start(t)
+	p := tlstest.NewPKI(t)
+	svc := tlsMirageService(t, p)
+	svc.bindGhostAdmin("ghost.alpha", "127.0.0.1:1")
+	base := serveAPIv1ForTest(t, svc) + "/api/v1/ghosts"
+	ops := apiV1ClientFor(t, p, identity.RoleOperator, "ops")
+	read := func() int64 {
+		t.Helper()
+		got := apiV1Do(t, ops, http.MethodGet, base, "")
+		var out struct {
+			Ghosts []struct {
+				GhostID        string `json:"ghost_id"`
+				RegisteredAtMS int64  `json:"registered_at_ms"`
+			} `json:"ghosts"`
+		}
+		if err := json.Unmarshal(got.Data, &out); !got.OK || err != nil || len(out.Ghosts) != 1 || out.Ghosts[0].GhostID != "ghost.alpha" {
+			t.Fatalf("ghosts: %d %s %v", got.Status, got.Data, err)
+		}
+		return out.Ghosts[0].RegisteredAtMS
+	}
+
+	first := read()
+	if first <= 0 {
+		t.Fatalf("registered_at_ms = %d, want the bind time", first)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if again := read(); again != first {
+		t.Fatalf("registered_at_ms changed between reads: %d then %d", first, again)
+	}
+	svc.bindGhostAdmin("ghost.alpha", "127.0.0.1:2")
+	time.Sleep(20 * time.Millisecond)
+	if rebound := read(); rebound != first {
+		t.Fatalf("registered_at_ms changed on rebind: %d then %d", first, rebound)
+	}
+}

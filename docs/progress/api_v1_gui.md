@@ -202,8 +202,7 @@ target). Both are covered by tests with stubs only.
   a remote Ghost's own records.
 - `sign-approval` signs the payload it is given; the proposal checks happen in `approval`. A caller
   that skips `approval` gains nothing: Mirage and every Ghost verify the approval again.
-- Still open from v1: Mirage sets `registered_at_ms` anew on every Ghost read (reported by the GUI
-  session, not yet examined), and `docs/index.md` does not link the contract.
+- Still open from v1: `docs/index.md` does not link the contract.
 
 ### Make targets (2026-11-25)
 
@@ -211,3 +210,13 @@ target). Both are covered by tests with stubs only.
 - `make gui-env` builds it and prints the ten settings a front end's server needs for the lab, as
   `KEY=value` lines with absolute paths, reading the api/v1 address from `local/lab/mirage.toml`.
   It prints only; it does not write into another repository. `LAB_DIR=` selects another lab.
+
+### `registered_at_ms` fix (2026-11-25)
+
+- [x] A Ghost's `registered_at_ms` no longer changes on every read.
+
+Cause: a Ghost that Mirage knows only by its admin route (the lab's local Ghost and anything
+spawned or attached) has no session registration, so `SnapshotConnectedGhosts` filled in the time of
+the read. Mirage now records when each admin route is first bound and reports that. A rebind to a
+new address keeps the original time. A Ghost with a session registration is unchanged. The time is
+held in memory, so it resets when Mirage restarts.
