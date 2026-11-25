@@ -55,6 +55,39 @@ const (
 	FieldAckCode   uint16 = 701
 )
 
+// Every field ID defined in tlv.toml [field_sections]; anything else is an unknown field.
+var knownFields = map[uint16]struct{}{
+	FieldIntentID: {}, FieldCommandID: {}, FieldExecutionID: {}, FieldEventID: {}, FieldPhase: {}, FieldTimestampMS: {},
+	FieldActor: {}, FieldTargetScope: {}, FieldObjective: {},
+	FieldGhostID: {}, FieldSeedSelector: {}, FieldOperation: {}, FieldArgs: {},
+	FieldSeedID: {}, FieldSeedExecuteOperation: {}, FieldSeedExecuteArgs: {},
+	FieldStatus: {}, FieldStdout: {}, FieldStderr: {}, FieldExitCode: {},
+	FieldOutcome: {},
+	FieldSummary: {}, FieldCompletionState: {},
+	FieldAckStatus: {}, FieldAckCode: {},
+}
+
+// KnownField reports whether id is defined by the TLV contract.
+func KnownField(id uint16) bool {
+	_, ok := knownFields[id]
+	return ok
+}
+
+// UnknownFields returns defensive copies of fields whose IDs the contract does not define.
+// Per tlv.toml decoder rules they are preserved for re-encode and never mapped to semantics.
+func UnknownFields(fields []tlv.Field) []tlv.Field {
+	var out []tlv.Field
+	for _, f := range fields {
+		if KnownField(f.ID) {
+			continue
+		}
+		value := make([]byte, len(f.Value))
+		copy(value, f.Value)
+		out = append(out, tlv.Field{ID: f.ID, Type: f.Type, Value: value})
+	}
+	return out
+}
+
 // Schema required field id/type pair for a message type.
 type Requirement struct {
 	ID   uint16

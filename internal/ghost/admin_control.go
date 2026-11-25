@@ -4,14 +4,16 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"strings"
+	"time"
 
+	"github.com/danmuck/edgectl/internal/adminauth"
+	"github.com/danmuck/edgectl/internal/approval"
 	"github.com/danmuck/edgectl/internal/protocol/frame"
 	"github.com/danmuck/edgectl/internal/protocol/schema"
 	"github.com/danmuck/edgectl/internal/protocol/session"
@@ -20,9 +22,45 @@ import (
 )
 
 var (
-	ErrAdminFrameAuthRequired = errors.New("ghost.admin: command_frame auth required")
-	ErrAdminFrameAuthInvalid  = errors.New("ghost.admin: command_frame auth invalid")
+	// Admin request is malformed or names no known action (semantic_validation_failure).
+	errAdminInvalidRequest = errors.New("ghost.admin: invalid request")
 )
+
+// Canonical wire code for an admin failure (errors.toml [wire_codes]). Ghost command-boundary
+// errors are classified here; protocol errors (framing, TLV, schema) fall back to session.ErrorCode.
+func adminErrorCode(err error) uint32 {
+	switch {
+	case errors.Is(err, adminauth.ErrAuthRequired), errors.Is(err, adminauth.ErrAuthorizationDenied):
+		return schema.ErrCodeTransportFailure
+	case errors.Is(err, errAdminInvalidRequest),
+		errors.Is(err, ErrInvalidCommandEnv),
+		errors.Is(err, ErrCommandTargetMismatch),
+		errors.Is(err, ErrDuplicateMessageID),
+		errors.Is(err, ErrDependencyPlanUnapproved),
+		errors.Is(err, ErrApprovalReplayed),
+		errors.Is(err, approval.ErrInvalidApproval),
+		errors.Is(err, approval.ErrApprovalExpired),
+		errors.Is(err, approval.ErrSeparationOfDuties),
+		errors.Is(err, approval.ErrStepsMismatch),
+		errors.Is(err, ErrDependencyNotCataloged),
+		errors.Is(err, seeds.ErrInstallInvalidSpec),
+		errors.Is(err, seeds.ErrInstallMethodNotAllowed),
+		errors.Is(err, seeds.ErrInstallTransferDirection),
+		errors.Is(err, seeds.ErrInstallSandboxViolation),
+		errors.Is(err, seeds.ErrInstallUnsupportedRepo):
+		return schema.ErrCodeSemanticValidation
+	case errors.Is(err, ErrNotRadiating),
+		errors.Is(err, ErrDuplicateCommandID),
+		errors.Is(err, ErrDependencyInstallDisabled):
+		return schema.ErrCodeRuntimeExecFailure
+	}
+	return session.ErrorCode(err)
+}
+
+// Failure response carrying the error text and its canonical wire code.
+func failControl(err error) controlResponse {
+	return controlResponse{OK: false, Error: err.Error(), ErrorCode: adminErrorCode(err)}
+}
 
 // AdminCommand is the external admin execution request payload.
 type AdminCommand struct {
@@ -31,6 +69,8 @@ type AdminCommand struct {
 	SeedSelector string            `json:"seed_selector"`
 	Operation    string            `json:"operation"`
 	Args         map[string]string `json:"args"`
+	// Admin client address for custody logging; never read from JSON.
+	Peer string `json:"-"`
 }
 
 // VerificationRecord captures command->event custody fields for client verification views.
@@ -48,7 +88,7 @@ type VerificationRecord struct {
 	Operation          string `json:"operation"`
 	Outcome            string `json:"outcome"`
 	SeedStatus         string `json:"seed_status"`
-	ExitCode           int32  `json:"exit_code"`
+	ExitCode           uint32 `json:"exit_code"`
 	TimestampMS        uint64 `json:"timestamp_ms"`
 	Status             string `json:"status"`
 }
@@ -62,13 +102,19 @@ type controlRequest struct {
 	Spawn        SpawnGhostRequest `json:"spawn,omitempty"`
 	MirageID     string            `json:"mirage_id,omitempty"`
 	SessionPort  string            `json:"session_port,omitempty"`
+	// Mirage-approved dependency install plan (install_dependencies).
+	Install InstallPlanRequest `json:"install,omitempty"`
+	// Binaries to check (dependency_status).
+	Binaries []string `json:"binaries,omitempty"`
 }
 
 // controlResponse is one admin action result envelope emitted by ghostctl.
 type controlResponse struct {
 	OK    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
-	Data  any    `json:"data,omitempty"`
+	// Canonical wire code (errors.toml 1000-1500) when OK is false.
+	ErrorCode uint32 `json:"error_code,omitempty"`
+	Data      any    `json:"data,omitempty"`
 }
 
 // ExecuteAdminCommand maps one external admin request into Ghost command execution.
@@ -95,6 +141,7 @@ func (s *Service) ExecuteAdminCommand(cmd AdminCommand) (ExecutionState, EventEn
 		SeedSelector: strings.TrimSpace(cmd.SeedSelector),
 		Operation:    strings.TrimSpace(cmd.Operation),
 		Args:         cloneArgs(cmd.Args),
+		Peer:         strings.TrimSpace(cmd.Peer),
 	}
 
 	event, err := s.server.HandleCommandAndExecute(env)
@@ -171,15 +218,21 @@ func cloneRecent[T any](in []T, limit int) []T {
 	return out
 }
 
-// serveAdminControl exposes a TCP JSON request/response endpoint for client-tm.
+// serveAdminControl exposes the admin JSON endpoint over mTLS (admin_security.toml [transport]);
+// plaintext is allowed only on loopback outside production.
 func (s *Service) serveAdminControl(ctx context.Context, addr string) error {
-	ln, err := net.Listen("tcp", strings.TrimSpace(addr))
+	ln, err := adminauth.Listen(addr, s.cfg.AdminTLS, s.selfPrincipal(), s.productionMode())
 	if err != nil {
 		return err
 	}
-	defer ln.Close()
 	logs.Infof("ghost.admin listening addr=%q", ln.Addr().String())
+	return s.ServeAdmin(ctx, ln)
+}
 
+// ServeAdmin answers admin requests on ln until ctx ends or ln fails; ln comes from adminauth.Listen
+// so transport rules (mTLS, loopback-only plaintext) are already enforced. Closes ln on return.
+func (s *Service) ServeAdmin(ctx context.Context, ln net.Listener) error {
+	defer ln.Close()
 	go func() {
 		<-ctx.Done()
 		_ = ln.Close()
@@ -201,6 +254,11 @@ func (s *Service) serveAdminControl(ctx context.Context, addr string) error {
 func (s *Service) handleAdminConn(conn net.Conn) {
 	defer conn.Close()
 	remote := conn.RemoteAddr().String()
+	peer, err := adminauth.PeerFromConn(conn, 5*time.Second)
+	if err != nil {
+		logs.Warnf("ghost.admin handshake rejected component=ghost peer=%q error_code=%d err=%q", remote, schema.ErrCodeTransportFailure, err.Error())
+		return
+	}
 	active := s.adminClientCount.Add(1)
 	logs.Warnf("ghost.admin client connected remote=%q active_clients=%d", remote, active)
 	defer func() {
@@ -210,8 +268,12 @@ func (s *Service) handleAdminConn(conn net.Conn) {
 
 	reader := bufio.NewReader(conn)
 	for {
-		line, err := reader.ReadBytes('\n')
+		// Bounded line and idle deadline; an oversize line is answered once and the connection closed.
+		line, err := adminauth.ReadRequestLine(conn, reader, adminauth.DefaultRequestLimits())
 		if err != nil {
+			if errors.Is(err, adminauth.ErrRequestTooLarge) {
+				_ = writeControlResponse(conn, controlResponse{Error: err.Error(), ErrorCode: schema.ErrCodeFramingOversize})
+			}
 			if err != io.EOF {
 				logs.Warnf("ghost.admin read err=%v", err)
 			}
@@ -219,10 +281,19 @@ func (s *Service) handleAdminConn(conn net.Conn) {
 		}
 		var req controlRequest
 		if err := json.Unmarshal(line, &req); err != nil {
-			_ = writeControlResponse(conn, controlResponse{OK: false, Error: err.Error()})
+			_ = writeControlResponse(conn, failControl(fmt.Errorf("%w: %v", errAdminInvalidRequest, err)))
 			continue
 		}
-		resp := s.handleControlRequest(req, remote)
+		// Default-deny authorization by principal before dispatch (admin_security.toml [authorization]).
+		var resp controlResponse
+		decision := adminauth.DecisionAllow
+		if err := s.adminPolicy().Authorize(peer, req.Action); err != nil {
+			resp = failControl(err)
+			decision = adminauth.DecisionDeny
+		} else {
+			resp = s.handleControlRequest(req, remote)
+		}
+		adminauth.Audit("ghost", peer, req.Action, decision, resp.ErrorCode)
 		if err := writeControlResponse(conn, resp); err != nil {
 			logs.Warnf("ghost.admin write err=%v", err)
 			return
@@ -241,9 +312,14 @@ func (s *Service) handleControlRequest(req controlRequest, remoteAddr string) co
 	case "list_seed_catalog":
 		return controlResponse{OK: true, Data: s.SeedCatalog()}
 	case "execute_envelope":
-		out, err := s.executeAdminCommandEnvelope(req.CommandFrame)
+		out, err := s.executeAdminCommandEnvelope(req.CommandFrame, remoteAddr)
 		if err != nil {
-			return controlResponse{OK: false, Error: err.Error()}
+			resp := failControl(err)
+			logs.Warnf(
+				"ghost.admin execute_envelope failed component=ghost peer=%q direction=inbound message_type=%d error_code=%d err=%q",
+				remoteAddr, schema.MsgCommand, resp.ErrorCode, err.Error(),
+			)
+			return resp
 		}
 		return controlResponse{OK: true, Data: out}
 	case "execution_by_command_id":
@@ -262,14 +338,22 @@ func (s *Service) handleControlRequest(req controlRequest, remoteAddr string) co
 	case "spawn_ghost":
 		out, err := s.SpawnManagedGhost(req.Spawn)
 		if err != nil {
-			return controlResponse{OK: false, Error: err.Error()}
+			return failControl(err)
 		}
 		return controlResponse{OK: true, Data: out}
 	case "bind_mirage":
 		s.BindMirageAdminRoute(req.MirageID, remoteAddr, req.SessionPort)
 		return controlResponse{OK: true}
+	case "install_dependencies":
+		out, err := s.ExecuteInstallPlan(req.Install)
+		if err != nil {
+			return failControl(err)
+		}
+		return controlResponse{OK: true, Data: out}
+	case "dependency_status":
+		return controlResponse{OK: true, Data: s.DependencyStatus(req.Binaries)}
 	default:
-		return controlResponse{OK: false, Error: fmt.Sprintf("unknown action: %s", req.Action)}
+		return failControl(fmt.Errorf("%w: unknown action: %s", errAdminInvalidRequest, req.Action))
 	}
 }
 
@@ -278,20 +362,18 @@ type executeEnvelopeResponse struct {
 }
 
 // executeAdminCommandEnvelope decodes one command frame and returns one terminal event frame.
-func (s *Service) executeAdminCommandEnvelope(commandFrame []byte) (executeEnvelopeResponse, error) {
+func (s *Service) executeAdminCommandEnvelope(commandFrame []byte, peer string) (executeEnvelopeResponse, error) {
 	if len(commandFrame) == 0 {
-		return executeEnvelopeResponse{}, fmt.Errorf("ghost.admin: missing command_frame")
+		return executeEnvelopeResponse{}, fmt.Errorf("%w: missing command_frame", errAdminInvalidRequest)
 	}
 	fr, err := frame.ReadFrame(bytes.NewReader(commandFrame), frame.DefaultLimits())
 	if err != nil {
 		return executeEnvelopeResponse{}, err
 	}
-	validator := s.adminFrameAuthValidator
-	if validator == nil {
-		validator = defaultCommandFrameAuthValidator(strings.TrimSpace(s.cfg.AdminFrameAuthToken))
-	}
-	if err := validator(fr.Auth); err != nil {
-		return executeEnvelopeResponse{}, err
+	// Admin callers are authenticated by mTLS (admin_security.toml replaces the shared frame token);
+	// a frame carrying an auth block is from a stale client and is refused rather than ignored.
+	if len(fr.Auth) > 0 || fr.Header.Flags&frame.FlagHasAuth != 0 {
+		return executeEnvelopeResponse{}, fmt.Errorf("%w: command_frame auth block is not accepted; admin callers authenticate with mTLS", errAdminInvalidRequest)
 	}
 	cmd, err := session.DecodeCommandFrame(fr)
 	if err != nil {
@@ -303,6 +385,7 @@ func (s *Service) executeAdminCommandEnvelope(commandFrame []byte) (executeEnvel
 		SeedSelector: strings.TrimSpace(cmd.SeedSelector),
 		Operation:    strings.TrimSpace(cmd.Operation),
 		Args:         cloneArgs(cmd.Args),
+		Peer:         peer,
 	})
 	if err != nil {
 		return executeEnvelopeResponse{}, err
@@ -320,23 +403,6 @@ func (s *Service) executeAdminCommandEnvelope(commandFrame []byte) (executeEnvel
 		return executeEnvelopeResponse{}, err
 	}
 	return executeEnvelopeResponse{EventFrame: eventFrame}, nil
-}
-
-func defaultCommandFrameAuthValidator(token string) CommandFrameAuthValidator {
-	expected := strings.TrimSpace(token)
-	if expected == "" {
-		return func(_ []byte) error { return nil }
-	}
-	expectedBytes := []byte(expected)
-	return func(auth []byte) error {
-		if len(auth) == 0 {
-			return ErrAdminFrameAuthRequired
-		}
-		if subtle.ConstantTimeCompare(auth, expectedBytes) != 1 {
-			return ErrAdminFrameAuthInvalid
-		}
-		return nil
-	}
 }
 
 func writeControlResponse(w io.Writer, resp controlResponse) error {

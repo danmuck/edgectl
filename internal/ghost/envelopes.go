@@ -46,7 +46,7 @@ type SeedResultEnv struct {
 	Status      string
 	Stdout      []byte
 	Stderr      []byte
-	ExitCode    int32
+	ExitCode    uint32
 }
 
 // Ghost seed.result validator for required envelope fields.

@@ -16,7 +16,7 @@ import (
 
 func (a *App) printMirageMenu() {
 	fmt.Println()
-	fmt.Println("Client TM (Mirage)")
+	fmt.Println("Client TM (Mirage Core Mode)")
 	fmt.Printf("  ghost config:  %s (targets=%d)\n", a.ghostCfgPath, len(a.ghostCfg.Targets))
 	fmt.Printf("  mirage config: %s (single control plane)\n", a.mirageCfgPath)
 	fmt.Printf("  clear screen after command: %v\n", a.clearScreen)
@@ -95,8 +95,9 @@ func (a *App) runMirageAdminConsole() error {
 		fmt.Println("  4) Reconcile intent")
 		fmt.Println("  5) Reports")
 		fmt.Println("  6) Ghost routing")
-		fmt.Println("  7) Back")
-		choice, err := a.promptInt("Choose", 1, 7, true, true)
+		fmt.Println("  7) Dependencies")
+		fmt.Println("  8) Back")
+		choice, err := a.promptInt("Choose", 1, 8, true, true)
 		if err != nil {
 			if errors.Is(err, ErrNavigateBack) {
 				return nil
@@ -130,6 +131,10 @@ func (a *App) runMirageAdminConsole() error {
 				logs.Errf("ghost routing console failed: %v", err)
 			}
 		case 7:
+			if err := a.runMirageDependencyConsole(target); err != nil {
+				logs.Errf("dependency console failed: %v", err)
+			}
+		case 8:
 			return nil
 		}
 	}
@@ -263,7 +268,7 @@ func (a *App) openLocalGhostConsole() error {
 		localGhostID,
 		localGhostAddr,
 	)
-	admin := NewRemoteGhostAdmin(localGhostAddr)
+	admin := a.newGhostAdmin(localGhostAddr, localGhostID)
 	defer admin.Close()
 	return a.runGhostAdminConsoleForTarget(GhostTarget{
 		Name:  localGhostID,
@@ -292,13 +297,17 @@ func (a *App) submitMirageIssue(target MirageTarget) error {
 		return err
 	}
 
-	actorRaw, err := a.promptLine("actor (blank = user:client-tm)")
-	if err != nil {
-		return err
-	}
-	actor := strings.TrimSpace(actorRaw)
-	if actor == "" {
-		actor = "user:client-tm"
+	// With an operator certificate the actor is the certificate principal and Mirage refuses any
+	// other value (admin_security.toml [authorization] actor_source), so it is left empty.
+	actor := ""
+	if _, mtls := a.operatorCredentials(true); !mtls {
+		actorRaw, err := a.promptLine("actor (blank = user:client-tm)")
+		if err != nil {
+			return err
+		}
+		if actor = strings.TrimSpace(actorRaw); actor == "" {
+			actor = "user:client-tm"
+		}
 	}
 	intentID := fmt.Sprintf("intent.clienttm.%s.%d", normalizeSuffix(template.ID), time.Now().UnixMilli())
 	if template.Orchestrator == nil {
@@ -616,63 +625,24 @@ func (a *App) spawnMirageLocalGhost(target MirageTarget) error {
 	return nil
 }
 
+// Deploys a Ghost that Mirage has a ghost_manifests entry for. Host, user, port, pinned host key,
+// and credentials come only from that manifest (admin_security.toml deploy.targets).
 func (a *App) deployRemoteGhost(target MirageTarget) error {
 	fmt.Println()
-	fmt.Println("Deploy Remote Ghost (SSH)")
-	ghostID, err := a.promptLine("ghost_id (e.g. ghost.remote-1)")
+	fmt.Println("Deploy Remote Ghost (SSH, configured manifests only)")
+	ghostID, err := a.promptLine("ghost_id (must match a ghost_manifests entry on Mirage)")
 	if err != nil {
 		return err
 	}
-	host, err := a.promptLine("host (IP or hostname)")
+	if strings.TrimSpace(ghostID) == "" {
+		return errors.New("ghost_id required")
+	}
+	force, err := a.promptConfirm("Stop an existing ghostctl on the target first")
 	if err != nil {
 		return err
 	}
-	userRaw, err := a.promptLine("ssh user (blank = deploy)")
-	if err != nil {
-		return err
-	}
-	user := strings.TrimSpace(userRaw)
-	if user == "" {
-		user = "deploy"
-	}
-	keyRaw, err := a.promptLine("ssh key path (blank = ~/.ssh/id_ed25519)")
-	if err != nil {
-		return err
-	}
-	seedsRaw, err := a.promptLine("seeds (comma-separated, blank = seed.flow,seed.host)")
-	if err != nil {
-		return err
-	}
-	seeds := []string{"seed.flow", "seed.host"}
-	if v := strings.TrimSpace(seedsRaw); v != "" {
-		seeds = strings.Split(v, ",")
-		for i := range seeds {
-			seeds[i] = strings.TrimSpace(seeds[i])
-		}
-	}
-	mirageAddrRaw, err := a.promptLine("mirage address for ghost to connect back (blank = skip)")
-	if err != nil {
-		return err
-	}
-	binaryRaw, err := a.promptLine("local ghostctl binary path (blank = local/bin/ghostctl)")
-	if err != nil {
-		return err
-	}
-
-	req := mirage.DeployGhostRequest{
-		Manifest: mirage.GhostManifest{
-			GhostID:       strings.TrimSpace(ghostID),
-			Host:          strings.TrimSpace(host),
-			User:          user,
-			SSHKeyFile:    strings.TrimSpace(keyRaw),
-			Seeds:         seeds,
-			AdminListen:   "0.0.0.0:7010",
-			MiragePolicy:  "auto",
-			MirageAddress: strings.TrimSpace(mirageAddrRaw),
-		},
-		BinaryPath: strings.TrimSpace(binaryRaw),
-	}
-	fmt.Printf("Deploying ghost_id=%s to %s@%s...\n", req.Manifest.GhostID, user, req.Manifest.Host)
+	req := mirage.DeployGhostRequest{GhostID: strings.TrimSpace(ghostID), ForceRedeploy: force}
+	fmt.Printf("Deploying ghost_id=%s...\n", req.GhostID)
 	result, err := target.Admin.DeployGhost(req)
 	if err != nil {
 		return err

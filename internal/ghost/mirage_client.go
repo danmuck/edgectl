@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/identity"
 	"github.com/danmuck/edgectl/internal/protocol/frame"
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/seeds"
@@ -27,7 +28,9 @@ var (
 	ErrRegistrationRejected  = errors.New("ghost: registration rejected")
 	ErrAckRejected           = errors.New("ghost: event.ack rejected")
 	ErrAckTimeout            = errors.New("ghost: event.ack timeout")
-	ErrSessionClosed         = errors.New("ghost: mirage session closed")
+	// TLS in production requires a pinned Mirage principal (admin_security.toml ghost_pinning).
+	ErrMiragePrincipalRequired = errors.New("ghost: mirage_principal required with tls in production")
+	ErrSessionClosed           = errors.New("ghost: mirage session closed")
 )
 
 // Ghost outbound Mirage session-client configuration.
@@ -38,6 +41,8 @@ type MirageClientConfig struct {
 	SeedList           []session.SeedInfo
 	Session            session.Config
 	MaxConnectAttempts int
+	// Pinned Mirage principal (edgectl://mirage/<id>); required with TLS in production.
+	MiragePrincipal string
 }
 
 // Ghost Mirage session-client defaults aligned with session defaults.
@@ -67,6 +72,17 @@ func NewMirageClient(cfg MirageClientConfig) (*MirageClient, error) {
 		cfg.PeerIdentity = cfg.GhostID
 	}
 	cfg.Session = cfg.Session.WithDefaults()
+	if pin := strings.TrimSpace(cfg.MiragePrincipal); pin != "" {
+		p, err := identity.ParsePrincipal(pin)
+		if err != nil {
+			return nil, err
+		}
+		if p.Role != identity.RoleMirage {
+			return nil, fmt.Errorf("%w: mirage_principal %s is not a mirage principal", identity.ErrWrongRole, p)
+		}
+	} else if cfg.Session.TLS.Enabled && session.NormalizeSecurityMode(cfg.Session.SecurityMode) == session.SecurityModeProduction {
+		return nil, ErrMiragePrincipalRequired
+	}
 	client := &MirageClient{
 		cfg: cfg,
 		rng: rand.New(rand.NewSource(time.Now().UnixNano())),
@@ -185,11 +201,31 @@ func (c *MirageClient) clientTLSConfig() (*tls.Config, error) {
 	}
 
 	if c.cfg.Session.TLS.Mutual {
-		cert, err := tls.LoadX509KeyPair(c.cfg.Session.TLS.CertFile, c.cfg.Session.TLS.KeyFile)
+		cert, err := identity.LoadKeyPair(c.cfg.Session.TLS.CertFile, c.cfg.Session.TLS.KeyFile)
 		if err != nil {
 			return nil, err
 		}
 		cfg.Certificates = []tls.Certificate{cert}
+	}
+	denied, err := identity.ParseDeniedSerials(c.cfg.Session.TLS.DeniedSerials)
+	if err != nil {
+		return nil, err
+	}
+	cfg.VerifyPeerCertificate = denied.VerifyPeerNotDenied
+	// Beyond chain and hostname, the server must be a Mirage principal, and the pinned one when set.
+	pin := strings.TrimSpace(c.cfg.MiragePrincipal)
+	cfg.VerifyConnection = func(cs tls.ConnectionState) error {
+		if len(cs.PeerCertificates) == 0 {
+			return fmt.Errorf("%w: mirage presented no certificate", identity.ErrNoPrincipal)
+		}
+		p, err := identity.RequireRole(cs.PeerCertificates[0], identity.RoleMirage)
+		if err != nil {
+			return err
+		}
+		if pin != "" && p.String() != pin {
+			return fmt.Errorf("%w: mirage is %s, pinned %s", identity.ErrWrongRole, p, pin)
+		}
+		return nil
 	}
 	return cfg, nil
 }
@@ -265,13 +301,29 @@ func (s *MirageSession) Close() error {
 	return s.conn.Close()
 }
 
+// Records delivery_failed in the outbox with a structured terminal-state log line.
+func (s *MirageSession) markDeliveryFailed(event session.Event, attempts int, reason error) {
+	_, _ = s.outbox.MarkDeliveryFailed(event.EventID, reason.Error())
+	logs.Warnf(
+		"ghost.event.delivery component=ghost state=%s event_id=%q command_id=%q ghost_id=%q attempts=%d err=%q",
+		session.DeliveryFailed, event.EventID, event.CommandID, event.GhostID, attempts, reason.Error(),
+	)
+}
+
 // Ghost outbox snapshot for pending event retry diagnostics/tests.
 func (s *MirageSession) OutboxSnapshot() []session.PendingEvent {
 	return s.outbox.List()
 }
 
-// Ghost event delivery with retry-until-accepted-ack or timeout.
+// Ghost event delivery with retry-until-accepted-ack or timeout; emits custody lines for the
+// event and its event.ack (observability.toml).
 func (s *MirageSession) SendEventWithAck(ctx context.Context, event EventEnv) (session.EventAck, error) {
+	return s.sendEventWithAck(ctx, event, true)
+}
+
+// Delivery loop shared by custody events and session heartbeat probes; probes (custody=false)
+// skip per-delivery custody lines but still record delivery_failed.
+func (s *MirageSession) sendEventWithAck(ctx context.Context, event EventEnv, custody bool) (session.EventAck, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.conn == nil {
@@ -304,21 +356,36 @@ func (s *MirageSession) SendEventWithAck(ctx context.Context, event EventEnv) (s
 		AckDeadlineAt: deadline,
 	})
 
+	peer := s.conn.RemoteAddr().String()
 	attempt := 0
 	for {
 		attempt++
 		_, _ = s.outbox.MarkAttempt(wireEvent.EventID, time.Now(), "")
-		ack, err := s.sendEventOnce(ctx, wireEvent)
+		ack, messageID, err := s.sendEventOnce(ctx, wireEvent)
 		if err == nil {
-			s.outbox.Remove(wireEvent.EventID)
+			if custody {
+				emitEventOut(messageID, peer, event, "", wireEvent.Outcome, "")
+				emitEventAckIn(messageID, peer, ack, wireEvent.IntentID)
+			}
 			if ack.AckStatus == session.AckStatusAccepted {
+				s.outbox.Remove(wireEvent.EventID)
 				return ack, nil
 			}
-			return ack, fmt.Errorf("%w: status=%s code=%d", ErrAckRejected, ack.AckStatus, ack.AckCode)
+			// reliability.toml ack_reject_behavior: mark delivery failed; no implicit replay.
+			rejectErr := fmt.Errorf("%w: status=%s code=%d", ErrAckRejected, ack.AckStatus, ack.AckCode)
+			s.markDeliveryFailed(wireEvent, attempt, rejectErr)
+			return ack, rejectErr
 		}
 
 		_, _ = s.outbox.MarkAttempt(wireEvent.EventID, time.Now(), err.Error())
 		if time.Now().After(deadline) {
+			// ack_timeout_ms exceeded without an accepted ack: terminal delivery failure.
+			timeoutErr := fmt.Errorf("%w: last_err=%v", ErrAckTimeout, err)
+			s.markDeliveryFailed(wireEvent, attempt, timeoutErr)
+			if custody {
+				emitEventOut(messageID, peer, event, "", string(session.DeliveryFailed),
+					fmt.Sprintf("attempts=%d: %v", attempt, timeoutErr))
+			}
 			return session.EventAck{}, ErrAckTimeout
 		}
 		delay := session.NextBackoffDelay(s.cfg.Backoff, attempt, s.rng)
@@ -333,34 +400,36 @@ func (s *MirageSession) SendEventWithAck(ctx context.Context, event EventEnv) (s
 }
 
 // Ghost one-shot event send/read for a matching event.ack.
-func (s *MirageSession) sendEventOnce(ctx context.Context, event session.Event) (session.EventAck, error) {
-	payload, err := session.EncodeEventFrame(s.nextMessageID.Add(1), event)
+// One send/ack round trip; returns the event frame message_id used for this attempt.
+func (s *MirageSession) sendEventOnce(ctx context.Context, event session.Event) (session.EventAck, uint64, error) {
+	messageID := s.nextMessageID.Add(1)
+	payload, err := session.EncodeEventFrame(messageID, event)
 	if err != nil {
-		return session.EventAck{}, err
+		return session.EventAck{}, messageID, err
 	}
 
 	if err := s.setWriteDeadline(ctx); err != nil {
-		return session.EventAck{}, err
+		return session.EventAck{}, messageID, err
 	}
 	if _, err := s.conn.Write(payload); err != nil {
-		return session.EventAck{}, err
+		return session.EventAck{}, messageID, err
 	}
 
 	if err := s.setReadDeadline(ctx); err != nil {
-		return session.EventAck{}, err
+		return session.EventAck{}, messageID, err
 	}
 	fr, err := session.ReadFrame(s.reader, frame.DefaultLimits())
 	if err != nil {
-		return session.EventAck{}, err
+		return session.EventAck{}, messageID, err
 	}
 	ack, err := session.DecodeEventAckFrame(fr)
 	if err != nil {
-		return session.EventAck{}, err
+		return session.EventAck{}, messageID, err
 	}
 	if ack.EventID != event.EventID {
-		return session.EventAck{}, fmt.Errorf("ghost: ack/event mismatch event_id=%q ack_event_id=%q", event.EventID, ack.EventID)
+		return session.EventAck{}, messageID, fmt.Errorf("ghost: ack/event mismatch event_id=%q ack_event_id=%q", event.EventID, ack.EventID)
 	}
-	return ack, nil
+	return ack, messageID, nil
 }
 
 // Ghost write-deadline helper using stricter timeout vs context deadline.

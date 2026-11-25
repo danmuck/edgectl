@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/protocol/schema"
 	"github.com/danmuck/edgectl/internal/protocol/session"
 )
 
@@ -42,17 +43,18 @@ type LifecycleStatus struct {
 	ReportCount      int
 }
 
-// SpawnGhostRequest defines one local Ghost provisioning request from Mirage.
+// SpawnGhostRequest defines one local Ghost provisioning request from Mirage. Field names on the
+// wire match Ghost's spawn_ghost request (ghost.SpawnGhostRequest), which Mirage forwards it to.
 type SpawnGhostRequest struct {
-	TargetName string
-	AdminAddr  string
+	TargetName string `json:"target_name"`
+	AdminAddr  string `json:"admin_addr"`
 }
 
-// SpawnGhostResult describes one provisioned local Ghost endpoint.
+// SpawnGhostResult describes one provisioned local Ghost endpoint; wire names match Ghost's reply.
 type SpawnGhostResult struct {
-	TargetName string
-	GhostID    string
-	AdminAddr  string
+	TargetName string `json:"target_name"`
+	GhostID    string `json:"ghost_id"`
+	AdminAddr  string `json:"admin_addr"`
 }
 
 // GhostSpawner provisions local Ghost nodes via a boundary adapter.
@@ -73,7 +75,16 @@ type Server struct {
 
 	reports []session.Report
 	spawner GhostSpawner
+
+	// Dependency install proposals, approvals, and audit trail (Slice F).
+	deps *DependencyLedger
+
+	// Clock for ack timestamps and duplicate-window expiry; replaceable in tests.
+	now func() time.Time
 }
+
+// Minimum retention for accepted event_id acks (reliability.toml idempotency.duplicate_window).
+const DuplicateWindow = 15 * time.Minute
 
 // NewServer constructs Mirage server state in boot phase.
 func NewServer() *Server {
@@ -82,7 +93,14 @@ func NewServer() *Server {
 		registry: make(map[string]*registeredGhostState),
 		loop:     NewOrchestrator(),
 		reports:  make([]session.Report, 0),
+		now:      time.Now,
+		deps:     NewDependencyLedger(),
 	}
+}
+
+// Dependencies returns the dependency proposal ledger.
+func (s *Server) Dependencies() *DependencyLedger {
+	return s.deps
 }
 
 // Appear sets immutable Mirage identity and transitions boot->appeared.
@@ -216,19 +234,21 @@ func (s *Server) AcceptEvent(ghostID string, event session.Event) session.EventA
 		}
 		s.registry[ghostID] = state
 	}
+	s.pruneExpiredAcksLocked(state)
 	if ack, ok := state.ackByEvent[event.EventID]; ok {
 		return ack
 	}
+	now := s.now()
 	ack := session.EventAck{
 		EventID:     event.EventID,
 		CommandID:   event.CommandID,
 		GhostID:     ghostID,
 		AckStatus:   session.AckStatusAccepted,
 		AckCode:     0,
-		TimestampMS: uint64(time.Now().UnixMilli()),
+		TimestampMS: uint64(now.UnixMilli()),
 	}
 	state.ackByEvent[event.EventID] = ack
-	state.meta.LastEventAt = time.Now()
+	state.meta.LastEventAt = now
 	state.meta.EventCount++
 	return ack
 }
@@ -236,6 +256,11 @@ func (s *Server) AcceptEvent(ghostID string, event session.Event) session.EventA
 // RegisterExecutor binds command execution for one ghost_id in the orchestration boundary.
 func (s *Server) RegisterExecutor(ghostID string, exec CommandExecutor) error {
 	return s.loop.RegisterExecutor(ghostID, exec)
+}
+
+// SetCommandRetryPolicy configures command dispatch retry bounds in the orchestration boundary.
+func (s *Server) SetCommandRetryPolicy(p CommandRetryPolicy) {
+	s.loop.SetCommandRetryPolicy(p)
 }
 
 // SubmitIssue ingests desired state into Mirage orchestration.
@@ -264,13 +289,119 @@ func (s *Server) ListIntentIDs() []string {
 }
 
 // ObserveEvent ingests a ghost event into orchestration observed state when command is known.
-func (s *Server) ObserveEvent(event session.Event) (session.Report, bool, error) {
-	report, matched, err := s.loop.IngestObservedEvent(event)
-	if err != nil || !matched {
-		return report, matched, err
+// The command must be planned for boundGhostID (ErrCommandGhostMismatch otherwise, no mutation)
+// and already dispatched by Mirage (ErrCommandNotDispatched otherwise, no mutation).
+// Duplicate observations return the latest report without appending to report history.
+func (s *Server) ObserveEvent(boundGhostID string, event session.Event) (session.Report, bool, bool, error) {
+	return s.observeEvent(boundGhostID, event, 0)
+}
+
+// observeEvent is ObserveEvent with the inbound frame message_id for custody logging.
+func (s *Server) observeEvent(boundGhostID string, event session.Event, messageID uint64) (session.Report, bool, bool, error) {
+	report, matched, duplicate, err := s.loop.ingestObservedEvent(boundGhostID, event, messageID)
+	if err != nil || !matched || duplicate {
+		return report, matched, duplicate, err
 	}
 	s.appendReport(report)
-	return report, matched, nil
+	return report, matched, false, nil
+}
+
+// EventIngest is the outcome of one session event delivery at the Mirage boundary.
+type EventIngest struct {
+	Ack session.EventAck
+	// Rejected is true when the event does not match the session's bound ghost_id or names a
+	// planned command that was never dispatched;
+	// nothing was observed or recorded and the session must be closed.
+	Rejected     bool
+	RejectReason string
+	// Duplicate is true when event_id was already accepted; nothing was re-observed.
+	Duplicate bool
+	Report    session.Report
+	Matched   bool
+	// ObserveErr reports an observe failure; the event is still acked per reliability.toml.
+	ObserveErr error
+}
+
+// IngestEvent applies identity binding, event_id dedupe, and observation, and returns the ack.
+// Binding (transport_security.toml identity_binding; errors.toml declared_peer_mismatch=1000):
+// the declared ghost_id is checked first; the command's planned ghost is checked atomically with
+// observation. An event for a planned command Mirage never dispatched is not feedback for a
+// delegated command (protocol.toml envelope flow) and is rejected the same way, so a session peer
+// cannot complete work that was never sent. Each is rejected with no observation and no stored ack. A previously
+// accepted event_id short-circuits to its stored ack with no state mutation; stored acks only
+// exist for events that already passed binding for this same session ghost.
+func (s *Server) IngestEvent(ghostID string, event session.Event) EventIngest {
+	return s.ingestEvent(ghostID, event, 0)
+}
+
+// ingestEvent is IngestEvent with the session frame message_id; the orchestrator logs a matched
+// event (and its report) in causal order, the session loop logs rejected/duplicate/error cases.
+func (s *Server) ingestEvent(ghostID string, event session.Event, messageID uint64) EventIngest {
+	bound := strings.TrimSpace(ghostID)
+	if declared := strings.TrimSpace(event.GhostID); declared != bound {
+		return s.rejectedIngest(bound, event,
+			fmt.Sprintf("event ghost_id=%q does not match session ghost_id=%q", declared, bound))
+	}
+	if ack, ok := s.acceptedAck(bound, event.EventID); ok {
+		return EventIngest{Ack: ack, Duplicate: true}
+	}
+	report, matched, duplicate, err := s.observeEvent(bound, event, messageID)
+	if errors.Is(err, ErrCommandGhostMismatch) || errors.Is(err, ErrCommandNotDispatched) {
+		return s.rejectedIngest(bound, event, err.Error())
+	}
+	return EventIngest{
+		Ack:        s.AcceptEvent(bound, event),
+		Duplicate:  duplicate,
+		Report:     report,
+		Matched:    matched,
+		ObserveErr: err,
+	}
+}
+
+// Rejected ingest result: ack_status=rejected, ack_code=1000, nothing stored.
+func (s *Server) rejectedIngest(ghostID string, event session.Event, reason string) EventIngest {
+	return EventIngest{
+		Ack: session.EventAck{
+			EventID:     event.EventID,
+			CommandID:   event.CommandID,
+			GhostID:     ghostID,
+			AckStatus:   session.AckStatusRejected,
+			AckCode:     schema.ErrCodeTransportFailure,
+			TimestampMS: uint64(s.now().UnixMilli()),
+		},
+		Rejected:     true,
+		RejectReason: reason,
+	}
+}
+
+// Stored ack for an event_id accepted inside the duplicate window.
+func (s *Server) acceptedAck(ghostID string, eventID string) (session.EventAck, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	state, ok := s.registry[ghostID]
+	if !ok {
+		return session.EventAck{}, false
+	}
+	ack, ok := state.ackByEvent[eventID]
+	if !ok || s.ackExpiredLocked(ack) {
+		return session.EventAck{}, false
+	}
+	return ack, true
+}
+
+// Acks older than DuplicateWindow are eligible for pruning.
+func (s *Server) ackExpiredLocked(ack session.EventAck) bool {
+	acceptedAt := time.UnixMilli(int64(ack.TimestampMS))
+	return s.now().Sub(acceptedAt) >= DuplicateWindow
+}
+
+// Drops expired acks for one ghost. Caller holds s.mu for write.
+func (s *Server) pruneExpiredAcksLocked(state *registeredGhostState) {
+	for eventID, ack := range state.ackByEvent {
+		if s.ackExpiredLocked(ack) {
+			delete(state.ackByEvent, eventID)
+		}
+	}
 }
 
 // RecentReports returns bounded report history for user-boundary emission.

@@ -1,0 +1,26 @@
+sequenceDiagram
+    participant FE as Frontend
+    participant API as MirageAPI
+    participant CAT as Catalog
+    participant AP as Approval
+    participant ORCH as Orchestrator
+    participant G as Ghost
+
+    FE->>API: POST /api/v1/dependencies/proposals
+    API->>CAT: validate seed and dependency entries
+    CAT-->>API: proposal created pending approval
+    API-->>FE: 202 proposal id
+
+    FE->>API: POST /api/v1/dependencies/proposals/{proposal_id}/approve
+    API->>AP: record manual approval
+    AP-->>API: approved
+    API-->>FE: 200 approved
+
+    FE->>API: POST /api/v1/dependencies/proposals/{proposal_id}/execute
+    API->>ORCH: execute approved install plan
+    ORCH->>G: install command with approved method
+    G-->>ORCH: install event and status
+    ORCH-->>API: execution result and audit state
+    API-->>FE: 200 execution report
+
+    Note over ORCH,G: Stream transfer is allowed only from Mirage to Ghost

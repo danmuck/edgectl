@@ -12,7 +12,7 @@ type SeedResult struct {
 	Status   string
 	Stdout   []byte
 	Stderr   []byte
-	ExitCode int32
+	ExitCode uint32
 }
 
 // OperationSpec defines one supported seed action.
@@ -41,6 +41,37 @@ type CommandTemplate struct {
 	Operation       string
 	Args            []CommandArgSpec
 	DefaultBlocking bool
+}
+
+// OKResult builds a success SeedResult with the given stdout text.
+func OKResult(stdout string) SeedResult {
+	return SeedResult{
+		Status:   "ok",
+		Stdout:   []byte(stdout),
+		ExitCode: 0,
+	}
+}
+
+// ErrorResult builds a failure SeedResult from a message string.
+func ErrorResult(msg string) SeedResult {
+	return SeedResult{
+		Status:   "error",
+		Stderr:   []byte(msg + "\n"),
+		ExitCode: 1,
+	}
+}
+
+// ErrorResultErr builds a failure SeedResult from an error value.
+func ErrorResultErr(err error) SeedResult {
+	msg := "error"
+	if err != nil {
+		msg = err.Error()
+	}
+	return SeedResult{
+		Status:   "error",
+		Stderr:   []byte(msg + "\n"),
+		ExitCode: 1,
+	}
 }
 
 // Seed is the seed execution boundary used by Ghost-local dispatch.

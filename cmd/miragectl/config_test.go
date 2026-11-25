@@ -3,7 +3,10 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/danmuck/edgectl/internal/mirage"
 )
 
 func TestLoadServiceConfigDefaultsAndOverrides(t *testing.T) {
@@ -85,6 +88,32 @@ admin_listen_addr = "127.0.0.1:7020"
 	}
 }
 
+// api/v1 is off unless api_v1_addr is set (api_v1.toml [transport] listener).
+func TestLoadServiceConfigAPIv1Addr(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte("id = \"mirage.alpha\"\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := loadServiceConfig(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.APIv1ListenAddr != "" {
+		t.Fatalf("api/v1 must default to disabled, got %q", cfg.APIv1ListenAddr)
+	}
+	if err := os.WriteFile(path, []byte("api_v1_addr = \" 127.0.0.1:7002 \"\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err = loadServiceConfig(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.APIv1ListenAddr != "127.0.0.1:7002" {
+		t.Fatalf("api_v1_addr = %q", cfg.APIv1ListenAddr)
+	}
+}
+
 func TestLoadServiceConfigBuildlogAllowsSeedFS(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
@@ -162,5 +191,164 @@ admin_addr = "127.0.0.1:7012"
 	_, err := loadServiceConfig(path)
 	if err == nil {
 		t.Fatalf("expected preload ghost validation error")
+	}
+}
+
+func TestLoadServiceConfigGhostManifestSeedInstallPolicy(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	content := `
+[[ghost_manifests]]
+ghost_id = "ghost.pi"
+host = "pi.local"
+seed_install_enabled = true
+seed_install_root = "local/seeds"
+seed_install_bin_root = "local/bin"
+seed_install_allow_internal_defaults = true
+seed_install_whitelist = ["seed.host", "seed.mongod", "seed.host"]
+config_template_path = "cmd/ghostctl/pi.tls.config.toml"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := loadServiceConfig(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if len(cfg.GhostManifests) != 1 {
+		t.Fatalf("unexpected ghost manifest count: %d", len(cfg.GhostManifests))
+	}
+	m := cfg.GhostManifests[0]
+	if !m.SeedInstallEnabled {
+		t.Fatalf("expected seed_install_enabled")
+	}
+	if m.SeedInstallRoot != "local/seeds" {
+		t.Fatalf("unexpected seed install root: %q", m.SeedInstallRoot)
+	}
+	if m.SeedInstallBinRoot != "local/bin" {
+		t.Fatalf("unexpected seed install bin root: %q", m.SeedInstallBinRoot)
+	}
+	if !m.SeedInstallAllowInternalDefaults {
+		t.Fatalf("expected seed_install_allow_internal_defaults")
+	}
+	if len(m.SeedInstallWhitelist) != 3 || m.SeedInstallWhitelist[0] != "seed.host" || m.SeedInstallWhitelist[1] != "seed.mongod" || m.SeedInstallWhitelist[2] != "seed.host" {
+		t.Fatalf("unexpected seed install whitelist: %+v", m.SeedInstallWhitelist)
+	}
+	if m.ConfigTemplatePath != "cmd/ghostctl/pi.tls.config.toml" {
+		t.Fatalf("unexpected config template path: %q", m.ConfigTemplatePath)
+	}
+}
+
+// Manifest install specs are rejected; installs come only from Mirage-approved proposals.
+func TestLoadServiceConfigRejectsManifestSeedInstallSpecs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := `
+[[ghost_manifests]]
+ghost_id = "ghost.pi"
+host = "pi.local"
+seed_install_enabled = true
+
+[[ghost_manifests.seed_install]]
+seed_id = "seed.docker"
+method = "brew"
+package = "docker"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if _, err := loadServiceConfig(path); err == nil || !strings.Contains(err.Error(), "no longer accepted") {
+		t.Fatalf("expected manifest seed_install rejection, got %v", err)
+	}
+}
+
+// command_max_attempts defaults to mirage.DefaultCommandMaxAttempts, accepts overrides, rejects < 1.
+func TestLoadServiceConfigCommandMaxAttempts(t *testing.T) {
+	write := func(t *testing.T, content string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "config.toml")
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write config: %v", err)
+		}
+		return path
+	}
+
+	cfg, err := loadServiceConfig(write(t, `id = "mirage.alpha"`))
+	if err != nil {
+		t.Fatalf("load default: %v", err)
+	}
+	if cfg.CommandMaxAttempts != mirage.DefaultCommandMaxAttempts {
+		t.Fatalf("default command_max_attempts = %d, want %d", cfg.CommandMaxAttempts, mirage.DefaultCommandMaxAttempts)
+	}
+
+	cfg, err = loadServiceConfig(write(t, "id = \"mirage.alpha\"\ncommand_max_attempts = 5\n"))
+	if err != nil {
+		t.Fatalf("load override: %v", err)
+	}
+	if cfg.CommandMaxAttempts != 5 {
+		t.Fatalf("override command_max_attempts = %d, want 5", cfg.CommandMaxAttempts)
+	}
+
+	if _, err := loadServiceConfig(write(t, "id = \"mirage.alpha\"\ncommand_max_attempts = 0\n")); err == nil {
+		t.Fatalf("expected error for command_max_attempts = 0")
+	}
+}
+
+// The removed shared token is refused with a migration message, not silently ignored.
+func TestLoadRuntimeConfigsRejectsGhostAdminFrameAuthToken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("ghost_admin_frame_auth_token = \"s3cret\"\nlocal_ghost_admin_addr = \"127.0.0.1:7010\"\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	_, _, err := loadRuntimeConfigs(path)
+	if err == nil || !strings.Contains(err.Error(), "ghost_admin_frame_auth_token was removed") {
+		t.Fatalf("expected removal error, got %v", err)
+	}
+}
+
+func TestLoadServiceConfigSessionTLSDeniedSerials(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("session_tls_denied_serials = [\"1A:2B\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadServiceConfig(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := cfg.Session.TLS.DeniedSerials; len(got) != 1 || got[0] != "1A:2B" {
+		t.Fatalf("denied serials = %v", got)
+	}
+}
+
+// Mirage admin TLS is loaded; the managed local Ghost gets its own cert, Mirage's CA, and Mirage pinned.
+func TestLoadRuntimeConfigsAdminTLS(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := "id = \"mirage.mac\"\nlocal_ghost_admin_addr = \"127.0.0.1:7010\"\nadmin_tls_cert_file = \"certs/mirage.mac.crt\"\nadmin_tls_key_file = \"certs/mirage.mac.key\"\nadmin_tls_ca_file = \"certs/ca.crt\"\nlocal_ghost_admin_tls_cert_file = \"certs/ghost.local.crt\"\nlocal_ghost_admin_tls_key_file = \"certs/ghost.local.key\"\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mCfg, gCfg, err := loadRuntimeConfigs(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if mCfg.AdminTLS.CertFile != "certs/mirage.mac.crt" || mCfg.AdminTLS.CAFile != "certs/ca.crt" {
+		t.Fatalf("mirage admin tls = %+v", mCfg.AdminTLS)
+	}
+	if gCfg.AdminTLS.CertFile != "certs/ghost.local.crt" || gCfg.AdminTLS.CAFile != "certs/ca.crt" {
+		t.Fatalf("local ghost admin tls = %+v", gCfg.AdminTLS)
+	}
+	if gCfg.MiragePrincipal != "edgectl://mirage/mirage.mac" {
+		t.Fatalf("local ghost mirage pin = %q", gCfg.MiragePrincipal)
+	}
+}
+
+func TestLoadRuntimeConfigsLocalGhostOperatorAccess(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("local_ghost_admin_operator_access = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, gCfg, err := loadRuntimeConfigs(path)
+	if err != nil || !gCfg.AdminOperatorAccess {
+		t.Fatalf("local ghost operator access: %v %v", gCfg.AdminOperatorAccess, err)
 	}
 }

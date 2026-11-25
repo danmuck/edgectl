@@ -4,12 +4,14 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
-	"net"
 	"strings"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/adminauth"
+	"github.com/danmuck/edgectl/internal/approval"
 	"github.com/danmuck/edgectl/internal/mirage"
 	"github.com/danmuck/edgectl/internal/protocol/session"
 )
@@ -30,6 +32,10 @@ type MirageAdmin interface {
 	RegisteredGhosts() ([]mirage.RegisteredGhost, error)
 	RoutingTable() ([]MirageRoute, error)
 	AvailableServices() ([]MirageAvailableService, error)
+	ProposeDependencies(intent approval.SignedIntent) (mirage.DependencyProposal, error)
+	ListDependencyProposals(proposalID string) ([]mirage.DependencyProposal, error)
+	ApproveDependencies(proposalID string, signed approval.Signed) (mirage.DependencyProposal, error)
+	ExecuteDependencies(proposalID string) (mirage.DependencyProposal, error)
 	Close() error
 }
 
@@ -125,6 +131,42 @@ func (c *RemoteMirageAdmin) AttachGhostAdmin(addr string) (MirageAttachGhostResp
 	return out, nil
 }
 
+// ProposeDependencies submits a proposer-signed intent; Mirage builds the catalog install proposal.
+func (c *RemoteMirageAdmin) ProposeDependencies(intent approval.SignedIntent) (mirage.DependencyProposal, error) {
+	var out mirage.DependencyProposal
+	err := c.call(mirageControlRequest{Action: "propose_dependencies", Dependency: mirage.AdminDependencyRequest{
+		Intent: &intent,
+	}}, &out)
+	return out, err
+}
+
+// ListDependencyProposals returns one proposal (non-empty id) or all proposals with audit trails.
+func (c *RemoteMirageAdmin) ListDependencyProposals(proposalID string) ([]mirage.DependencyProposal, error) {
+	var out []mirage.DependencyProposal
+	err := c.call(mirageControlRequest{Action: "list_dependency_proposals", Dependency: mirage.AdminDependencyRequest{
+		ProposalID: strings.TrimSpace(proposalID),
+	}}, &out)
+	return out, err
+}
+
+// ApproveDependencies submits an operator-signed approval.
+func (c *RemoteMirageAdmin) ApproveDependencies(proposalID string, signed approval.Signed) (mirage.DependencyProposal, error) {
+	var out mirage.DependencyProposal
+	err := c.call(mirageControlRequest{Action: "approve_dependencies", Dependency: mirage.AdminDependencyRequest{
+		ProposalID: strings.TrimSpace(proposalID), Approval: &signed,
+	}}, &out)
+	return out, err
+}
+
+// ExecuteDependencies asks Mirage to run an approved proposal on its Ghost.
+func (c *RemoteMirageAdmin) ExecuteDependencies(proposalID string) (mirage.DependencyProposal, error) {
+	var out mirage.DependencyProposal
+	err := c.call(mirageControlRequest{Action: "execute_dependencies", Dependency: mirage.AdminDependencyRequest{
+		ProposalID: strings.TrimSpace(proposalID),
+	}}, &out)
+	return out, err
+}
+
 func (c *RemoteMirageAdmin) DeployGhost(req mirage.DeployGhostRequest) (mirage.DeployGhostResult, error) {
 	var out mirage.DeployGhostResult
 	controlReq := mirageControlRequest{
@@ -148,6 +190,15 @@ func (c *RemoteMirageAdmin) RegisteredGhosts() ([]mirage.RegisteredGhost, error)
 func (c *RemoteMirageAdmin) RoutingTable() ([]MirageRoute, error) {
 	var out []MirageRoute
 	if err := c.call(mirageControlRequest{Action: "routing_table"}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Per-Ghost seed capabilities and command templates as Mirage sees them (seed_catalog action).
+func (c *RemoteMirageAdmin) SeedCatalog() ([]mirage.GhostSeedCatalog, error) {
+	var out []mirage.GhostSeedCatalog
+	if err := c.call(mirageControlRequest{Action: "seed_catalog"}, &out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -202,7 +253,10 @@ func (c *RemoteMirageAdmin) ensureConn() error {
 	if c.conn != nil {
 		return nil
 	}
-	conn, err := net.DialTimeout("tcp", c.addr, 3*time.Second)
+	if c.tlsErr != nil {
+		return c.tlsErr
+	}
+	conn, err := adminauth.Dial(context.Background(), c.addr, c.tlsConfig, 3*time.Second)
 	if err != nil {
 		return err
 	}

@@ -27,7 +27,7 @@ func NewApp(ghostCfgPath string, mirageCfgPath string, mode string) *App {
 
 func (a *App) printMainMenu() {
 	fmt.Println()
-	fmt.Println("Client TM")
+	fmt.Println("Client TM (Ghost Headless Mode)")
 	fmt.Printf("  ghost config:  %s (targets=%d)\n", a.ghostCfgPath, len(a.ghostCfg.Targets))
 	fmt.Printf("  mirage config: %s (targets=%d)\n", a.mirageCfgPath, len(a.mirageCfg.Targets))
 	fmt.Printf("  clear screen after command: %v\n", a.clearScreen)
@@ -185,7 +185,7 @@ func (a *App) loadOrInitConfigs() error {
 			continue
 		}
 		ghostID := strings.TrimSpace(cfg.GhostID)
-		admin := NewRemoteGhostAdmin(addr)
+		admin := a.newGhostAdmin(addr, ghostID)
 		if ghostID == "" {
 			if status, err := admin.Status(); err == nil && strings.TrimSpace(status.GhostID) != "" {
 				ghostID = strings.TrimSpace(status.GhostID)
@@ -210,7 +210,7 @@ func (a *App) loadOrInitConfigs() error {
 		return errors.New("mirage config requires non-empty target name and addr")
 	}
 	mirageID := strings.TrimSpace(cfg.MirageID)
-	admin := NewRemoteMirageAdmin(addr)
+	admin := a.newMirageAdmin(addr, mirageID)
 	if mirageID == "" {
 		if status, err := admin.Status(); err == nil && strings.TrimSpace(status.MirageID) != "" {
 			mirageID = strings.TrimSpace(status.MirageID)

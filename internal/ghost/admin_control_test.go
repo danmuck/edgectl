@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/danmuck/edgectl/internal/protocol/frame"
+	"github.com/danmuck/edgectl/internal/protocol/schema"
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/testutil/testlog"
 )
@@ -92,43 +93,11 @@ func TestHandleControlRequestExecuteLegacyActionRejected(t *testing.T) {
 	}
 }
 
-func TestHandleControlRequestExecuteEnvelopeAuthRequired(t *testing.T) {
+// Admin execute_envelope authenticates by mTLS; a frame carrying an auth block (the removed shared
+// token) is refused (1300) and nothing executes.
+func TestHandleControlRequestExecuteEnvelopeRejectsFrameAuth(t *testing.T) {
 	testlog.Start(t)
-
-	cfg := DefaultServiceConfig()
-	cfg.AdminFrameAuthToken = "phase6-token"
-	svc := NewServiceWithConfig(cfg)
-	svc.server = newRadiatingServer(t, "ghost.alpha")
-
-	commandFrame, err := session.EncodeCommandFrame(702, session.Command{
-		CommandID:    "cmd.intent.702.1",
-		IntentID:     "intent.702",
-		GhostID:      "ghost.alpha",
-		SeedSelector: "seed.flow",
-		Operation:    "status",
-	})
-	if err != nil {
-		t.Fatalf("encode command frame: %v", err)
-	}
-
-	resp := svc.handleControlRequest(controlRequest{
-		Action:       "execute_envelope",
-		CommandFrame: commandFrame,
-	}, "")
-	if resp.OK {
-		t.Fatalf("expected execute_envelope auth failure")
-	}
-	if !strings.Contains(resp.Error, ErrAdminFrameAuthRequired.Error()) {
-		t.Fatalf("expected auth required error, got: %q", resp.Error)
-	}
-}
-
-func TestHandleControlRequestExecuteEnvelopeAuthAccepted(t *testing.T) {
-	testlog.Start(t)
-
-	cfg := DefaultServiceConfig()
-	cfg.AdminFrameAuthToken = "phase6-token"
-	svc := NewServiceWithConfig(cfg)
+	svc := NewServiceWithConfig(DefaultServiceConfig())
 	svc.server = newRadiatingServer(t, "ghost.alpha")
 
 	commandFrame, err := session.EncodeCommandFrameWithAuth(703, session.Command{
@@ -141,13 +110,19 @@ func TestHandleControlRequestExecuteEnvelopeAuthAccepted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode command frame: %v", err)
 	}
+	resp := svc.handleControlRequest(controlRequest{Action: "execute_envelope", CommandFrame: commandFrame}, "")
+	if resp.OK || resp.ErrorCode != schema.ErrCodeSemanticValidation || !strings.Contains(resp.Error, "auth block is not accepted") {
+		t.Fatalf("frame with auth block: ok=%v code=%d err=%s", resp.OK, resp.ErrorCode, resp.Error)
+	}
 
-	resp := svc.handleControlRequest(controlRequest{
-		Action:       "execute_envelope",
-		CommandFrame: commandFrame,
-	}, "")
-	if !resp.OK {
-		t.Fatalf("execute_envelope with auth failed: %s", resp.Error)
+	plain, err := session.EncodeCommandFrame(704, session.Command{
+		CommandID: "cmd.intent.704.1", IntentID: "intent.704", GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp := svc.handleControlRequest(controlRequest{Action: "execute_envelope", CommandFrame: plain}, ""); !resp.OK {
+		t.Fatalf("frame without auth block: %s", resp.Error)
 	}
 }
 

@@ -3,7 +3,11 @@ package ghost
 import (
 	"maps"
 	"strings"
+	"time"
 )
+
+// Minimum retention for completed command_id/execution_id records (reliability.toml idempotency.duplicate_window).
+const DuplicateWindow = 15 * time.Minute
 
 // Ghost in-memory command lifecycle phase marker.
 type ExecutionPhase string
@@ -28,6 +32,8 @@ type ExecutionState struct {
 	Event        EventEnv
 	Outcome      string
 	Phase        ExecutionPhase
+	// Terminal completion time; anchors the duplicate retention window.
+	CompletedAt time.Time
 }
 
 // Ghost execution-state constructor from accepted command input.

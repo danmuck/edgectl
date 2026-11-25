@@ -1,0 +1,25 @@
+flowchart LR
+    B["Operator browser"]
+    W["GUI server (holds operator certificate)"]
+    A["api/v1 (Mirage, HTTPS + mTLS)"]
+    Z["Authorization (operator principal, admin_security.toml)"]
+    O["Mirage Orchestrator (desired/observed authority)"]
+    P["Mirage<->Ghost Internal Protocol (frame + TLV)"]
+    GA["Ghost admin endpoint (pinned mirage principal)"]
+    G["Ghost Execution Boundary"]
+    S["Seed Interface"]
+
+    B -->|"HTTP to GUI server only"| W
+    W -->|"issue, reconcile, reads"| A
+    A --> Z
+    Z -->|"issue + reconcile actions"| O
+    O -->|"command envelope"| GA
+    GA --> G
+    G -->|"seed.execute"| S
+    S -->|"seed.result"| G
+    G -->|"event envelope"| P
+    P -->|"event + event.ack"| O
+    O -->|"execution read (execution_by_command_id)"| GA
+    O -->|"report + read models"| A
+    A -->|"response envelope"| W
+    W -->|"pages and JSON"| B

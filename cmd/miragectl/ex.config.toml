@@ -1,0 +1,74 @@
+# Example miragectl config. Copy to cmd/miragectl/config.toml (gitignored) and edit:
+#   cp cmd/miragectl/ex.config.toml cmd/miragectl/config.toml
+# As written it starts a plaintext, loopback-only development stack: state can be read and intents
+# submitted, but command execution is refused until the admin mTLS block below is filled in
+# (admin_security.toml: privileged actions always need mutual TLS).
+
+# Stable runtime identity for this Mirage controller. With admin TLS it must equal the id in the
+# admin certificate (edgectl://mirage/<id>).
+id = "mirage.local"
+
+# Mirage session endpoint (Ghost registration, heartbeats, events).
+addr = "127.0.0.1:9000"
+
+# Mirage admin control endpoint (client-tm, admin requests).
+admin_listen_addr = "127.0.0.1:7001"
+
+# Northbound HTTP api/v1 for an operator front end (docs/architecture/definitions/api_v1.toml).
+# Disabled unless set. Uses the admin mTLS settings below: HTTPS with client certificates when
+# admin_tls_cert_file is set, otherwise plaintext HTTP that must stay on loopback.
+# api_v1_addr = "127.0.0.1:7002"
+
+# Admin endpoint mTLS (make certs-root, certs-mirage ID=mirage.local, certs-ghost ID=ghost.local).
+# Without admin_tls_cert_file the admin endpoints are plaintext and must stay on loopback.
+# admin_tls_cert_file = "certs/mirage.local.crt"
+# admin_tls_key_file = "certs/mirage.local.key"
+# admin_tls_ca_file = "certs/ca.crt"
+# admin_tls_denied_serials = []
+
+# Managed local Ghost started by miragectl (not ghostctl).
+local_ghost_id = "ghost.local"
+local_ghost_admin_addr = "127.0.0.1:7010"
+# Required together with admin_tls_cert_file; the certificate id must equal local_ghost_id.
+# local_ghost_admin_tls_cert_file = "certs/ghost.local.crt"
+# local_ghost_admin_tls_key_file = "certs/ghost.local.key"
+# Allow operator principals to use read actions on the managed Ghost's admin endpoint.
+# local_ghost_admin_operator_access = false
+# seed.mongod and seed.docker act on real services on this host; add them deliberately.
+local_ghost_seeds = ["seed.flow", "seed.kv", "seed.fs"]
+local_ghost_heartbeat_interval = "5s"
+# local_ghost_project_root = ""
+local_ghost_project_fetch_on_boot = false
+
+# Enforce declared/transport identity mapping to ghost_id.
+require_identity_binding = true
+
+# Optional root ghost admin endpoint (defaults to the local ghost admin).
+root_ghost_admin_addr = ""
+
+# Optional remote Ghost admin endpoints attached at startup. Mirage dials each one on boot.
+# [[preload_ghost_admins]]
+# ghost_id = "ghost.local.ctl"
+# admin_addr = "127.0.0.1:7011"
+
+# Buildlog persistence through a seed on the local Ghost. It issues commands, so it needs admin mTLS.
+buildlog_persist_enabled = false
+buildlog_seed_selector = "seed.fs"
+buildlog_key_prefix = "local/buildlogs/"
+
+# Dispatch attempts per command before the intent is reported retry_exhausted.
+# command_max_attempts = 3
+
+# Session transport security:
+# - "development": TLS/mTLS optional for local bring-up
+# - "production": TLS + mTLS required
+session_security_mode = "development"
+session_tls_enabled = false
+session_tls_mutual = false
+session_tls_cert_file = ""
+session_tls_key_file = ""
+session_tls_ca_file = ""
+# session_tls_denied_serials = []
+
+# Remote deploy targets for deploy_ghost are declared as [[ghost_manifests]]; see
+# docs/architecture/definitions/admin_security.toml [deploy] before adding one.

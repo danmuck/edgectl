@@ -5,13 +5,14 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"strings"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/adminauth"
 	"github.com/danmuck/edgectl/internal/ghost"
 	"github.com/danmuck/edgectl/internal/protocol/frame"
 	"github.com/danmuck/edgectl/internal/protocol/session"
@@ -209,7 +210,10 @@ func (c *RemoteGhostAdmin) ensureConn() error {
 	if c.conn != nil {
 		return nil
 	}
-	conn, err := net.DialTimeout("tcp", c.addr, 3*time.Second)
+	if c.tlsErr != nil {
+		return c.tlsErr
+	}
+	conn, err := adminauth.Dial(context.Background(), c.addr, c.tlsConfig, 3*time.Second)
 	if err != nil {
 		return err
 	}

@@ -7,6 +7,18 @@ seeds = ["seed.flow", "seed.mongod", "seed.kv", "seed.fs"]
 heartbeat_interval = "5s"
 admin_listen = "127.0.0.1:7011"
 
+# Admin endpoint mTLS (admin_security.toml). Without admin_tls_cert_file the admin endpoint is
+# plaintext and must bind to loopback; privileged actions (execute_envelope, install_dependencies,
+# spawn_ghost, bind_mirage) are refused without mTLS. Issue with: make certs-ghost ID=<id>
+# admin_tls_cert_file = "certs/ghost.local.crt"
+# admin_tls_key_file = "certs/ghost.local.key"
+# admin_tls_ca_file = "certs/ca.crt"
+# admin_tls_denied_serials = []
+# Pinned Mirage principal; required with TLS sessions in production.
+# mirage_principal = "edgectl://mirage/mirage.local"
+# Allow operator principals (client-tm Ghost mode) to use read actions on this admin endpoint.
+# admin_operator_access = false
+
 mirage_policy = "headless"
 mirage_address = "127.0.0.1:9000"
 mirage_peer_identity = "ghost.local"
@@ -20,25 +32,11 @@ mirage_tls_server_name = ""
 mirage_tls_insecure_skip_verify = false
 
 # Seed dependency installation policy.
+# Ghost executes only Mirage-approved plans built from Mirage's dependency catalog
+# (propose_dependencies -> approve_dependencies -> execute_dependencies); [[seed_install]]
+# entries are rejected. The whitelist limits which seed ids a plan may install for.
+# Install plans must carry an operator-signed approval, which this Ghost verifies against
+# admin_tls_ca_file (required), and every step must be a dependency-catalog entry.
 seed_install_enabled = true
 seed_install_root = "local/seeds"
-seed_install_whitelist = ["seed.mongod", "seed.mongod.pkg"]
-
-# Source-based seed dependency install from GitHub.
-[[seed_install]]
-seed_id = "seed.mongod"
-method = "github"
-repo = "https://github.com/example/mongod-seed.git"
-branch = "main"
-destination = "seed.mongod"
-
-# Package-based seed dependency install via Homebrew.
-# On fresh Ubuntu hosts, this validates `brew --version` first.
-# If brew is missing and bootstrap_if_missing is true, bootstrap_cmd is executed.
-[[seed_install]]
-seed_id = "seed.mongod.pkg"
-method = "brew"
-package = "mongodb-community@7.0"
-tap = "mongodb/brew"
-bootstrap_if_missing = true
-bootstrap_cmd = ["/bin/bash", "-c", "NONINTERACTIVE=1 /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""]
+seed_install_whitelist = ["seed.docker", "seed.mongod"]

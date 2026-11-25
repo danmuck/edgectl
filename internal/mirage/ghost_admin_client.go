@@ -4,13 +4,17 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"net"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/adminauth"
+	"github.com/danmuck/edgectl/internal/approval"
+	"github.com/danmuck/edgectl/internal/identity"
 	"github.com/danmuck/edgectl/internal/protocol/frame"
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/seeds"
@@ -23,15 +27,42 @@ const (
 	listSeedsAction       = "list_seeds"
 	listSeedCatalogAction = "list_seed_catalog"
 	bindMirageAction      = "bind_mirage"
+	// Ghost read of one execution record, used for the api/v1 execution read.
+	executionByCommandIDAction = "execution_by_command_id"
+	// Ghost reads behind /api/v1/ghosts/{ghost_id}/events and /verification.
+	recentEventsAction = "recent_events"
+	verificationAction = "verification"
 )
 
 type ghostControlRequest struct {
 	Action       string            `json:"action"`
 	Spawn        SpawnGhostRequest `json:"spawn,omitempty"`
 	CommandFrame []byte            `json:"command_frame,omitempty"`
+	CommandID    string            `json:"command_id,omitempty"`
+	Limit        int               `json:"limit,omitempty"`
 	MirageID     string            `json:"mirage_id,omitempty"`
 	SessionPort  string            `json:"session_port,omitempty"`
+	Install      *ghostInstallPlan `json:"install,omitempty"`
 }
+
+// Wire shape of Ghost's install_dependencies request (ghost.InstallPlanRequest).
+type ghostInstallPlan struct {
+	ProposalID string              `json:"proposal_id"`
+	ApprovedBy string              `json:"approved_by"`
+	Specs      []seeds.InstallSpec `json:"specs"`
+	Approval   *approval.Signed    `json:"approval,omitempty"`
+}
+
+// Wire shape of Ghost's install_dependencies result (ghost.InstallPlanResult).
+type ghostInstallPlanResult struct {
+	ProposalID string                     `json:"proposal_id"`
+	Succeeded  bool                       `json:"succeeded"`
+	Steps      []DependencyStepResult     `json:"steps"`
+	Rollback   []DependencyRollbackResult `json:"rollback"`
+}
+
+// Upper bound for one dependency plan; package installs can take minutes.
+const dependencyInstallTimeout = 15 * time.Minute
 
 type ghostAdminCommand struct {
 	GhostID      string            `json:"ghost_id,omitempty"`
@@ -43,9 +74,21 @@ type ghostAdminCommand struct {
 }
 
 type ghostControlResponse struct {
-	OK    bool            `json:"ok"`
-	Error string          `json:"error,omitempty"`
-	Data  json.RawMessage `json:"data,omitempty"`
+	OK        bool            `json:"ok"`
+	Error     string          `json:"error,omitempty"`
+	ErrorCode uint32          `json:"error_code,omitempty"`
+	Data      json.RawMessage `json:"data,omitempty"`
+}
+
+// GhostAdminError is a failure reported by a Ghost admin endpoint, carrying its canonical wire code.
+type GhostAdminError struct {
+	Action  string
+	Code    uint32
+	Message string
+}
+
+func (e *GhostAdminError) Error() string {
+	return fmt.Sprintf("mirage: ghost control %s failed: error_code=%d %s", e.Action, e.Code, e.Message)
 }
 
 type ghostEvent struct {
@@ -71,6 +114,9 @@ type ghostLifecycleStatus struct {
 	GhostID string `json:"ghost_id"`
 	// GhostIDLegacy accepts the current Ghost admin status shape from untagged Go structs.
 	GhostIDLegacy string `json:"GhostID"`
+	// Lifecycle phase and seed count, as Ghost encodes them (untagged Go field names).
+	Phase     string `json:"Phase"`
+	SeedCount int    `json:"SeedCount"`
 }
 
 type ghostSeedMetadata struct {
@@ -112,9 +158,35 @@ type ghostCommandArgSpec struct {
 
 // GhostControlClient is a TCP JSON control client for one root/local ghost admin endpoint.
 type GhostControlClient struct {
-	adminAddr        string
-	timeout          time.Duration
-	commandFrameAuth []byte
+	adminAddr string
+	timeout   time.Duration
+	// mTLS dial config (nil = plaintext); tlsErr defers credential load errors to the first call.
+	tlsConfig *tls.Config
+	tlsErr    error
+	// Ghost principal observed on the last verified TLS handshake.
+	peerMu sync.Mutex
+	peer   identity.Principal
+}
+
+// WithTLS sets the mTLS dial configuration; a non-nil err fails every call.
+func (c *GhostControlClient) WithTLS(cfg *tls.Config, err error) *GhostControlClient {
+	c.tlsConfig = cfg
+	c.tlsErr = err
+	return c
+}
+
+// PeerPrincipal returns the Ghost principal verified on the most recent TLS handshake.
+func (c *GhostControlClient) PeerPrincipal() identity.Principal {
+	c.peerMu.Lock()
+	defer c.peerMu.Unlock()
+	return c.peer
+}
+
+// Records the verified server principal; used from the TLS verification callback.
+func (c *GhostControlClient) setPeer(p identity.Principal) {
+	c.peerMu.Lock()
+	c.peer = p
+	c.peerMu.Unlock()
 }
 
 // NewGhostControlClient constructs a control client bound to one ghost admin address.
@@ -125,15 +197,22 @@ func NewGhostControlClient(adminAddr string) *GhostControlClient {
 	}
 }
 
-// WithCommandFrameAuthToken configures optional auth bytes attached to execute_envelope command frames.
-func (c *GhostControlClient) WithCommandFrameAuthToken(token string) *GhostControlClient {
-	raw := strings.TrimSpace(token)
-	if raw == "" {
-		c.commandFrameAuth = nil
-		return c
+// InstallDependencies sends an approved proposal's plan to Ghost "install_dependencies" and returns
+// Ghost's per-step result. Uses a long per-call timeout instead of the client default.
+func (c *GhostControlClient) InstallDependencies(ctx context.Context, p DependencyProposal) (DependencyExecution, error) {
+	var out ghostInstallPlanResult
+	if err := c.callTimeout(ctx, dependencyInstallTimeout, ghostControlRequest{
+		Action: "install_dependencies",
+		Install: &ghostInstallPlan{
+			ProposalID: p.ID,
+			ApprovedBy: p.ApprovedBy,
+			Specs:      p.Steps,
+			Approval:   p.Approval,
+		},
+	}, &out); err != nil {
+		return DependencyExecution{}, err
 	}
-	c.commandFrameAuth = []byte(raw)
-	return c
+	return DependencyExecution{Succeeded: out.Succeeded, Steps: out.Steps, Rollback: out.Rollback}, nil
 }
 
 // SpawnLocalGhost calls root ghost admin "spawn_ghost" for local provisioning.
@@ -154,14 +233,14 @@ func (c *GhostControlClient) ExecuteAdminCommand(ctx context.Context, command gh
 	if ghostID == "" {
 		ghostID = "ghost.local"
 	}
-	cmdFrame, err := session.EncodeCommandFrameWithAuth(1, session.Command{
+	cmdFrame, err := session.EncodeCommandFrame(1, session.Command{
 		CommandID:    strings.TrimSpace(command.CommandID),
 		IntentID:     strings.TrimSpace(command.IntentID),
 		GhostID:      ghostID,
 		SeedSelector: strings.TrimSpace(command.SeedSelector),
 		Operation:    strings.TrimSpace(command.Operation),
 		Args:         copyArgs(command.Args),
-	}, c.commandFrameAuth)
+	})
 	if err != nil {
 		return session.Event{}, err
 	}
@@ -187,6 +266,103 @@ func (c *GhostControlClient) Status(ctx context.Context) (ghostLifecycleStatus, 
 	}
 	if strings.TrimSpace(out.GhostID) == "" {
 		out.GhostID = strings.TrimSpace(out.GhostIDLegacy)
+	}
+	return out, nil
+}
+
+// GhostExecution is the Ghost-held record of one command execution, including its seed.result
+// output (api_v1.toml [shapes.execution]).
+type GhostExecution struct {
+	CommandID    string
+	ExecutionID  string
+	IntentID     string
+	GhostID      string
+	SeedSelector string
+	Operation    string
+	Args         map[string]string
+	Phase        string
+	Outcome      string
+	CompletedAt  time.Time
+	SeedResult   GhostSeedResult
+}
+
+// GhostSeedResult is the seed.result part of a Ghost execution record.
+type GhostSeedResult struct {
+	SeedID   string
+	Status   string
+	Stdout   []byte
+	Stderr   []byte
+	ExitCode uint32
+}
+
+// Wire shape of Ghost's execution_by_command_id reply; Ghost encodes its execution state with
+// untagged Go field names, which these field names match.
+type ghostExecutionResponse struct {
+	Found     bool           `json:"found"`
+	Execution GhostExecution `json:"execution"`
+}
+
+// ExecutionByCommandID reads one execution record from the ghost admin endpoint
+// (admin_security.toml [authorization.ghost_admin] execution_by_command_id). found is false when
+// the Ghost holds no record for commandID.
+func (c *GhostControlClient) ExecutionByCommandID(ctx context.Context, commandID string) (GhostExecution, bool, error) {
+	var out ghostExecutionResponse
+	req := ghostControlRequest{Action: executionByCommandIDAction, CommandID: strings.TrimSpace(commandID)}
+	if err := c.call(ctx, req, &out); err != nil {
+		return GhostExecution{}, false, err
+	}
+	return out.Execution, out.Found, nil
+}
+
+// GhostRecordedEvent is one terminal event in a Ghost's recent-events record. Ghost encodes it with
+// untagged Go field names, which these field names match.
+type GhostRecordedEvent struct {
+	EventID     string
+	CommandID   string
+	IntentID    string
+	GhostID     string
+	SeedID      string
+	Outcome     string
+	TimestampMS uint64
+}
+
+// GhostVerificationRecord is one protocol correlation record from a Ghost's verification view
+// (api_v1.toml [shapes.ghost_verification]); the JSON names are Ghost's own.
+type GhostVerificationRecord struct {
+	RequestID          string `json:"request_id"`
+	TraceID            string `json:"trace_id"`
+	CommandMessageID   uint64 `json:"command_message_id"`
+	CommandMessageType uint32 `json:"command_message_type"`
+	EventMessageType   uint32 `json:"event_message_type"`
+	CommandID          string `json:"command_id"`
+	ExecutionID        string `json:"execution_id"`
+	EventID            string `json:"event_id"`
+	GhostID            string `json:"ghost_id"`
+	SeedID             string `json:"seed_id"`
+	Operation          string `json:"operation"`
+	Outcome            string `json:"outcome"`
+	SeedStatus         string `json:"seed_status"`
+	ExitCode           uint32 `json:"exit_code"`
+	TimestampMS        uint64 `json:"timestamp_ms"`
+	Status             string `json:"status"`
+}
+
+// RecentEvents reads a Ghost's recent terminal events (recent_events); limit <= 0 keeps the
+// Ghost's default.
+func (c *GhostControlClient) RecentEvents(ctx context.Context, limit int) ([]GhostRecordedEvent, error) {
+	var out []GhostRecordedEvent
+	if err := c.call(ctx, ghostControlRequest{Action: recentEventsAction, Limit: limit}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Verification reads a Ghost's protocol verification view (verification); limit <= 0 keeps the
+// Ghost's default.
+func (c *GhostControlClient) Verification(ctx context.Context, limit int) ([]GhostVerificationRecord, error) {
+	var out []GhostVerificationRecord
+	if err := c.call(ctx, ghostControlRequest{Action: verificationAction, Limit: limit}, &out); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -294,12 +470,19 @@ func mapCommandArgSpecs(in []ghostCommandArgSpec) []seeds.CommandArgSpec {
 }
 
 func (c *GhostControlClient) call(ctx context.Context, req ghostControlRequest, out any) error {
+	return c.callTimeout(ctx, c.timeout, req, out)
+}
+
+// One request/response exchange, over mTLS when configured, bounded by timeout.
+func (c *GhostControlClient) callTimeout(ctx context.Context, timeout time.Duration, req ghostControlRequest, out any) error {
 	addr := strings.TrimSpace(c.adminAddr)
 	if addr == "" {
 		return fmt.Errorf("mirage: ghost admin addr required")
 	}
-	dialer := net.Dialer{Timeout: c.timeout}
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	if c.tlsErr != nil {
+		return c.tlsErr
+	}
+	conn, err := adminauth.Dial(ctx, addr, c.tlsConfig, timeout)
 	if err != nil {
 		return err
 	}
@@ -310,12 +493,12 @@ func (c *GhostControlClient) call(ctx context.Context, req ghostControlRequest, 
 		return err
 	}
 	line = append(line, '\n')
-	_ = conn.SetWriteDeadline(time.Now().Add(c.timeout))
+	_ = conn.SetWriteDeadline(time.Now().Add(timeout))
 	if _, err := conn.Write(line); err != nil {
 		return err
 	}
 
-	_ = conn.SetReadDeadline(time.Now().Add(c.timeout))
+	_ = conn.SetReadDeadline(time.Now().Add(timeout))
 	respLine, err := bufio.NewReader(conn).ReadBytes('\n')
 	if err != nil {
 		return err
@@ -325,7 +508,7 @@ func (c *GhostControlClient) call(ctx context.Context, req ghostControlRequest, 
 		return err
 	}
 	if !resp.OK {
-		return fmt.Errorf("mirage: ghost control %s failed: %s", req.Action, strings.TrimSpace(resp.Error))
+		return &GhostAdminError{Action: req.Action, Code: resp.ErrorCode, Message: strings.TrimSpace(resp.Error)}
 	}
 	if out == nil || len(resp.Data) == 0 {
 		return nil
@@ -339,10 +522,8 @@ type GhostAdminSpawner struct {
 }
 
 // NewGhostAdminSpawner constructs a spawner bound to one root ghost admin address.
-func NewGhostAdminSpawner(adminAddr string) *GhostAdminSpawner {
-	return &GhostAdminSpawner{
-		client: NewGhostControlClient(adminAddr),
-	}
+func NewGhostAdminSpawner(client *GhostControlClient) *GhostAdminSpawner {
+	return &GhostAdminSpawner{client: client}
 }
 
 // SpawnLocalGhost calls root ghost admin "spawn_ghost" for local provisioning.

@@ -1,3 +1,9 @@
+# Operator mTLS identity (make certs-operator NAME=<id>). Without it, client-tm dials plaintext
+# and servers refuse privileged actions. Servers are pinned to each target's id.
+# operator_cert_file = "certs/<name>.crt"
+# operator_key_file = "certs/<name>.key"
+# ca_file = "certs/ca.crt"
+
 local_ghost_id = "ghost.local"
 local_ghost_admin_addr = "127.0.0.1:7010"
 

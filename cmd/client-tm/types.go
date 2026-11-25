@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/tls"
 	"encoding/json"
 	"net"
 
@@ -10,8 +11,17 @@ import (
 	"github.com/danmuck/edgectl/internal/protocol/session"
 )
 
+// operatorTLSConfig is the operator mTLS identity used to dial admin endpoints
+// (admin_security.toml); empty cert file dials plaintext (loopback development only).
+type operatorTLSConfig struct {
+	OperatorCertFile string `toml:"operator_cert_file"`
+	OperatorKeyFile  string `toml:"operator_key_file"`
+	CAFile           string `toml:"ca_file"`
+}
+
 // ghostConfigFile persists Ghost targets configured for the client.
 type ghostConfigFile struct {
+	operatorTLSConfig
 	ClearScreenAfterCommand bool                `toml:"clear_screen_after_command"`
 	Targets                 []ghostTargetConfig `toml:"targets"`
 }
@@ -25,6 +35,7 @@ type ghostTargetConfig struct {
 
 // mirageConfigFile persists one Mirage control-plane target plus local Ghost linkage.
 type mirageConfigFile struct {
+	operatorTLSConfig
 	Targets             []mirageTargetConfig `toml:"targets"`
 	LocalGhostID        string               `toml:"local_ghost_id"`
 	LocalGhostAdminAddr string               `toml:"local_ghost_admin_addr"`
@@ -148,13 +159,14 @@ type MirageAvailableService struct {
 }
 
 type mirageControlRequest struct {
-	Action         string                    `json:"action"`
-	Limit          int                       `json:"limit,omitempty"`
-	IntentID       string                    `json:"intent_id,omitempty"`
-	Issue          MirageIssueRequest        `json:"issue,omitempty"`
-	Spawn          mirage.SpawnGhostRequest  `json:"spawn,omitempty"`
-	Deploy         mirage.DeployGhostRequest `json:"deploy,omitempty"`
-	GhostAdminAddr string                    `json:"ghost_admin_addr,omitempty"`
+	Action         string                        `json:"action"`
+	Limit          int                           `json:"limit,omitempty"`
+	IntentID       string                        `json:"intent_id,omitempty"`
+	Issue          MirageIssueRequest            `json:"issue,omitempty"`
+	Spawn          mirage.SpawnGhostRequest      `json:"spawn,omitempty"`
+	Deploy         mirage.DeployGhostRequest     `json:"deploy,omitempty"`
+	GhostAdminAddr string                        `json:"ghost_admin_addr,omitempty"`
+	Dependency     mirage.AdminDependencyRequest `json:"dependency,omitempty"`
 }
 
 type mirageControlResponse struct {
@@ -188,6 +200,9 @@ type RemoteGhostAdmin struct {
 	addr string
 	conn net.Conn
 	r    *bufio.Reader
+	// Operator mTLS dial config (nil = plaintext); tlsErr fails every dial.
+	tlsConfig *tls.Config
+	tlsErr    error
 }
 
 // GhostTarget maps a friendly name to a concrete Ghost admin implementation.
@@ -201,6 +216,9 @@ type RemoteMirageAdmin struct {
 	addr string
 	conn net.Conn
 	r    *bufio.Reader
+	// Operator mTLS dial config (nil = plaintext); tlsErr fails every dial.
+	tlsConfig *tls.Config
+	tlsErr    error
 }
 
 // MirageTarget maps a friendly name to a concrete Mirage admin implementation.
@@ -222,4 +240,6 @@ type App struct {
 	activeMirage  int
 	clearScreen   bool
 	launchMode    string
+	// Running local lab when launched with -mode lab; nil otherwise.
+	lab *labEnv
 }

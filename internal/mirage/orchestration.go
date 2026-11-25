@@ -12,15 +12,21 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/observability"
 	"github.com/danmuck/edgectl/internal/protocol/frame"
 	"github.com/danmuck/edgectl/internal/protocol/session"
-	logs "github.com/danmuck/smplog"
 )
 
 var (
-	ErrInvalidIssue        = errors.New("mirage: invalid issue")
+	ErrInvalidIssue = errors.New("mirage: invalid issue")
+	// Issue names an existing intent_id that a different actor submitted.
+	ErrIntentActorMismatch = errors.New("mirage: intent belongs to another actor")
 	ErrIntentNotFound      = errors.New("mirage: intent not found")
 	ErrTargetGhostRequired = errors.New("mirage: target ghost required")
+	// Event reports on a command planned for a different ghost than the reporting session.
+	ErrCommandGhostMismatch = errors.New("mirage: command planned for another ghost")
+	// Event names a planned command that Mirage has not dispatched; it cannot be controller feedback.
+	ErrCommandNotDispatched = errors.New("mirage: command not dispatched")
 )
 
 const (
@@ -127,6 +133,8 @@ type ObservedIntent struct {
 	Reports     []session.Report
 	ObservedAt  time.Time
 	ByCommandID map[string]session.Event
+	// Per-command lifecycle state; terminal entries are not dispatched again.
+	CommandStates map[string]CommandStatus
 }
 
 // IntentSnapshot is a read-only projection of desired and optional observed state.
@@ -149,7 +157,14 @@ type Orchestrator struct {
 	observed  map[string]*ObservedIntent
 	executors map[string]CommandExecutor
 	seedLocks map[string]seedLock
-	seq       atomic.Uint64
+	// command_ids handed to an executor at least once for the current plan (protocol.toml: an event
+	// is feedback for a delegated command). Cleared for an intent when its plan is replaced.
+	dispatched map[string]struct{}
+	seq        atomic.Uint64
+	retry      CommandRetryPolicy
+	// Backoff sleeper and clock; replaceable in tests for deterministic retry timing.
+	sleep func(ctx context.Context, d time.Duration) error
+	now   func() time.Time
 }
 
 type seedLock struct {
@@ -166,10 +181,14 @@ type OrchestratorSnapshot struct {
 // NewOrchestrator returns an empty Mirage orchestration loop with in-memory stores.
 func NewOrchestrator() *Orchestrator {
 	return &Orchestrator{
-		desired:   make(map[string]DesiredIntent),
-		observed:  make(map[string]*ObservedIntent),
-		executors: make(map[string]CommandExecutor),
-		seedLocks: make(map[string]seedLock),
+		desired:    make(map[string]DesiredIntent),
+		observed:   make(map[string]*ObservedIntent),
+		executors:  make(map[string]CommandExecutor),
+		seedLocks:  make(map[string]seedLock),
+		dispatched: make(map[string]struct{}),
+		retry:      DefaultCommandRetryPolicy(),
+		sleep:      sleepContext,
+		now:        time.Now,
 	}
 }
 
@@ -222,20 +241,31 @@ func (o *Orchestrator) SubmitIssue(issue IssueEnv) error {
 	stages := normalizeIssueToStages(issue)
 	commands := flattenStagesToPlannedCommands(issue.IntentID, stages)
 	issue.SeedDependencies = seedDependenciesForCommands(commands)
-	logs.Infof(
-		"ownership.transition from=user to=mirage intent_id=%s actor=%s target_scope=%s",
-		strings.TrimSpace(issue.IntentID),
-		strings.TrimSpace(issue.Actor),
-		strings.TrimSpace(issue.TargetScope),
-	)
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	// command_id must resolve to exactly one intent; sanitized intent ids can collide ("a/b" vs "a.b").
+	for i := range commands {
+		id := commands[i].Command.CommandID
+		if owner, _, ok := o.findPlannedCommandByCommandID(id); ok && owner != issue.IntentID {
+			return fmt.Errorf("%w: command_id %q collides with intent %q", ErrInvalidIssue, id, owner)
+		}
+	}
+	// The actor is the caller's TLS principal (admin_security.toml [authorization] actor_source);
+	// an existing intent may only be replaced by the actor that submitted it.
+	if prior, ok := o.desired[issue.IntentID]; ok && strings.TrimSpace(prior.Issue.Actor) != strings.TrimSpace(issue.Actor) {
+		return fmt.Errorf("%w: intent %q was submitted by %q", ErrIntentActorMismatch, issue.IntentID, prior.Issue.Actor)
+	}
+	// A replaced plan has not been dispatched, even when it reuses the same command_ids.
+	for _, prior := range o.desired[issue.IntentID].Commands {
+		delete(o.dispatched, prior.Command.CommandID)
+	}
 	o.desired[issue.IntentID] = DesiredIntent{
 		Issue:      issue,
 		Commands:   commands,
 		ReceivedAt: now,
 	}
 	delete(o.observed, issue.IntentID)
+	emitIssue(o.seq.Add(1), issue)
 	return nil
 }
 
@@ -276,7 +306,7 @@ func (o *Orchestrator) SnapshotIntent(intentID string) (IntentSnapshot, bool) {
 	}
 	out.HasObserved = true
 	out.Observed = cloneObserved(*obs)
-	out.PendingCount = pendingCommandCount(desired.Commands, obs.ByCommandID)
+	out.PendingCount = pendingCommandCount(desired.Commands, obs)
 	return out, true
 }
 
@@ -294,14 +324,7 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context, intentID string) (sess
 	if !hasPending {
 		report := latestReportOrSynthesizeComplete(desired, obs)
 		o.mu.Unlock()
-		logs.Infof(
-			"ownership.transition from=mirage to=user intent_id=%s phase=%s completion=%s command_id=%s event_id=%s",
-			key,
-			report.Phase,
-			report.CompletionState,
-			strings.TrimSpace(report.CommandID),
-			strings.TrimSpace(report.EventID),
-		)
+		emitReport(o.seq.Add(1), desired.Issue.Actor, report)
 		return report, nil
 	}
 
@@ -313,14 +336,7 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context, intentID string) (sess
 				observed.Reports = append(observed.Reports, report)
 				observed.ObservedAt = time.Now()
 				o.mu.Unlock()
-				logs.Infof(
-					"ownership.transition from=mirage to=user intent_id=%s phase=%s completion=%s command_id=%s event_id=%s",
-					key,
-					report.Phase,
-					report.CompletionState,
-					strings.TrimSpace(report.CommandID),
-					strings.TrimSpace(report.EventID),
-				)
+				emitReport(o.seq.Add(1), desired.Issue.Actor, report)
 				return report, nil
 			}
 		} else {
@@ -331,35 +347,51 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context, intentID string) (sess
 	exec := o.executors[next.Command.GhostID]
 	o.mu.Unlock()
 	if exec == nil {
+		// Nothing was dispatched, so the seed lock taken above must not outlive this attempt.
+		if next.Blocking {
+			o.releaseSeedLock(next.SeedKey, key, next.Command.CommandID)
+		}
 		return session.Report{}, fmt.Errorf("mirage: no executor registered for ghost_id=%q", next.Command.GhostID)
 	}
-	logs.Infof(
-		"ownership.transition from=mirage to=ghost intent_id=%s command_id=%s ghost_id=%s seed_id=%s operation=%s",
-		key,
-		next.Command.CommandID,
-		next.Command.GhostID,
-		next.Command.SeedSelector,
-		next.Command.Operation,
-	)
 
-	wireCommand, err := o.dispatchCommandEnvelope(next.Command)
+	wireCommand, commandMsgID, err := o.dispatchCommandEnvelope(next.Command)
 	if err != nil {
 		if next.Blocking {
 			o.releaseSeedLock(next.SeedKey, key, next.Command.CommandID)
 		}
 		return session.Report{}, err
 	}
-	event, err := exec.ExecuteCommand(ctx, wireCommand)
-	if err != nil {
-		if next.Blocking {
-			o.releaseSeedLock(next.SeedKey, key, next.Command.CommandID)
-		}
-		return session.Report{}, err
-	}
+	// Recorded before the first attempt so a terminal event arriving over the session mid-dispatch is accepted.
+	o.markDispatched(next.Command.CommandID)
+	emitCommand(commandMsgID, wireCommand, observability.StatusDispatched, "")
+	result := o.dispatchWithRetry(ctx, key, exec, wireCommand, commandMsgID)
 
 	o.mu.Lock()
 	observed := ensureObservedLocked(o, key)
-	report, ingestedEvent, err := o.ingestEventEnvelopeAndBuildReport(desired, observed, event)
+	cmdID := next.Command.CommandID
+
+	// A terminal event already arrived through the session path; it owns observation and lock release.
+	if result.Observed || observed.ByCommandID[cmdID].EventID != "" {
+		report := latestReportOrSynthesizeComplete(desired, observed)
+		o.mu.Unlock()
+		return report, nil
+	}
+
+	// No terminal event: record timed_out/retry_exhausted and close the command with a failed report.
+	if !result.HasEvent {
+		observed.CommandStates[cmdID] = result.Status
+		report := buildCommandTerminalReport(desired, next, result.Status)
+		observed.Reports = append(observed.Reports, report)
+		observed.ObservedAt = o.now()
+		if next.Blocking {
+			delete(o.seedLocks, next.SeedKey)
+		}
+		o.mu.Unlock()
+		emitReport(o.seq.Add(1), desired.Issue.Actor, report)
+		return report, nil
+	}
+
+	report, ingestedEvent, eventMsgID, reportMsgID, err := o.ingestEventEnvelopeAndBuildReport(desired, observed, result.Event)
 	if err != nil {
 		o.mu.Unlock()
 		if next.Blocking {
@@ -368,144 +400,143 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context, intentID string) (sess
 		return session.Report{}, err
 	}
 	observed.ByCommandID[ingestedEvent.CommandID] = ingestedEvent
+	observed.CommandStates[ingestedEvent.CommandID] = result.Status
 	observed.Events = append(observed.Events, ingestedEvent)
 	observed.Reports = append(observed.Reports, report)
-	observed.ObservedAt = time.Now()
+	observed.ObservedAt = o.now()
 	if next.Blocking {
 		delete(o.seedLocks, next.SeedKey)
 	}
 	o.mu.Unlock()
-	logs.Infof(
-		"ownership.transition from=ghost to=mirage intent_id=%s command_id=%s event_id=%s ghost_id=%s outcome=%s",
-		key,
-		ingestedEvent.CommandID,
-		ingestedEvent.EventID,
-		ingestedEvent.GhostID,
-		ingestedEvent.Outcome,
-	)
-	logs.Infof(
-		"ownership.transition from=mirage to=user intent_id=%s phase=%s completion=%s command_id=%s event_id=%s",
-		key,
-		report.Phase,
-		report.CompletionState,
-		strings.TrimSpace(report.CommandID),
-		strings.TrimSpace(report.EventID),
-	)
+	emitEventIn(eventMsgID, ingestedEvent.GhostID, ingestedEvent, ingestedEvent.Outcome, "")
+	emitReport(reportMsgID, desired.Issue.Actor, report)
 	return report, nil
 }
 
 // IngestObservedEvent maps an external ghost event into intent observed state.
-func (o *Orchestrator) IngestObservedEvent(event session.Event) (session.Report, bool, error) {
+// The command's planned ghost is checked against boundGhostID under the same lock and against
+// the same plan entry used for observation; a mismatch returns ErrCommandGhostMismatch with no
+// mutation. A planned command that was never dispatched returns ErrCommandNotDispatched with no
+// mutation: an unsolicited event must not complete it. duplicate=true means the command was
+// already observed; observed state is not re-mutated and the latest report is returned for
+// read-only emission.
+func (o *Orchestrator) IngestObservedEvent(boundGhostID string, event session.Event) (session.Report, bool, bool, error) {
+	return o.ingestObservedEvent(boundGhostID, event, 0)
+}
+
+// ingestObservedEvent is IngestObservedEvent with the inbound event frame message_id (0 when not
+// framed by a session) so the custody event line is logged before the report it produces.
+func (o *Orchestrator) ingestObservedEvent(boundGhostID string, event session.Event, eventMessageID uint64) (session.Report, bool, bool, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
 	intentID, plan, ok := o.findPlannedCommandByCommandID(event.CommandID)
 	if !ok {
-		return session.Report{}, false, nil
+		return session.Report{}, false, false, nil
+	}
+	if planned := strings.TrimSpace(plan.Command.GhostID); planned != strings.TrimSpace(boundGhostID) {
+		return session.Report{}, true, false, fmt.Errorf(
+			"%w: command_id=%q planned for ghost_id=%q, not %q",
+			ErrCommandGhostMismatch, event.CommandID, planned, strings.TrimSpace(boundGhostID),
+		)
+	}
+	if _, sent := o.dispatched[event.CommandID]; !sent {
+		return session.Report{}, true, false, fmt.Errorf(
+			"%w: command_id=%q is planned but was never sent to ghost_id=%q",
+			ErrCommandNotDispatched, event.CommandID, strings.TrimSpace(plan.Command.GhostID),
+		)
 	}
 	desired := o.desired[intentID]
 	observed := ensureObservedLocked(o, intentID)
+	// Duplicate observation: no report is emitted; the session boundary logs the duplicate.
 	if _, exists := observed.ByCommandID[event.CommandID]; exists {
 		if len(observed.Reports) == 0 {
-			report := latestReportOrSynthesizeComplete(desired, observed)
-			logs.Infof(
-				"ownership.transition from=mirage to=user intent_id=%s phase=%s completion=%s command_id=%s event_id=%s",
-				intentID,
-				report.Phase,
-				report.CompletionState,
-				strings.TrimSpace(report.CommandID),
-				strings.TrimSpace(report.EventID),
-			)
-			return report, true, nil
+			return latestReportOrSynthesizeComplete(desired, observed), true, true, nil
 		}
-		report := observed.Reports[len(observed.Reports)-1]
-		logs.Infof(
-			"ownership.transition from=mirage to=user intent_id=%s phase=%s completion=%s command_id=%s event_id=%s",
-			intentID,
-			report.Phase,
-			report.CompletionState,
-			strings.TrimSpace(report.CommandID),
-			strings.TrimSpace(report.EventID),
-		)
-		return report, true, nil
+		return observed.Reports[len(observed.Reports)-1], true, true, nil
 	}
 
-	report, ingestedEvent, err := o.ingestEventEnvelopeAndBuildReport(desired, observed, event)
+	report, ingestedEvent, eventMsgID, reportMsgID, err := o.ingestEventEnvelopeAndBuildReport(desired, observed, event)
 	if err != nil {
-		return session.Report{}, true, err
+		return session.Report{}, true, false, err
 	}
 	observed.ByCommandID[ingestedEvent.CommandID] = ingestedEvent
+	// A real terminal event supersedes an inferred timed_out/retry_exhausted; attempts are kept.
+	prior := observed.CommandStates[ingestedEvent.CommandID]
+	observed.CommandStates[ingestedEvent.CommandID] = statusFromEvent(ingestedEvent, prior.Attempts, o.now())
 	observed.Events = append(observed.Events, ingestedEvent)
 	observed.Reports = append(observed.Reports, report)
-	observed.ObservedAt = time.Now()
+	observed.ObservedAt = o.now()
 	if plan.Blocking {
 		delete(o.seedLocks, plan.SeedKey)
 	}
-	logs.Infof(
-		"ownership.transition from=ghost to=mirage intent_id=%s command_id=%s event_id=%s ghost_id=%s outcome=%s",
-		intentID,
-		ingestedEvent.CommandID,
-		ingestedEvent.EventID,
-		ingestedEvent.GhostID,
-		ingestedEvent.Outcome,
-	)
-	logs.Infof(
-		"ownership.transition from=mirage to=user intent_id=%s phase=%s completion=%s command_id=%s event_id=%s",
-		intentID,
-		report.Phase,
-		report.CompletionState,
-		strings.TrimSpace(report.CommandID),
-		strings.TrimSpace(report.EventID),
-	)
-	return report, true, nil
+	if eventMessageID == 0 {
+		eventMessageID = eventMsgID
+	}
+	emitEventIn(eventMessageID, boundGhostID, ingestedEvent, ingestedEvent.Outcome, "")
+	emitReport(reportMsgID, desired.Issue.Actor, report)
+	return report, true, false, nil
 }
 
-// dispatchCommandEnvelope round-trips command payload through protocol framing.
-func (o *Orchestrator) dispatchCommandEnvelope(command session.Command) (session.Command, error) {
-	payload, err := session.EncodeCommandFrame(o.seq.Add(1), command)
+// Records that command_id is being handed to an executor; session events for it are accepted from here on.
+func (o *Orchestrator) markDispatched(commandID string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.dispatched[commandID] = struct{}{}
+}
+
+// dispatchCommandEnvelope round-trips command payload through protocol framing and returns the
+// frame message_id used for custody logging.
+func (o *Orchestrator) dispatchCommandEnvelope(command session.Command) (session.Command, uint64, error) {
+	messageID := o.seq.Add(1)
+	payload, err := session.EncodeCommandFrame(messageID, command)
 	if err != nil {
-		return session.Command{}, err
+		return session.Command{}, 0, err
 	}
 	fr, err := frame.ReadFrame(bytes.NewReader(payload), frame.DefaultLimits())
 	if err != nil {
-		return session.Command{}, err
+		return session.Command{}, 0, err
 	}
-	return session.DecodeCommandFrame(fr)
+	cmd, err := session.DecodeCommandFrame(fr)
+	return cmd, messageID, err
 }
 
-// ingestEventEnvelopeAndBuildReport ingests a framed event and emits a framed report.
+// ingestEventEnvelopeAndBuildReport ingests a framed event and emits a framed report; returns the
+// event and report frame message_ids for custody logging.
 func (o *Orchestrator) ingestEventEnvelopeAndBuildReport(
 	desired DesiredIntent,
 	observed *ObservedIntent,
 	event session.Event,
-) (session.Report, session.Event, error) {
-	eventPayload, err := session.EncodeEventFrame(o.seq.Add(1), event)
+) (session.Report, session.Event, uint64, uint64, error) {
+	eventMsgID := o.seq.Add(1)
+	eventPayload, err := session.EncodeEventFrame(eventMsgID, event)
 	if err != nil {
-		return session.Report{}, session.Event{}, err
+		return session.Report{}, session.Event{}, 0, 0, err
 	}
 	eventFrame, err := frame.ReadFrame(bytes.NewReader(eventPayload), frame.DefaultLimits())
 	if err != nil {
-		return session.Report{}, session.Event{}, err
+		return session.Report{}, session.Event{}, 0, 0, err
 	}
 	ingestedEvent, err := session.DecodeEventFrame(eventFrame)
 	if err != nil {
-		return session.Report{}, session.Event{}, err
+		return session.Report{}, session.Event{}, 0, 0, err
 	}
 
 	report := buildReportFromObserved(desired, observed, ingestedEvent)
-	reportPayload, err := session.EncodeReportFrame(o.seq.Add(1), report)
+	reportMsgID := o.seq.Add(1)
+	reportPayload, err := session.EncodeReportFrame(reportMsgID, report)
 	if err != nil {
-		return session.Report{}, session.Event{}, err
+		return session.Report{}, session.Event{}, 0, 0, err
 	}
 	reportFrame, err := frame.ReadFrame(bytes.NewReader(reportPayload), frame.DefaultLimits())
 	if err != nil {
-		return session.Report{}, session.Event{}, err
+		return session.Report{}, session.Event{}, 0, 0, err
 	}
 	wireReport, err := session.DecodeReportFrame(reportFrame)
 	if err != nil {
-		return session.Report{}, session.Event{}, err
+		return session.Report{}, session.Event{}, 0, 0, err
 	}
-	return wireReport, ingestedEvent, nil
+	return wireReport, ingestedEvent, eventMsgID, reportMsgID, nil
 }
 
 // normalizeIssueToStages assigns default IDs to issue stages.
@@ -602,46 +633,71 @@ func latestReportOrSynthesizeComplete(desired DesiredIntent, obs *ObservedIntent
 	}
 }
 
-// nextPendingCommand returns the first command not yet observed for an intent.
-func nextPendingCommand(commands []PlannedCommand, observed *ObservedIntent) (PlannedCommand, bool) {
+// Whether a command is settled: terminal event observed or a terminal lifecycle state recorded.
+func commandSettled(observed *ObservedIntent, commandID string) bool {
 	if observed == nil {
-		if len(commands) == 0 {
-			return PlannedCommand{}, false
-		}
-		return commands[0], true
+		return false
 	}
+	if _, seen := observed.ByCommandID[commandID]; seen {
+		return true
+	}
+	status, ok := observed.CommandStates[commandID]
+	return ok && status.Terminal()
+}
+
+// nextPendingCommand returns the first command not yet settled for an intent.
+func nextPendingCommand(commands []PlannedCommand, observed *ObservedIntent) (PlannedCommand, bool) {
 	for i := range commands {
-		cmd := commands[i]
-		if _, seen := observed.ByCommandID[cmd.Command.CommandID]; !seen {
-			return cmd, true
+		if !commandSettled(observed, commands[i].Command.CommandID) {
+			return commands[i], true
 		}
 	}
 	return PlannedCommand{}, false
 }
 
-// pendingCommandCount returns desired commands still missing observed event closure.
-func pendingCommandCount(commands []PlannedCommand, byCommandID map[string]session.Event) int {
-	if len(commands) == 0 {
-		return 0
-	}
+// pendingCommandCount returns desired commands not yet settled.
+func pendingCommandCount(commands []PlannedCommand, observed *ObservedIntent) int {
 	out := 0
 	for i := range commands {
-		if _, ok := byCommandID[commands[i].Command.CommandID]; !ok {
+		if !commandSettled(observed, commands[i].Command.CommandID) {
 			out++
 		}
 	}
 	return out
 }
 
+// Report for a command that ended without a terminal event (timed_out or retry_exhausted).
+func buildCommandTerminalReport(desired DesiredIntent, next PlannedCommand, status CommandStatus) session.Report {
+	return session.Report{
+		IntentID: desired.Issue.IntentID,
+		Phase:    ReportPhaseComplete,
+		Summary: fmt.Sprintf(
+			"intent %s command %s %s after %d attempt(s) on %s: %s",
+			desired.Issue.IntentID,
+			next.Command.CommandID,
+			status.State,
+			status.Attempts,
+			next.Command.GhostID,
+			status.LastError,
+		),
+		CompletionState: CompletionFailed,
+		CommandID:       next.Command.CommandID,
+		Outcome:         OutcomeError,
+		TimestampMS:     uint64(status.UpdatedAt.UnixMilli()),
+	}
+}
+
 // cloneObserved returns a defensive copy of observed state maps/slices.
 func cloneObserved(in ObservedIntent) ObservedIntent {
 	out := ObservedIntent{
-		Events:      append([]session.Event{}, in.Events...),
-		Reports:     append([]session.Report{}, in.Reports...),
-		ObservedAt:  in.ObservedAt,
-		ByCommandID: make(map[string]session.Event, len(in.ByCommandID)),
+		Events:        append([]session.Event{}, in.Events...),
+		Reports:       append([]session.Report{}, in.Reports...),
+		ObservedAt:    in.ObservedAt,
+		ByCommandID:   make(map[string]session.Event, len(in.ByCommandID)),
+		CommandStates: make(map[string]CommandStatus, len(in.CommandStates)),
 	}
 	maps.Copy(out.ByCommandID, in.ByCommandID)
+	maps.Copy(out.CommandStates, in.CommandStates)
 	return out
 }
 
@@ -687,7 +743,10 @@ func ensureObservedLocked(o *Orchestrator, intentID string) *ObservedIntent {
 	if observed != nil {
 		return observed
 	}
-	observed = &ObservedIntent{ByCommandID: make(map[string]session.Event)}
+	observed = &ObservedIntent{
+		ByCommandID:   make(map[string]session.Event),
+		CommandStates: make(map[string]CommandStatus),
+	}
 	o.observed[intentID] = observed
 	return observed
 }

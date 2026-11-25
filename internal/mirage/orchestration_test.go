@@ -2,6 +2,7 @@ package mirage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -240,6 +241,8 @@ func TestOrchestratorIngestObservedEventByCommandID(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("submit issue: %v", err)
 	}
+	// Observation applies to a command Mirage already sent.
+	loop.markDispatched("cmd.intent.observe.1.1")
 
 	event := session.Event{
 		EventID:     "evt.cmd.intent.observe.1.1",
@@ -250,12 +253,15 @@ func TestOrchestratorIngestObservedEventByCommandID(t *testing.T) {
 		Outcome:     OutcomeSuccess,
 		TimestampMS: uint64(time.Now().UnixMilli()),
 	}
-	report, matched, err := loop.IngestObservedEvent(event)
+	report, matched, duplicate, err := loop.IngestObservedEvent("ghost.alpha", event)
 	if err != nil {
 		t.Fatalf("ingest observed event: %v", err)
 	}
 	if !matched {
 		t.Fatalf("expected matched=true")
+	}
+	if duplicate {
+		t.Fatalf("expected duplicate=false on first observation")
 	}
 	if report.Phase != ReportPhaseComplete {
 		t.Fatalf("unexpected report phase: %q", report.Phase)
@@ -832,5 +838,71 @@ func TestOrchestratorE2EMultiSeedStoreAndIndex(t *testing.T) {
 	}
 	if len(finalSnap.Observed.Events) != 3 {
 		t.Fatalf("expected 3 observed events, got %d", len(finalSnap.Observed.Events))
+	}
+}
+
+// admin_security.toml [authorization] actor_source: an intent may be replaced by the actor that
+// submitted it, and by no one else; a refused re-submit leaves desired and observed state intact.
+func TestSubmitIssueRejectsReplacementByAnotherActor(t *testing.T) {
+	loop := NewOrchestrator()
+	issue := func(actor, objective string) IssueEnv {
+		return IssueEnv{
+			IntentID:    "intent.owned",
+			Actor:       actor,
+			TargetScope: "ghost:ghost.alpha",
+			Objective:   objective,
+			Stages: []IssueStage{{ID: "stage.1", Commands: []IssueCommand{
+				{GhostID: "ghost.alpha", SeedSelector: "seed.flow", Operation: "status"},
+			}}},
+		}
+	}
+	if err := loop.SubmitIssue(issue("edgectl://operator/ops", "first")); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if err := loop.SubmitIssue(issue("edgectl://operator/lead", "hijack")); !errors.Is(err, ErrIntentActorMismatch) {
+		t.Fatalf("expected ErrIntentActorMismatch, got %v", err)
+	}
+	snap, ok := loop.SnapshotIntent("intent.owned")
+	if !ok || snap.Desired.Issue.Actor != "edgectl://operator/ops" || snap.Desired.Issue.Objective != "first" {
+		t.Fatalf("intent changed by refused re-submit: %+v", snap.Desired.Issue)
+	}
+	if err := loop.SubmitIssue(issue("edgectl://operator/ops", "second")); err != nil {
+		t.Fatalf("same-actor re-submit: %v", err)
+	}
+	if code := adminErrorCode(ErrIntentActorMismatch); code != 1000 {
+		t.Fatalf("expected error_code 1000, got %d", code)
+	}
+}
+
+// A reconcile that cannot dispatch (no executor for the ghost) must release the seed lock it took,
+// or every later intent for that seed waits forever.
+func TestReconcileWithoutExecutorReleasesSeedLock(t *testing.T) {
+	loop := NewOrchestrator()
+	issue := func(id string) IssueEnv {
+		return IssueEnv{
+			IntentID: id, Actor: "user:dan", TargetScope: "ghost:ghost.alpha", Objective: id,
+			Stages: []IssueStage{{ID: "stage.1", Commands: []IssueCommand{
+				{GhostID: "ghost.alpha", SeedSelector: "seed.kv", Operation: "put", Blocking: true},
+			}}},
+		}
+	}
+	if err := loop.SubmitIssue(issue("intent.first")); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if _, err := loop.ReconcileOnce(context.Background(), "intent.first"); err == nil {
+		t.Fatal("expected no-executor error")
+	}
+	if err := loop.RegisterExecutor("ghost.alpha", succeedingExecutor{}); err != nil {
+		t.Fatalf("register executor: %v", err)
+	}
+	if err := loop.SubmitIssue(issue("intent.second")); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	report, err := loop.ReconcileOnce(context.Background(), "intent.second")
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if report.CompletionState != "satisfied" {
+		t.Fatalf("second intent blocked by a leaked seed lock: %+v", report)
 	}
 }

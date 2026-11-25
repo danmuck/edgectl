@@ -14,6 +14,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/adminauth"
+	"github.com/danmuck/edgectl/internal/approval"
+	"github.com/danmuck/edgectl/internal/identity"
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/seeds"
 	seeddocker "github.com/danmuck/edgectl/internal/seeds/docker"
@@ -50,26 +53,31 @@ type MirageSessionConfig struct {
 	SessionConfig      session.Config
 }
 
-// Ghost seed-install configuration for whitelist-gated dependency installation.
+// Ghost seed-install configuration for executing Mirage-approved dependency plans.
+// Enabled gates whether this Ghost accepts install plans at all; Ghost never installs on its own.
 type SeedInstallConfig struct {
 	Enabled       bool
 	WorkspaceRoot string
 	InstallRoot   string
 	BinRoot       string
 	Whitelist     []string
-	Specs         []seeds.InstallSpec
 }
 
 // ServiceConfig configures Ghost standalone runtime defaults.
 type ServiceConfig struct {
-	GhostID             string
-	ProjectRoot         string
-	ProjectFetchOnBoot  bool
-	BuiltinSeedIDs      []string
-	SeedInstall         SeedInstallConfig
-	HeartbeatInterval   time.Duration
-	AdminListenAddr     string
-	AdminFrameAuthToken string
+	GhostID            string
+	ProjectRoot        string
+	ProjectFetchOnBoot bool
+	BuiltinSeedIDs     []string
+	SeedInstall        SeedInstallConfig
+	HeartbeatInterval  time.Duration
+	AdminListenAddr    string
+	// Admin endpoint mTLS credentials; empty CertFile serves plaintext on loopback only (development).
+	AdminTLS adminauth.Credentials
+	// Pinned Mirage principal (edgectl://mirage/<id>); session and admin peers must match it.
+	MiragePrincipal string
+	// Honor operator principals on the admin endpoint (admin_security.toml ghost_pinning; off by default).
+	AdminOperatorAccess bool
 	EnableClusterHost   bool
 	Mirage              MirageSessionConfig
 }
@@ -77,15 +85,14 @@ type ServiceConfig struct {
 // Ghost service defaults for standalone runtime configuration.
 func DefaultServiceConfig() ServiceConfig {
 	return ServiceConfig{
-		GhostID:             "ghost.local",
-		ProjectRoot:         "",
-		ProjectFetchOnBoot:  true,
-		BuiltinSeedIDs:      []string{"seed.flow"},
-		SeedInstall:         SeedInstallConfig{Enabled: false, InstallRoot: filepath.Join("local", "seeds")},
-		HeartbeatInterval:   5 * time.Second,
-		AdminListenAddr:     "",
-		AdminFrameAuthToken: "",
-		EnableClusterHost:   true,
+		GhostID:            "ghost.local",
+		ProjectRoot:        "",
+		ProjectFetchOnBoot: true,
+		BuiltinSeedIDs:     []string{"seed.flow"},
+		SeedInstall:        SeedInstallConfig{Enabled: false, InstallRoot: filepath.Join("local", "seeds")},
+		HeartbeatInterval:  5 * time.Second,
+		AdminListenAddr:    "",
+		EnableClusterHost:  true,
 		Mirage: MirageSessionConfig{
 			Policy:        MiragePolicyHeadless,
 			SessionConfig: session.DefaultConfig(),
@@ -107,17 +114,28 @@ type Service struct {
 	mirageClientMu     sync.RWMutex
 	mirageActiveClient *MirageClient // current connect/register client for live bind_mirage address updates
 
-	adminMu                 sync.Mutex
-	adminSeq                atomic.Uint64
-	adminEvents             []EventEnv
-	verificationEvents      []VerificationRecord
-	adminFrameAuthValidator CommandFrameAuthValidator
-	adminClientCount        atomic.Int64
-	cluster                 clusterHost
-}
+	adminMu            sync.Mutex
+	adminSeq           atomic.Uint64
+	adminEvents        []EventEnv
+	verificationEvents []VerificationRecord
+	adminClientCount   atomic.Int64
+	cluster            clusterHost
 
-// CommandFrameAuthValidator validates optional command-frame auth bytes for admin execute_envelope RPCs.
-type CommandFrameAuthValidator func(auth []byte) error
+	// Serializes dependency install plans.
+	installMu sync.Mutex
+	// Test seam adjusting installer config (runner, HTTP client) before construction.
+	installerConfigHook func(*seeds.InstallerConfig)
+	// Test seam for deriving approved steps from intent seed ids; nil uses approval.CatalogSteps.
+	approvalStepsFor approval.StepsFunc
+	// Approval nonces seen until their expiry (replay protection; guarded by installMu).
+	usedNonces map[string]time.Time
+	// Proposer intents consumed until they age out (guarded by installMu); one intent, one install.
+	usedIntents map[string]time.Time
+	// Service start; intents proposed earlier are refused so a restart cannot reopen consumed ones.
+	startedAt time.Time
+	// Test seam for the approval clock; nil uses time.Now.
+	approvalNow func() time.Time
+}
 
 // Ghost service constructor using default standalone config.
 func NewService() *Service {
@@ -131,24 +149,14 @@ func NewServiceWithConfig(cfg ServiceConfig) *Service {
 		cfg.Mirage.Policy = MiragePolicyHeadless
 	}
 	return &Service{
-		server:                  NewServer(),
-		cfg:                     cfg,
-		adminEvents:             make([]EventEnv, 0),
-		verificationEvents:      make([]VerificationRecord, 0),
-		adminFrameAuthValidator: defaultCommandFrameAuthValidator(strings.TrimSpace(cfg.AdminFrameAuthToken)),
-		cluster:                 newClusterHost(),
-		mirageBindNotify:        make(chan struct{}, 1),
+		server:             NewServer(),
+		cfg:                cfg,
+		adminEvents:        make([]EventEnv, 0),
+		verificationEvents: make([]VerificationRecord, 0),
+		cluster:            newClusterHost(),
+		mirageBindNotify:   make(chan struct{}, 1),
+		startedAt:          time.Now(),
 	}
-}
-
-// SetAdminCommandFrameAuthValidator overrides admin execute_envelope auth validation behavior.
-func (s *Service) SetAdminCommandFrameAuthValidator(validator CommandFrameAuthValidator) {
-	if validator == nil {
-		validator = defaultCommandFrameAuthValidator(strings.TrimSpace(s.cfg.AdminFrameAuthToken))
-	}
-	s.adminMu.Lock()
-	defer s.adminMu.Unlock()
-	s.adminFrameAuthValidator = validator
 }
 
 // Ghost runtime entrypoint that blocks until process signal shutdown.
@@ -178,10 +186,6 @@ func (s *Service) bootstrap() error {
 	if err := s.fetchProjectRepoOnBoot(); err != nil {
 		logs.Warnf("ghost.Service.bootstrap project fetch skipped err=%v", err)
 	}
-	if err := s.installSeedDependencies(); err != nil {
-		return err
-	}
-
 	if err := s.server.Appear(GhostConfig{GhostID: s.cfg.GhostID}); err != nil {
 		return err
 	}
@@ -370,6 +374,7 @@ func (s *Service) connectMirageSession(ctx context.Context) (*MirageSession, err
 		SeedList:           seedList,
 		Session:            s.cfg.Mirage.SessionConfig,
 		MaxConnectAttempts: s.cfg.Mirage.MaxConnectAttempts,
+		MiragePrincipal:    s.cfg.MiragePrincipal,
 	}
 
 	client, err := NewMirageClient(clientCfg)
@@ -428,7 +433,7 @@ func (s *Service) monitorMirageSession(ctx context.Context, conn *MirageSession)
 			return nil
 		case <-ticker.C:
 			probeCtx, cancel := context.WithTimeout(ctx, s.sessionProbeTimeout())
-			_, err := conn.SendEventWithAck(probeCtx, s.sessionProbeEvent())
+			_, err := conn.sendEventWithAck(probeCtx, s.sessionProbeEvent(), false)
 			cancel()
 			if err != nil {
 				return err
@@ -565,12 +570,10 @@ func (s *Service) sessionProbeEvent() EventEnv {
 	}
 }
 
-// Ghost reconnect backoff wait helper with deterministic delay.
+// Ghost reconnect backoff wait using contract backoff with required jitter (reliability.toml [backoff]).
 // Wakes early if bind_mirage delivers a resolved address.
 func (s *Service) waitReconnectBackoff(ctx context.Context, attempt int) error {
-	backoffCfg := s.cfg.Mirage.SessionConfig.Backoff
-	backoffCfg.Jitter = false
-	delay := session.NextBackoffDelay(backoffCfg, attempt, nil)
+	delay := session.NextBackoffDelay(s.cfg.Mirage.SessionConfig.Backoff, attempt, nil)
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
@@ -646,28 +649,6 @@ func buildBuiltinRegistry(seedIDs []string, ghostID string) (*seeds.Registry, er
 	}
 
 	return reg, nil
-}
-
-// Ghost bootstrap hook that runs configured seed dependency installations.
-func (s *Service) installSeedDependencies() error {
-	cfg := s.cfg.SeedInstall
-	if !cfg.Enabled || len(cfg.Specs) == 0 {
-		return nil
-	}
-
-	installer, err := seeds.NewInstaller(seeds.InstallerConfig{
-		WorkspaceRoot: cfg.WorkspaceRoot,
-		InstallRoot:   cfg.InstallRoot,
-		BinRoot:       cfg.BinRoot,
-		Whitelist:     cfg.Whitelist,
-	})
-	if err != nil {
-		return err
-	}
-	if err := installer.InstallAll(cfg.Specs); err != nil {
-		return err
-	}
-	return nil
 }
 
 // fetchHostSummary queries seed.host status if registered and returns a compact summary string.
@@ -747,4 +728,23 @@ func (s *Service) fetchProjectRepoOnBoot() error {
 	}
 	logs.Infof("ghost.Service.fetchProjectRepoOnBoot ok root=%q", projectAbs)
 	return nil
+}
+
+// Principal this Ghost serves as on its admin endpoint.
+func (s *Service) selfPrincipal() identity.Principal {
+	return identity.Principal{Role: identity.RoleGhost, ID: strings.TrimSpace(s.cfg.GhostID)}
+}
+
+// Production security mode follows the Mirage session security mode.
+func (s *Service) productionMode() bool {
+	return session.NormalizeSecurityMode(s.cfg.Mirage.SessionConfig.SecurityMode) == session.SecurityModeProduction
+}
+
+// Admin authorization policy: only the pinned Mirage holds the mirage role; operators only when enabled.
+func (s *Service) adminPolicy() adminauth.Policy {
+	return adminauth.Policy{
+		Endpoint:       adminauth.GhostAdmin,
+		PinnedMirage:   strings.TrimSpace(s.cfg.MiragePrincipal),
+		OperatorAccess: s.cfg.AdminOperatorAccess,
+	}
 }

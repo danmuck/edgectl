@@ -86,7 +86,7 @@ func (s Seed) Execute(action string, args map[string]string) (seeds.SeedResult, 
 		name := strings.TrimSpace(args["name"])
 		msg, code := deterministicStep(name)
 		if code != 0 {
-			return seeds.SeedResult{Status: "error", Stderr: []byte(msg + "\n"), ExitCode: int32(code)}, errUnknownAction
+			return seeds.SeedResult{Status: "error", Stderr: []byte(msg + "\n"), ExitCode: uint32(code)}, errUnknownAction
 		}
 		return seeds.SeedResult{Status: "ok", Stdout: []byte(msg + "\n"), ExitCode: 0}, nil
 	default:

@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/danmuck/edgectl/internal/adminauth"
+	"github.com/danmuck/edgectl/internal/identity"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -80,6 +83,11 @@ func (s *Service) SpawnManagedGhost(req SpawnGhostRequest) (SpawnGhostResult, er
 	}
 	s.cluster.mu.Unlock()
 
+	childTLS, err := s.childAdminTLS(ghostID, adminAddr)
+	if err != nil {
+		return SpawnGhostResult{}, err
+	}
+
 	cfg := DefaultServiceConfig()
 	cfg.GhostID = ghostID
 	cfg.BuiltinSeedIDs = append([]string{}, s.cfg.BuiltinSeedIDs...)
@@ -87,6 +95,12 @@ func (s *Service) SpawnManagedGhost(req SpawnGhostRequest) (SpawnGhostResult, er
 	cfg.AdminListenAddr = adminAddr
 	cfg.EnableClusterHost = false
 	cfg.Mirage.Policy = MiragePolicyHeadless
+	cfg.Mirage.SessionConfig.SecurityMode = s.cfg.Mirage.SessionConfig.SecurityMode
+	cfg.AdminTLS = childTLS
+	cfg.MiragePrincipal = s.cfg.MiragePrincipal
+	// A child has no config file of its own: operator read access follows the parent's setting
+	// (admin_security.toml [authorization.ghost_admin] operator_access).
+	cfg.AdminOperatorAccess = s.cfg.AdminOperatorAccess
 
 	child := NewServiceWithConfig(cfg)
 	if err := child.bootstrap(); err != nil {
@@ -155,4 +169,28 @@ func normalizeNodeSuffix(name string) string {
 	out := strings.Trim(b.String(), ".")
 	out = strings.ReplaceAll(out, "..", ".")
 	return out
+}
+
+// Admin TLS for a child Ghost. Runtimes never mint certificates, so a TLS-enabled parent requires an
+// operator-issued <child_id>.crt/.key beside its own certificate (make certs-ghost ID=<child_id>);
+// the child inherits the CA and denied serials. A plaintext parent may only spawn loopback children.
+func (s *Service) childAdminTLS(childID string, adminAddr string) (adminauth.Credentials, error) {
+	parent := s.cfg.AdminTLS
+	if !parent.Enabled() {
+		if !adminauth.IsLoopbackAddr(adminAddr) || s.productionMode() {
+			return adminauth.Credentials{}, fmt.Errorf("%w: child %s at %s needs admin TLS", adminauth.ErrPlaintextNotAllowed, childID, adminAddr)
+		}
+		return adminauth.Credentials{}, nil
+	}
+	dir := filepath.Dir(parent.CertFile)
+	child := adminauth.Credentials{
+		CertFile:      filepath.Join(dir, childID+".crt"),
+		KeyFile:       filepath.Join(dir, childID+".key"),
+		CAFile:        parent.CAFile,
+		DeniedSerials: append([]string{}, parent.DeniedSerials...),
+	}
+	if _, err := adminauth.ServerTLSConfig(child, identity.Principal{Role: identity.RoleGhost, ID: childID}); err != nil {
+		return adminauth.Credentials{}, fmt.Errorf("ghost: child %s admin credentials (issue with make certs-ghost ID=%s): %w", childID, childID, err)
+	}
+	return child, nil
 }

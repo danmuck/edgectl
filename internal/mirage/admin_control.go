@@ -12,6 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/adminauth"
+	"github.com/danmuck/edgectl/internal/approval"
+	"github.com/danmuck/edgectl/internal/protocol/schema"
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	logs "github.com/danmuck/smplog"
 )
@@ -67,23 +70,81 @@ type adminControlRequest struct {
 	Spawn          SpawnGhostRequest  `json:"spawn,omitempty"`
 	Deploy         DeployGhostRequest `json:"deploy,omitempty"`
 	GhostAdminAddr string             `json:"ghost_admin_addr,omitempty"`
+	// Dependency proposal parameters (propose/approve/execute/list_dependency_*).
+	Dependency AdminDependencyRequest `json:"dependency,omitempty"`
 }
 
 type adminControlResponse struct {
 	OK    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
-	Data  any    `json:"data,omitempty"`
+	// Canonical wire code (errors.toml 1000-1500) when OK is false.
+	ErrorCode uint32 `json:"error_code,omitempty"`
+	Data      any    `json:"data,omitempty"`
+	// Underlying failure, kept off the wire so the api/v1 boundary can choose an HTTP status.
+	cause error
+}
+
+// Admin request is malformed, missing a required parameter, or names no known action.
+var errAdminInvalidRequest = errors.New("mirage.admin: invalid request")
+
+// Canonical wire code for a Mirage admin failure (errors.toml [wire_codes]). Codes reported by a
+// Ghost admin endpoint pass through; orchestration input errors are semantic; protocol errors
+// fall back to session.ErrorCode.
+func adminErrorCode(err error) uint32 {
+	var ghostErr *GhostAdminError
+	if errors.As(err, &ghostErr) && ghostErr.Code != 0 {
+		return ghostErr.Code
+	}
+	if errors.Is(err, adminauth.ErrAuthRequired) || errors.Is(err, adminauth.ErrAuthorizationDenied) ||
+		errors.Is(err, errAPIv1BrowserRequest) || errors.Is(err, ErrIntentActorMismatch) {
+		return schema.ErrCodeTransportFailure
+	}
+	switch {
+	case errors.Is(err, errAdminInvalidRequest),
+		errors.Is(err, approval.ErrInvalidApproval),
+		errors.Is(err, approval.ErrApprovalExpired),
+		errors.Is(err, approval.ErrSeparationOfDuties),
+		errors.Is(err, approval.ErrStepsMismatch),
+		errors.Is(err, ErrInvalidDependencyProposal),
+		errors.Is(err, ErrDependencyProposalNotFound),
+		errors.Is(err, ErrDependencyProposalState),
+		errors.Is(err, ErrUnknownDeployTarget),
+		errors.Is(err, ErrInvalidDeployManifest),
+		errors.Is(err, ErrInvalidIssue),
+		errors.Is(err, ErrIntentNotFound),
+		errors.Is(err, errAPIv1NotFound),
+		errors.Is(err, errAPIv1UnknownID),
+		errors.Is(err, ErrTargetGhostRequired):
+		return schema.ErrCodeSemanticValidation
+	}
+	return session.ErrorCode(err)
+}
+
+// Failure response carrying the error text and its canonical wire code.
+func failAdmin(err error) adminControlResponse {
+	return adminControlResponse{OK: false, Error: err.Error(), ErrorCode: adminErrorCode(err), cause: err}
+}
+
+// Failure response for a malformed or incomplete admin request.
+func failAdminRequest(format string, args ...any) adminControlResponse {
+	return failAdmin(fmt.Errorf("%w: "+format, append([]any{errAdminInvalidRequest}, args...)...))
 }
 
 // serveAdminControl exposes a TCP JSON request/response endpoint for Mirage control.
 func (s *Service) serveAdminControl(ctx context.Context, addr string) error {
-	ln, err := net.Listen("tcp", strings.TrimSpace(addr))
+	// mTLS per admin_security.toml [transport]; plaintext only on loopback outside production.
+	ln, err := adminauth.Listen(addr, s.cfg.AdminTLS, s.selfPrincipal(), s.productionMode())
 	if err != nil {
 		return err
 	}
-	defer ln.Close()
-	logs.Warnf("mirage.admin listening addr=%q", ln.Addr().String())
+	logs.Infof("mirage.admin listening addr=%q", ln.Addr().String())
+	return s.ServeAdmin(ctx, ln)
+}
 
+// ServeAdmin answers admin requests on ln until ctx ends or ln fails; ln comes from adminauth.Listen
+// so transport rules (mTLS, loopback-only plaintext) are already enforced. Closes ln on return.
+func (s *Service) ServeAdmin(ctx context.Context, ln net.Listener) error {
+	defer ln.Close()
 	go func() {
 		<-ctx.Done()
 		_ = ln.Close()
@@ -105,6 +166,11 @@ func (s *Service) serveAdminControl(ctx context.Context, addr string) error {
 func (s *Service) handleAdminConn(conn net.Conn) {
 	defer conn.Close()
 	remote := conn.RemoteAddr().String()
+	peer, err := adminauth.PeerFromConn(conn, 5*time.Second)
+	if err != nil {
+		logs.Warnf("mirage.admin handshake rejected component=mirage peer=%q error_code=%d err=%q", remote, schema.ErrCodeTransportFailure, err.Error())
+		return
+	}
 	active := s.adminClientCount.Add(1)
 	logs.Warnf("mirage.admin client connected remote=%q active_clients=%d", remote, active)
 	defer func() {
@@ -113,8 +179,12 @@ func (s *Service) handleAdminConn(conn net.Conn) {
 	}()
 	reader := bufio.NewReader(conn)
 	for {
-		line, err := reader.ReadBytes('\n')
+		// Bounded line and idle deadline; an oversize line is answered once and the connection closed.
+		line, err := adminauth.ReadRequestLine(conn, reader, adminauth.DefaultRequestLimits())
 		if err != nil {
+			if errors.Is(err, adminauth.ErrRequestTooLarge) {
+				_ = writeAdminControlResponse(conn, adminControlResponse{Error: err.Error(), ErrorCode: schema.ErrCodeFramingOversize})
+			}
 			if err != io.EOF {
 				logs.Warnf("mirage.admin read err=%v", err)
 			}
@@ -122,10 +192,20 @@ func (s *Service) handleAdminConn(conn net.Conn) {
 		}
 		var req adminControlRequest
 		if err := json.Unmarshal(line, &req); err != nil {
-			_ = writeAdminControlResponse(conn, adminControlResponse{OK: false, Error: err.Error()})
+			_ = writeAdminControlResponse(conn, failAdminRequest("%v", err))
 			continue
 		}
-		resp := s.handleAdminControlRequest(req)
+		// Default-deny authorization by principal, then actor binding, before dispatch
+		// (admin_security.toml [authorization]).
+		var resp adminControlResponse
+		decision := adminauth.DecisionAllow
+		if err := s.authorizeAdminRequest(peer, &req); err != nil {
+			resp = failAdmin(err)
+			decision = adminauth.DecisionDeny
+		} else {
+			resp = s.handleAdminControlRequest(req)
+		}
+		adminauth.Audit("mirage", peer, req.Action, decision, resp.ErrorCode)
 		if err := writeAdminControlResponse(conn, resp); err != nil {
 			logs.Warnf("mirage.admin write err=%v", err)
 			return
@@ -135,6 +215,9 @@ func (s *Service) handleAdminConn(conn net.Conn) {
 
 // handleAdminControlRequest routes one admin action to Mirage runtime methods.
 func (s *Service) handleAdminControlRequest(req adminControlRequest) adminControlResponse {
+	if resp, ok := s.handleDependencyAdminAction(strings.TrimSpace(req.Action), req.Dependency); ok {
+		return resp
+	}
 	switch strings.TrimSpace(req.Action) {
 	case "status":
 		status := s.server.Status()
@@ -143,7 +226,7 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 	case "submit_issue":
 		issue := mapAdminIssue(req.Issue)
 		if err := s.server.SubmitIssue(issue); err != nil {
-			return adminControlResponse{OK: false, Error: err.Error()}
+			return failAdmin(err)
 		}
 		s.persistBuildlog("submit_issue", map[string]any{
 			"intent_id": issue.IntentID,
@@ -153,13 +236,13 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 	case "reconcile_intent":
 		intentID := strings.TrimSpace(req.IntentID)
 		if intentID == "" {
-			return adminControlResponse{OK: false, Error: "intent_id required"}
+			return failAdminRequest("intent_id required")
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		report, err := s.server.ReconcileIntent(ctx, intentID)
 		if err != nil {
-			return adminControlResponse{OK: false, Error: err.Error()}
+			return failAdmin(err)
 		}
 		s.persistBuildlog("reconcile_intent", report)
 		return adminControlResponse{OK: true, Data: report}
@@ -171,7 +254,7 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 			report, err := s.server.ReconcileIntent(ctx, intentID)
 			cancel()
 			if err != nil && !errors.Is(err, ErrIntentNotFound) {
-				return adminControlResponse{OK: false, Error: fmt.Sprintf("intent_id=%s: %v", intentID, err)}
+				return failAdmin(fmt.Errorf("intent_id=%s: %w", intentID, err))
 			}
 			if err == nil {
 				reports = append(reports, report)
@@ -182,7 +265,7 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 	case "snapshot_intent":
 		intentID := strings.TrimSpace(req.IntentID)
 		if intentID == "" {
-			return adminControlResponse{OK: false, Error: "intent_id required"}
+			return failAdminRequest("intent_id required")
 		}
 		snapshot, found := s.server.SnapshotIntent(intentID)
 		return adminControlResponse{OK: true, Data: AdminSnapshotIntentResponse{
@@ -204,11 +287,11 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 	case "attach_ghost_admin":
 		addr := strings.TrimSpace(req.GhostAdminAddr)
 		if addr == "" {
-			return adminControlResponse{OK: false, Error: "ghost_admin_addr required"}
+			return failAdminRequest("ghost_admin_addr required")
 		}
 		out, err := s.attachGhostAdmin("", addr)
 		if err != nil {
-			return adminControlResponse{OK: false, Error: err.Error()}
+			return failAdmin(err)
 		}
 		logs.Warnf("mirage.admin attached ghost route ghost_id=%q addr=%q", out.GhostID, out.AdminAddr)
 		return adminControlResponse{OK: true, Data: out}
@@ -217,21 +300,22 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 		defer cancel()
 		out, err := s.server.SpawnLocalGhost(ctx, req.Spawn)
 		if err != nil {
-			return adminControlResponse{OK: false, Error: err.Error()}
+			return failAdmin(err)
 		}
-		if err := s.bindGhostToMirage(out.GhostID, out.AdminAddr); err != nil {
-			return adminControlResponse{OK: false, Error: err.Error()}
+		// Same path as attach_ghost_admin: verify the child's identity, register its command
+		// executor, bind it to this Mirage and add the route. Without the executor a spawned
+		// Ghost is listed but cannot be sent commands.
+		if _, err := s.attachGhostAdmin(out.GhostID, out.AdminAddr); err != nil {
+			return failAdmin(err)
 		}
-		s.bindGhostAdmin(out.GhostID, out.AdminAddr)
 		logs.Warnf("mirage.admin spawned local ghost ghost_id=%q addr=%q", out.GhostID, out.AdminAddr)
 		return adminControlResponse{OK: true, Data: out}
 	case "deploy_ghost":
-		deployer := NewSSHDeployer()
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		result, err := deployer.Deploy(ctx, req.Deploy)
+		result, err := s.DeployGhost(ctx, req.Deploy)
 		if err != nil {
-			return adminControlResponse{OK: false, Error: err.Error()}
+			return failAdmin(err)
 		}
 		// Auto-attach the newly deployed ghost via admin routing.
 		if result.AdminAddr != "" {
@@ -259,7 +343,7 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 		})
 		return adminControlResponse{OK: true, Data: result}
 	default:
-		return adminControlResponse{OK: false, Error: fmt.Sprintf("unknown action: %s", req.Action)}
+		return failAdminRequest("unknown action: %s", req.Action)
 	}
 }
 
@@ -270,7 +354,7 @@ func (s *Service) attachGhostAdmin(expectedGhostID string, adminAddr string) (Ad
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	client := s.newGhostControlClient(addr)
+	client := s.newGhostControlClient(expectedGhostID, addr)
 	status, err := client.Status(ctx)
 	if err != nil {
 		return AdminAttachGhostResponse{}, err
@@ -278,6 +362,12 @@ func (s *Service) attachGhostAdmin(expectedGhostID string, adminAddr string) (Ad
 	ghostID := strings.TrimSpace(status.GhostID)
 	if ghostID == "" {
 		return AdminAttachGhostResponse{}, fmt.Errorf("ghost status missing ghost_id")
+	}
+	// With mTLS the certificate principal, not the self-reported status, is authoritative.
+	if s.cfg.AdminTLS.Enabled() {
+		if peer := client.PeerPrincipal(); peer.ID != ghostID {
+			return AdminAttachGhostResponse{}, fmt.Errorf("ghost_id mismatch certificate=%q reported=%q", peer.ID, ghostID)
+		}
 	}
 	expected := strings.TrimSpace(expectedGhostID)
 	if expected != "" && ghostID != expected {
@@ -364,5 +454,22 @@ func writeAdminControlResponse(w io.Writer, resp adminControlResponse) error {
 	}
 	payload = append(payload, '\n')
 	_, err = w.Write(payload)
+	return err
+}
+
+// Authorizes one admin request for peer and binds request actor fields to the peer principal:
+// operators only (admin_security.toml [authorization.mirage_admin]); actor fields must be empty or
+// equal the caller and are filled from the certificate when empty.
+func (s *Service) authorizeAdminRequest(peer adminauth.Peer, req *adminControlRequest) error {
+	if err := (adminauth.Policy{Endpoint: adminauth.MirageAdmin}).Authorize(peer, req.Action); err != nil {
+		return err
+	}
+	var err error
+	switch strings.TrimSpace(req.Action) {
+	case "submit_issue":
+		req.Issue.Actor, err = adminauth.BindActor(peer, req.Issue.Actor)
+	case "propose_dependencies", "approve_dependencies", "execute_dependencies":
+		req.Dependency.Actor, err = adminauth.BindActor(peer, req.Dependency.Actor)
+	}
 	return err
 }

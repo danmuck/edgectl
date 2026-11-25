@@ -11,13 +11,13 @@ import (
 type fakeRunner struct {
 	stdout   []byte
 	stderr   []byte
-	exitCode int32
+	exitCode uint32
 	err      error
 	name     string
 	args     []string
 }
 
-func (r *fakeRunner) Run(name string, args ...string) ([]byte, []byte, int32, error) {
+func (r *fakeRunner) Run(name string, args ...string) ([]byte, []byte, uint32, error) {
 	r.name = name
 	r.args = append([]string{}, args...)
 	return r.stdout, r.stderr, r.exitCode, r.err

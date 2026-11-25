@@ -6,49 +6,76 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/danmuck/edgectl/internal/adminauth"
 	"github.com/danmuck/edgectl/internal/ghost"
 	"github.com/danmuck/edgectl/internal/mirage"
 	"github.com/danmuck/edgectl/internal/protocol/session"
+	"github.com/danmuck/edgectl/internal/tools"
 )
 
 // miragectl config.toml key mapping to Mirage runtime settings.
 type fileConfig struct {
-	Addr                         string              `toml:"addr"`
-	ID                           string              `toml:"id"`
-	AdminListenAddr              string              `toml:"admin_listen_addr"`
-	RequireIdentityBind          bool                `toml:"require_identity_binding"`
-	RootGhostAdminAddr           string              `toml:"root_ghost_admin_addr"`
-	LocalGhostID                 string              `toml:"local_ghost_id"`
-	LocalGhostAdminAddr          string              `toml:"local_ghost_admin_addr"`
-	LocalGhostSeeds              []string            `toml:"local_ghost_seeds"`
-	LocalGhostHeartbeat          string              `toml:"local_ghost_heartbeat_interval"`
-	LocalGhostHeartbeatMS        int64               `toml:"local_ghost_heartbeat_interval_ms"`
-	LocalGhostProjectRoot        string              `toml:"local_ghost_project_root"`
-	LocalGhostProjectFetchOnBoot bool                `toml:"local_ghost_project_fetch_on_boot"`
-	PreloadGhostAdmins           []preloadGhostAdmin `toml:"preload_ghost_admins"`
-	BuildlogPersist              bool                `toml:"buildlog_persist_enabled"`
-	BuildlogSeed                 string              `toml:"buildlog_seed_selector"`
-	BuildlogKeyPrefix            string              `toml:"buildlog_key_prefix"`
-	SessionSecurityMode          string              `toml:"session_security_mode"`
-	SessionTLSEnabled            bool                `toml:"session_tls_enabled"`
-	SessionTLSMutual             bool                `toml:"session_tls_mutual"`
-	SessionTLSCertFile           string              `toml:"session_tls_cert_file"`
-	SessionTLSKeyFile            string              `toml:"session_tls_key_file"`
-	SessionTLSCAFile             string              `toml:"session_tls_ca_file"`
-	GhostManifests               []ghostManifestFile `toml:"ghost_manifests"`
+	Addr            string `toml:"addr"`
+	ID              string `toml:"id"`
+	AdminListenAddr string `toml:"admin_listen_addr"`
+	// Northbound api/v1 listener (api_v1.toml [transport]); empty or absent disables it.
+	APIv1Addr           string `toml:"api_v1_addr"`
+	RequireIdentityBind bool   `toml:"require_identity_binding"`
+	RootGhostAdminAddr  string `toml:"root_ghost_admin_addr"`
+	LocalGhostID        string `toml:"local_ghost_id"`
+	LocalGhostAdminAddr string `toml:"local_ghost_admin_addr"`
+	// Removed (admin_security.toml replaces it with mTLS); present only so loading can refuse it.
+	GhostAdminFrameAuthToken      string              `toml:"ghost_admin_frame_auth_token"`
+	AdminTLSCertFile              string              `toml:"admin_tls_cert_file"`
+	AdminTLSKeyFile               string              `toml:"admin_tls_key_file"`
+	AdminTLSCAFile                string              `toml:"admin_tls_ca_file"`
+	AdminTLSDeniedSerials         []string            `toml:"admin_tls_denied_serials"`
+	LocalGhostAdminTLSCertFile    string              `toml:"local_ghost_admin_tls_cert_file"`
+	LocalGhostAdminTLSKeyFile     string              `toml:"local_ghost_admin_tls_key_file"`
+	LocalGhostAdminOperatorAccess bool                `toml:"local_ghost_admin_operator_access"`
+	LocalGhostSeeds               []string            `toml:"local_ghost_seeds"`
+	LocalGhostHeartbeat           string              `toml:"local_ghost_heartbeat_interval"`
+	LocalGhostHeartbeatMS         int64               `toml:"local_ghost_heartbeat_interval_ms"`
+	LocalGhostProjectRoot         string              `toml:"local_ghost_project_root"`
+	LocalGhostProjectFetchOnBoot  bool                `toml:"local_ghost_project_fetch_on_boot"`
+	PreloadGhostAdmins            []preloadGhostAdmin `toml:"preload_ghost_admins"`
+	BuildlogPersist               bool                `toml:"buildlog_persist_enabled"`
+	BuildlogSeed                  string              `toml:"buildlog_seed_selector"`
+	BuildlogKeyPrefix             string              `toml:"buildlog_key_prefix"`
+	SessionSecurityMode           string              `toml:"session_security_mode"`
+	SessionTLSEnabled             bool                `toml:"session_tls_enabled"`
+	SessionTLSMutual              bool                `toml:"session_tls_mutual"`
+	SessionTLSCertFile            string              `toml:"session_tls_cert_file"`
+	SessionTLSKeyFile             string              `toml:"session_tls_key_file"`
+	SessionTLSCAFile              string              `toml:"session_tls_ca_file"`
+	SessionTLSDeniedSerials       []string            `toml:"session_tls_denied_serials"`
+	GhostManifests                []ghostManifestFile `toml:"ghost_manifests"`
+	CommandMaxAttempts            int                 `toml:"command_max_attempts"`
 }
 
 // ghostManifestFile maps one ghost_manifests TOML table row for remote deploy targets.
 type ghostManifestFile struct {
-	GhostID       string   `toml:"ghost_id"`
-	Host          string   `toml:"host"`
-	User          string   `toml:"user"`
-	SSHKey        string   `toml:"ssh_key"`
-	SSHPort       int      `toml:"ssh_port"`
-	Seeds         []string `toml:"seeds"`
-	AdminListen   string   `toml:"admin_listen"`
-	MiragePolicy  string   `toml:"mirage_policy"`
-	MirageAddress string   `toml:"mirage_address"`
+	GhostID                         string   `toml:"ghost_id"`
+	Host                            string   `toml:"host"`
+	User                            string   `toml:"user"`
+	SSHKey                          string   `toml:"ssh_key"`
+	SSHPort                         int      `toml:"ssh_port"`
+	Seeds                           []string `toml:"seeds"`
+	AdminListen                     string   `toml:"admin_listen"`
+	MiragePolicy                    string   `toml:"mirage_policy"`
+	MirageAddress                   string   `toml:"mirage_address"`
+	SeedInstallEnabled              bool     `toml:"seed_install_enabled"`
+	SeedInstallRoot                 string   `toml:"seed_install_root"`
+	SeedInstallBinRoot              string   `toml:"seed_install_bin_root"`
+	SeedInstallAllowInternalDefault bool     `toml:"seed_install_allow_internal_defaults"`
+	SeedInstallWhitelist            []string `toml:"seed_install_whitelist"`
+	SSHHostKey                      string   `toml:"ssh_host_key"`
+	TLSCertFile                     string   `toml:"tls_cert_file"`
+	TLSKeyFile                      string   `toml:"tls_key_file"`
+	BinaryPath                      string   `toml:"binary_path"`
+	// Rejected when present; kept only to detect stale configs.
+	SeedInstall        []map[string]any `toml:"seed_install"`
+	ConfigTemplatePath string           `toml:"config_template_path"`
 }
 
 // preloadGhostAdmin maps one preload_ghost_admins TOML table row.
@@ -76,6 +103,9 @@ func loadServiceConfig(path string) (mirage.ServiceConfig, error) {
 	if meta.IsDefined("admin_listen_addr") {
 		cfg.AdminListenAddr = strings.TrimSpace(raw.AdminListenAddr)
 	}
+	if meta.IsDefined("api_v1_addr") {
+		cfg.APIv1ListenAddr = strings.TrimSpace(raw.APIv1Addr)
+	}
 	if meta.IsDefined("require_identity_binding") {
 		cfg.RequireIdentityBinding = raw.RequireIdentityBind
 	}
@@ -87,6 +117,25 @@ func loadServiceConfig(path string) (mirage.ServiceConfig, error) {
 	}
 	if meta.IsDefined("local_ghost_admin_addr") {
 		cfg.LocalGhostAdminAddr = strings.TrimSpace(raw.LocalGhostAdminAddr)
+	}
+	// Mirage admin mTLS identity edgectl://mirage/<id>: serves the admin endpoint and dials Ghosts.
+	if meta.IsDefined("admin_tls_cert_file") {
+		cfg.AdminTLS.CertFile = strings.TrimSpace(raw.AdminTLSCertFile)
+	}
+	if meta.IsDefined("admin_tls_key_file") {
+		cfg.AdminTLS.KeyFile = strings.TrimSpace(raw.AdminTLSKeyFile)
+	}
+	if meta.IsDefined("admin_tls_ca_file") {
+		cfg.AdminTLS.CAFile = strings.TrimSpace(raw.AdminTLSCAFile)
+	}
+	if meta.IsDefined("admin_tls_denied_serials") {
+		cfg.AdminTLS.DeniedSerials = tools.NormalizeNonEmptyList(raw.AdminTLSDeniedSerials)
+	}
+	// The shared admin token was removed; refuse configs that still carry it so no one relies on it.
+	if meta.IsDefined("ghost_admin_frame_auth_token") {
+		return mirage.ServiceConfig{}, fmt.Errorf("load mirage config: ghost_admin_frame_auth_token was removed " +
+			"(docs/architecture/definitions/admin_security.toml); delete it and set admin_tls_cert_file, " +
+			"admin_tls_key_file, and admin_tls_ca_file on Mirage and its Ghosts")
 	}
 	if meta.IsDefined("preload_ghost_admins") {
 		targets, normErr := normalizePreloadGhostAdmins(raw.PreloadGhostAdmins)
@@ -119,10 +168,23 @@ func loadServiceConfig(path string) (mirage.ServiceConfig, error) {
 	if meta.IsDefined("session_tls_key_file") {
 		cfg.Session.TLS.KeyFile = strings.TrimSpace(raw.SessionTLSKeyFile)
 	}
+	// Revoked certificate serials (hex) rejected on every session handshake.
+	if meta.IsDefined("session_tls_denied_serials") {
+		cfg.Session.TLS.DeniedSerials = tools.NormalizeNonEmptyList(raw.SessionTLSDeniedSerials)
+	}
 	if meta.IsDefined("session_tls_ca_file") {
 		cfg.Session.TLS.CAFile = strings.TrimSpace(raw.SessionTLSCAFile)
 	}
 	if meta.IsDefined("ghost_manifests") {
+		// Install specs come only from Mirage's dependency catalog via approved proposals.
+		for _, m := range raw.GhostManifests {
+			if len(m.SeedInstall) > 0 {
+				return mirage.ServiceConfig{}, fmt.Errorf(
+					"ghost_manifests ghost_id=%q: seed_install specs are no longer accepted; use propose/approve/execute_dependencies",
+					strings.TrimSpace(m.GhostID),
+				)
+			}
+		}
 		cfg.GhostManifests = normalizeGhostManifests(raw.GhostManifests)
 	}
 
@@ -155,6 +217,14 @@ func loadServiceConfig(path string) (mirage.ServiceConfig, error) {
 				"load mirage config: local ghost admin addr is required for mirage admin controller",
 			)
 		}
+	}
+
+	// Command dispatch attempts before retry_exhausted (reliability.toml retry_policy.command).
+	if meta.IsDefined("command_max_attempts") {
+		if raw.CommandMaxAttempts < 1 {
+			return mirage.ServiceConfig{}, fmt.Errorf("command_max_attempts must be >= 1, got %d", raw.CommandMaxAttempts)
+		}
+		cfg.CommandMaxAttempts = raw.CommandMaxAttempts
 	}
 
 	cfg.Session = cfg.Session.WithDefaults()
@@ -203,12 +273,25 @@ func loadRuntimeConfigs(path string) (mirage.ServiceConfig, ghost.ServiceConfig,
 		cfg.GhostID = ghost.DefaultServiceConfig().GhostID
 	}
 	cfg.AdminListenAddr = strings.TrimSpace(mCfg.LocalGhostAdminAddr)
+	// Managed local Ghost: its own admin identity, Mirage's CA and deny list, Mirage pinned.
+	if certFile := strings.TrimSpace(raw.LocalGhostAdminTLSCertFile); certFile != "" {
+		cfg.AdminTLS = adminauth.Credentials{
+			CertFile:      certFile,
+			KeyFile:       strings.TrimSpace(raw.LocalGhostAdminTLSKeyFile),
+			CAFile:        mCfg.AdminTLS.CAFile,
+			DeniedSerials: append([]string{}, mCfg.AdminTLS.DeniedSerials...),
+		}
+	}
+	if mCfg.AdminTLS.Enabled() {
+		cfg.MiragePrincipal = "edgectl://mirage/" + strings.TrimSpace(mCfg.MirageID)
+	}
+	cfg.AdminOperatorAccess = raw.LocalGhostAdminOperatorAccess
 	if cfg.AdminListenAddr == "" {
 		cfg.AdminListenAddr = ghost.DefaultServiceConfig().AdminListenAddr
 	}
 	cfg.BuiltinSeedIDs = []string{"seed.flow", "seed.kv", "seed.fs", "seed.mongod"}
 	if meta.IsDefined("local_ghost_seeds") {
-		cfg.BuiltinSeedIDs = normalizeList(raw.LocalGhostSeeds)
+		cfg.BuiltinSeedIDs = tools.NormalizeNonEmptyList(raw.LocalGhostSeeds)
 	}
 	if meta.IsDefined("local_ghost_project_root") {
 		cfg.ProjectRoot = strings.TrimSpace(raw.LocalGhostProjectRoot)
@@ -241,31 +324,26 @@ func normalizeGhostManifests(raw []ghostManifestFile) []mirage.GhostManifest {
 			continue
 		}
 		out = append(out, mirage.GhostManifest{
-			GhostID:       id,
-			Host:          host,
-			User:          strings.TrimSpace(r.User),
-			SSHKeyFile:    strings.TrimSpace(r.SSHKey),
-			SSHPort:       r.SSHPort,
-			Seeds:         normalizeList(r.Seeds),
-			AdminListen:   strings.TrimSpace(r.AdminListen),
-			MiragePolicy:  strings.TrimSpace(r.MiragePolicy),
-			MirageAddress: strings.TrimSpace(r.MirageAddress),
+			GhostID:                          id,
+			Host:                             host,
+			User:                             strings.TrimSpace(r.User),
+			SSHKeyFile:                       strings.TrimSpace(r.SSHKey),
+			SSHPort:                          r.SSHPort,
+			SSHHostKey:                       strings.TrimSpace(r.SSHHostKey),
+			TLSCertFile:                      strings.TrimSpace(r.TLSCertFile),
+			TLSKeyFile:                       strings.TrimSpace(r.TLSKeyFile),
+			BinaryPath:                       strings.TrimSpace(r.BinaryPath),
+			Seeds:                            tools.NormalizeNonEmptyList(r.Seeds),
+			AdminListen:                      strings.TrimSpace(r.AdminListen),
+			MiragePolicy:                     strings.TrimSpace(r.MiragePolicy),
+			MirageAddress:                    strings.TrimSpace(r.MirageAddress),
+			SeedInstallEnabled:               r.SeedInstallEnabled,
+			SeedInstallRoot:                  strings.TrimSpace(r.SeedInstallRoot),
+			SeedInstallBinRoot:               strings.TrimSpace(r.SeedInstallBinRoot),
+			SeedInstallAllowInternalDefaults: r.SeedInstallAllowInternalDefault,
+			SeedInstallWhitelist:             tools.NormalizeNonEmptyList(r.SeedInstallWhitelist),
+			ConfigTemplatePath:               strings.TrimSpace(r.ConfigTemplatePath),
 		})
-	}
-	return out
-}
-
-func normalizeList(in []string) []string {
-	if len(in) == 0 {
-		return []string{}
-	}
-	out := make([]string, 0, len(in))
-	for _, raw := range in {
-		v := strings.TrimSpace(raw)
-		if v == "" {
-			continue
-		}
-		out = append(out, v)
 	}
 	return out
 }

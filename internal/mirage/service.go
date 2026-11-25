@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/signal"
@@ -18,46 +19,56 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/danmuck/edgectl/internal/adminauth"
+	"github.com/danmuck/edgectl/internal/identity"
+	"github.com/danmuck/edgectl/internal/observability"
 	"github.com/danmuck/edgectl/internal/protocol/frame"
 	"github.com/danmuck/edgectl/internal/protocol/schema"
 	"github.com/danmuck/edgectl/internal/protocol/session"
 	"github.com/danmuck/edgectl/internal/seeds"
+	"github.com/danmuck/edgectl/internal/tools"
 	logs "github.com/danmuck/smplog"
 )
 
 // Mirage session endpoint configuration.
 type ServiceConfig struct {
-	ListenAddr               string
-	RequireIdentityBinding   bool
-	MirageID                 string
-	AdminListenAddr          string
-	LocalGhostID             string
-	LocalGhostAdminAddr      string
-	GhostAdminFrameAuthToken string
-	PreloadGhostAdmins       []GhostAdminTarget
-	BuildlogPersistEnabled   bool
-	BuildlogSeedSelector     string
-	BuildlogKeyPrefix        string
-	RootGhostAdminAddr       string
-	GhostManifests           []GhostManifest
-	Session                  session.Config
+	ListenAddr             string
+	RequireIdentityBinding bool
+	MirageID               string
+	AdminListenAddr        string
+	// Northbound api/v1 listen address (api_v1.toml [transport]); empty disables api/v1.
+	APIv1ListenAddr        string
+	LocalGhostID           string
+	LocalGhostAdminAddr    string
+	PreloadGhostAdmins     []GhostAdminTarget
+	BuildlogPersistEnabled bool
+	BuildlogSeedSelector   string
+	BuildlogKeyPrefix      string
+	RootGhostAdminAddr     string
+	GhostManifests         []GhostManifest
+	Session                session.Config
+	// Dispatch attempts per command before retry_exhausted; <=0 uses DefaultCommandMaxAttempts.
+	CommandMaxAttempts int
+	// Mirage admin mTLS credentials (edgectl://mirage/<mirage_id>): serves the admin endpoint and
+	// dials Ghost admin endpoints. Empty CertFile = plaintext loopback only (development).
+	AdminTLS adminauth.Credentials
 }
 
 // Mirage service defaults for session endpoint configuration.
 func DefaultServiceConfig() ServiceConfig {
 	return ServiceConfig{
-		ListenAddr:               ":9000",
-		RequireIdentityBinding:   true,
-		MirageID:                 "mirage.local",
-		AdminListenAddr:          "",
-		LocalGhostID:             "ghost.local",
-		LocalGhostAdminAddr:      "127.0.0.1:7010",
-		GhostAdminFrameAuthToken: "",
-		BuildlogPersistEnabled:   false,
-		BuildlogSeedSelector:     "seed.fs",
-		BuildlogKeyPrefix:        "local/buildlogs/",
-		RootGhostAdminAddr:       "",
-		Session:                  session.DefaultConfig(),
+		ListenAddr:             ":9000",
+		RequireIdentityBinding: true,
+		MirageID:               "mirage.local",
+		AdminListenAddr:        "",
+		LocalGhostID:           "ghost.local",
+		LocalGhostAdminAddr:    "127.0.0.1:7010",
+		BuildlogPersistEnabled: false,
+		BuildlogSeedSelector:   "seed.fs",
+		BuildlogKeyPrefix:      "local/buildlogs/",
+		RootGhostAdminAddr:     "",
+		Session:                session.DefaultConfig(),
+		CommandMaxAttempts:     DefaultCommandMaxAttempts,
 	}
 }
 
@@ -130,6 +141,10 @@ type Service struct {
 
 	adminGhostMu    sync.RWMutex
 	adminGhostAddrs map[string]string
+	// Test seam for dependency plan dispatch; nil uses the Ghost admin client.
+	dependencyInstaller dependencyInstaller
+	// Test seam for the ssh/scp runner used by remote deploys; nil uses the system binaries.
+	sshRunner tools.CommandRunner
 }
 
 // Mirage service constructor using default configuration.
@@ -149,13 +164,17 @@ func NewServiceWithConfig(cfg ServiceConfig) *Service {
 		conns:           make(map[net.Conn]struct{}),
 		adminGhostAddrs: make(map[string]string),
 	}
+	svc.server.SetCommandRetryPolicy(CommandRetryPolicy{
+		MaxAttempts: cfg.CommandMaxAttempts,
+		Backoff:     cfg.Session.Backoff,
+	})
 	localAdminAddr := strings.TrimSpace(cfg.LocalGhostAdminAddr)
 	if localAdminAddr == "" {
 		localAdminAddr = strings.TrimSpace(cfg.RootGhostAdminAddr)
 	}
 	if localAdminAddr != "" {
-		svc.controlClient = svc.newGhostControlClient(localAdminAddr)
-		svc.server.SetGhostSpawner(NewGhostAdminSpawner(localAdminAddr))
+		svc.controlClient = svc.newGhostControlClient(cfg.LocalGhostID, localAdminAddr)
+		svc.server.SetGhostSpawner(NewGhostAdminSpawner(svc.controlClient))
 		localGhostID := strings.TrimSpace(cfg.LocalGhostID)
 		if localGhostID != "" {
 			svc.server.RegisterExecutor(localGhostID, NewGhostAdminCommandExecutor(svc.controlClient))
@@ -168,7 +187,7 @@ func NewServiceWithConfig(cfg ServiceConfig) *Service {
 		svc.buildlogStore = NewGhostSeedBuildlogStore(svc.controlClient, strings.TrimSpace(cfg.BuildlogSeedSelector))
 	}
 	if addr := strings.TrimSpace(cfg.RootGhostAdminAddr); addr != "" && localAdminAddr == "" {
-		svc.server.SetGhostSpawner(NewGhostAdminSpawner(addr))
+		svc.server.SetGhostSpawner(NewGhostAdminSpawner(svc.newGhostControlClient("", addr)))
 	}
 	return svc
 }
@@ -217,6 +236,13 @@ func (s *Service) Run() error {
 			controlErr <- s.serveAdminControl(ctx, strings.TrimSpace(s.cfg.AdminListenAddr))
 		}()
 	}
+	// Separate listener from the admin endpoint; a nil result means it stopped with ctx.
+	apiErr := make(chan error, 1)
+	if strings.TrimSpace(s.cfg.APIv1ListenAddr) != "" {
+		go func() {
+			apiErr <- s.serveAPIv1(ctx, strings.TrimSpace(s.cfg.APIv1ListenAddr))
+		}()
+	}
 	ghostHeartbeatErr := make(chan error, 1)
 	go func() {
 		ghostHeartbeatErr <- s.runGhostHeartbeatLoop(ctx)
@@ -229,6 +255,11 @@ func (s *Service) Run() error {
 	case err := <-serveErr:
 		return err
 	case err := <-controlErr:
+		if err != nil {
+			return err
+		}
+		return <-serveErr
+	case err := <-apiErr:
 		if err != nil {
 			return err
 		}
@@ -295,7 +326,7 @@ func (s *Service) SnapshotConnectedGhosts() []RegisteredGhost {
 	bound := s.snapshotGhostAdmins()
 	now := time.Now()
 	for ghostID, adminAddr := range bound {
-		client := s.newGhostControlClient(adminAddr)
+		client := s.newGhostControlClient(ghostID, adminAddr)
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		status, err := client.Status(ctx)
 		cancel()
@@ -399,7 +430,7 @@ func (s *Service) SnapshotSeedCatalog() []GhostSeedCatalog {
 			AdminAddr: strings.TrimSpace(adminAddr),
 		}
 
-		client := s.newGhostControlClient(entry.AdminAddr)
+		client := s.newGhostControlClient(entry.GhostID, entry.AdminAddr)
 		statusCtx, statusCancel := context.WithTimeout(context.Background(), 2*time.Second)
 		status, statusErr := client.Status(statusCtx)
 		statusCancel()
@@ -562,7 +593,7 @@ func (s *Service) runGhostHeartbeatLoop(ctx context.Context) error {
 		// Probe bound ghosts for health.
 		currentBound := s.snapshotGhostAdmins()
 		for ghostID, adminAddr := range currentBound {
-			client := s.newGhostControlClient(adminAddr)
+			client := s.newGhostControlClient(ghostID, adminAddr)
 			probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 			_, err := client.Status(probeCtx)
 			cancel()
@@ -596,7 +627,7 @@ func (s *Service) bindGhostToMirage(ghostID string, adminAddr string) error {
 	}
 	// Extract session listener port from mirage config so ghost can resolve session address.
 	sessionPort := extractPort(s.cfg.ListenAddr)
-	client := s.newGhostControlClient(addr)
+	client := s.newGhostControlClient(id, addr)
 	var lastErr error
 	for attempt := 1; attempt <= 5; attempt++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -650,35 +681,44 @@ func (s *Service) handleConn(conn net.Conn) {
 
 	for {
 		_ = conn.SetReadDeadline(time.Now().Add(s.cfg.Session.ReadTimeout))
+		// Clean disconnect at a frame boundary is not a framing error (ReadFrame reports it as short header).
+		if _, err := reader.Peek(1); err != nil {
+			s.logSessionFrameError(conn, reg.GhostID, 0, 0, session.ErrorCode(err), err)
+			return
+		}
+		// framing.md: unsupported version/magic/flags and malformed frames are stream-unsafe;
+		// log the canonical error fields and close the session.
 		fr, err := session.ReadFrame(reader, frame.DefaultLimits())
 		if err != nil {
+			s.logSessionFrameError(conn, reg.GhostID, 0, 0, session.ErrorCode(err), err)
 			return
 		}
 		if fr.Header.MessageType != schema.MsgEvent {
-			logs.Warnf(
-				"mirage.handleConn unexpected message_type=%d ghost_id=%q",
-				fr.Header.MessageType,
-				reg.GhostID,
-			)
+			s.logSessionFrameError(conn, reg.GhostID, fr.Header.MessageID, fr.Header.MessageType,
+				schema.ErrCodeSemanticValidation, fmt.Errorf("unexpected message_type=%d", fr.Header.MessageType))
 			return
 		}
 
 		event, err := session.DecodeEventFrame(fr)
 		if err != nil {
-			logs.Warnf("mirage.handleConn decode event err=%v", err)
+			s.logSessionFrameError(conn, reg.GhostID, fr.Header.MessageID, fr.Header.MessageType, session.ErrorCode(err), err)
 			return
 		}
-		if report, matched, err := s.server.ObserveEvent(event); err != nil {
-			logs.Warnf("mirage.handleConn observe event err=%v", err)
-		} else if matched {
-			logs.Warnf(
-				"mirage.handleConn report intent_id=%q phase=%q completion_state=%q command_id=%q event_id=%q",
-				report.IntentID,
-				report.Phase,
-				report.CompletionState,
-				report.CommandID,
-				report.EventID,
-			)
+		ingest := s.server.ingestEvent(reg.GhostID, event, fr.Header.MessageID)
+		report := ingest.Report
+		// Custody lines cover events in an intent's chain (matched, duplicate, rejected);
+		// unplanned session events such as heartbeat probes are not logged per delivery.
+		custody := ingest.Matched || ingest.Duplicate || ingest.Rejected
+		switch {
+		case ingest.Rejected:
+			emitEventIn(fr.Header.MessageID, reg.GhostID, event, observability.StatusRejected,
+				fmt.Sprintf("error_code=%d %s", ingest.Ack.AckCode, ingest.RejectReason))
+		case ingest.ObserveErr != nil:
+			emitEventIn(fr.Header.MessageID, reg.GhostID, event, "error", ingest.ObserveErr.Error())
+		case ingest.Duplicate:
+			emitEventIn(fr.Header.MessageID, reg.GhostID, event, observability.StatusDuplicate, "")
+		case ingest.Matched:
+			// Matched event and report lines were emitted by the orchestrator in causal order.
 			s.persistBuildlog("event_report", map[string]any{
 				"intent_id":        report.IntentID,
 				"phase":            report.Phase,
@@ -687,8 +727,7 @@ func (s *Service) handleConn(conn net.Conn) {
 				"event_id":         report.EventID,
 			})
 		}
-		ack := s.server.AcceptEvent(reg.GhostID, event)
-		ackPayload, err := session.EncodeEventAckFrame(fr.Header.MessageID, ack)
+		ackPayload, err := session.EncodeEventAckFrame(fr.Header.MessageID, ingest.Ack)
 		if err != nil {
 			logs.Warnf("mirage.handleConn encode event.ack err=%v", err)
 			return
@@ -698,7 +737,33 @@ func (s *Service) handleConn(conn net.Conn) {
 			logs.Warnf("mirage.handleConn write event.ack err=%v", err)
 			return
 		}
+		if custody {
+			emitEventAckOut(fr.Header.MessageID, ingest.Ack, event.IntentID)
+		}
+		// transport_security.toml binding_mismatch: reject the session after the rejected ack.
+		if ingest.Rejected {
+			return
+		}
 	}
+}
+
+// Session receive failure log with errors.toml error_log_fields; message_id/type are 0 when unavailable.
+// Clean peer disconnects (EOF) are not logged as errors.
+func (s *Service) logSessionFrameError(
+	conn net.Conn,
+	ghostID string,
+	messageID uint64,
+	messageType uint32,
+	code uint32,
+	err error,
+) {
+	if errors.Is(err, io.EOF) {
+		return
+	}
+	logs.Warnf(
+		"mirage.session frame error component=mirage peer=%q direction=inbound ghost_id=%q message_id=%d message_type=%d error_code=%d err=%q",
+		conn.RemoteAddr().String(), ghostID, messageID, messageType, code, err.Error(),
+	)
 }
 
 func (s *Service) persistBuildlog(kind string, payload any) {
@@ -730,8 +795,8 @@ func (s *Service) handleRegistration(
 	_ = conn.SetDeadline(time.Now().Add(s.cfg.Session.HandshakeTimeout))
 	now := uint64(time.Now().UnixMilli())
 	const (
-		errorCodeTransportFailure   = 1000
-		errorCodeSemanticValidation = 1300
+		errorCodeTransportFailure   = schema.ErrCodeTransportFailure
+		errorCodeSemanticValidation = schema.ErrCodeSemanticValidation
 	)
 
 	reg, err := session.ReadRegistration(reader)
@@ -823,41 +888,54 @@ func (s *Service) authenticateConn(conn net.Conn) (peerAuth, error) {
 	if len(state.PeerCertificates) == 0 {
 		return peerAuth{}, session.ErrMTLSRequired
 	}
-	peerID := peerIdentityFromCert(state.PeerCertificates[0])
-	if peerID == "" {
-		return peerAuth{}, fmt.Errorf("mirage: empty peer identity from certificate")
+	// Session peers must present a ghost principal; its id is bound to the registered ghost_id.
+	principal, err := identity.RequireRole(state.PeerCertificates[0], identity.RoleGhost)
+	if err != nil {
+		return peerAuth{}, fmt.Errorf("mirage: session peer identity: %w", err)
 	}
-	return peerAuth{PeerIdentity: peerID, Authenticated: true}, nil
+	return peerAuth{PeerIdentity: principal.ID, Authenticated: true}, nil
 }
 
 // Mirage certificate identity extractor using CN/URI/DNS preference order.
-func peerIdentityFromCert(cert *x509.Certificate) string {
-	if cert == nil {
-		return ""
+// Ghost admin client for one target. With admin TLS, Mirage dials as its own principal and the
+// server must be edgectl://ghost/<ghostID> (any ghost principal when ghostID is unknown; the
+// verified principal is then available from PeerPrincipal).
+func (s *Service) newGhostControlClient(ghostID string, adminAddr string) *GhostControlClient {
+	client := NewGhostControlClient(adminAddr)
+	if !s.cfg.AdminTLS.Enabled() {
+		return client
 	}
-	if v := strings.TrimSpace(cert.Subject.CommonName); v != "" {
-		return v
+	check := adminauth.ExpectRole(identity.RoleGhost)
+	if id := strings.TrimSpace(ghostID); id != "" {
+		check = adminauth.ExpectPrincipal(identity.Principal{Role: identity.RoleGhost, ID: id})
 	}
-	if len(cert.URIs) > 0 {
-		if v := strings.TrimSpace(cert.URIs[0].String()); v != "" {
-			return v
+	cfg, err := adminauth.ClientTLSConfig(s.cfg.AdminTLS, s.selfPrincipal(), func(p identity.Principal) error {
+		if err := check(p); err != nil {
+			return err
 		}
-	}
-	if len(cert.DNSNames) > 0 {
-		if v := strings.TrimSpace(cert.DNSNames[0]); v != "" {
-			return v
-		}
-	}
-	return ""
+		client.setPeer(p)
+		return nil
+	})
+	return client.WithTLS(cfg, err)
 }
 
-func (s *Service) newGhostControlClient(adminAddr string) *GhostControlClient {
-	return NewGhostControlClient(adminAddr).WithCommandFrameAuthToken(strings.TrimSpace(s.cfg.GhostAdminFrameAuthToken))
+// Principal this Mirage serves and dials as.
+func (s *Service) selfPrincipal() identity.Principal {
+	return identity.Principal{Role: identity.RoleMirage, ID: strings.TrimSpace(s.cfg.MirageID)}
+}
+
+// Production security mode follows the session security mode.
+func (s *Service) productionMode() bool {
+	return session.NormalizeSecurityMode(s.cfg.Session.SecurityMode) == session.SecurityModeProduction
 }
 
 // Mirage TLS server-config builder for listener transport enforcement.
 func (s *Service) serverTLSConfig() (*tls.Config, error) {
-	cert, err := tls.LoadX509KeyPair(s.cfg.Session.TLS.CertFile, s.cfg.Session.TLS.KeyFile)
+	cert, err := identity.LoadKeyPair(s.cfg.Session.TLS.CertFile, s.cfg.Session.TLS.KeyFile)
+	if err != nil {
+		return nil, err
+	}
+	denied, err := identity.ParseDeniedSerials(s.cfg.Session.TLS.DeniedSerials)
 	if err != nil {
 		return nil, err
 	}
@@ -879,6 +957,7 @@ func (s *Service) serverTLSConfig() (*tls.Config, error) {
 			return nil, fmt.Errorf("mirage: parse tls ca bundle: %s", s.cfg.Session.TLS.CAFile)
 		}
 		cfg.ClientCAs = pool
+		cfg.VerifyPeerCertificate = denied.VerifyPeerNotDenied
 	}
 	return cfg, nil
 }

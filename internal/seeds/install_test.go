@@ -2,10 +2,10 @@ package seeds
 
 import (
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/danmuck/edgectl/internal/tools"
 )
 
 type installFakeRunner struct {
@@ -17,11 +17,11 @@ type installFakeRunner struct {
 type installRunResult struct {
 	stdout   []byte
 	stderr   []byte
-	exitCode int32
+	exitCode uint32
 	err      error
 }
 
-func (r *installFakeRunner) Run(name string, args ...string) ([]byte, []byte, int32, error) {
+func (r *installFakeRunner) Run(name string, args ...string) ([]byte, []byte, uint32, error) {
 	cmd := []string{name}
 	cmd = append(cmd, args...)
 	r.commands = append(r.commands, cmd)
@@ -47,74 +47,6 @@ func TestNewInstallerRejectsInstallRootOutsideLocal(t *testing.T) {
 	}
 }
 
-func TestInstallWorkspaceCopyFromBuildlog(t *testing.T) {
-	workspace := t.TempDir()
-	srcPath := filepath.Join(workspace, "local", "buildlogs", "2026-02-07_13:00.toml")
-	if err := os.MkdirAll(filepath.Dir(srcPath), 0o755); err != nil {
-		t.Fatalf("mkdir src: %v", err)
-	}
-	if err := os.WriteFile(srcPath, []byte("buildlog data"), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-
-	installer, err := NewInstaller(InstallerConfig{
-		WorkspaceRoot: workspace,
-		InstallRoot:   "local/seeds",
-		Whitelist:     []string{"seed.archive"},
-		Runner:        &installFakeRunner{},
-	})
-	if err != nil {
-		t.Fatalf("new installer: %v", err)
-	}
-
-	err = installer.Install(InstallSpec{
-		SeedID:      "seed.archive",
-		Method:      InstallMethodWorkspaceCopy,
-		SourcePath:  "local/buildlogs/2026-02-07_13:00.toml",
-		Destination: "seed.archive/data/buildlog.toml",
-	})
-	if err != nil {
-		t.Fatalf("install workspace copy: %v", err)
-	}
-
-	destPath := filepath.Join(workspace, "local", "seeds", "seed.archive", "data", "buildlog.toml")
-	out, err := os.ReadFile(destPath)
-	if err != nil {
-		t.Fatalf("read dest: %v", err)
-	}
-	if string(out) != "buildlog data" {
-		t.Fatalf("unexpected dest content: %q", string(out))
-	}
-}
-
-func TestInstallRejectsSourceOutsideSandbox(t *testing.T) {
-	workspace := t.TempDir()
-	outside := filepath.Join(t.TempDir(), "outside.txt")
-	if err := os.WriteFile(outside, []byte("x"), 0o644); err != nil {
-		t.Fatalf("write outside: %v", err)
-	}
-
-	installer, err := NewInstaller(InstallerConfig{
-		WorkspaceRoot: workspace,
-		InstallRoot:   "local/seeds",
-		Whitelist:     []string{"seed.archive"},
-		Runner:        &installFakeRunner{},
-	})
-	if err != nil {
-		t.Fatalf("new installer: %v", err)
-	}
-
-	err = installer.Install(InstallSpec{
-		SeedID:      "seed.archive",
-		Method:      InstallMethodWorkspaceCopy,
-		SourcePath:  outside,
-		Destination: "seed.archive/data/outside.txt",
-	})
-	if !errors.Is(err, ErrInstallSandboxViolation) {
-		t.Fatalf("expected ErrInstallSandboxViolation, got %v", err)
-	}
-}
-
 func TestInstallRejectsUnwhitelistedSeed(t *testing.T) {
 	workspace := t.TempDir()
 	installer, err := NewInstaller(InstallerConfig{
@@ -131,6 +63,7 @@ func TestInstallRejectsUnwhitelistedSeed(t *testing.T) {
 		SeedID:  "seed.mongod",
 		Method:  InstallMethodGitHub,
 		RepoURL: "https://github.com/example/mongod-seed.git",
+		Ref:     "v1.2.3",
 	})
 	if !errors.Is(err, ErrInstallNotWhitelisted) {
 		t.Fatalf("expected ErrInstallNotWhitelisted, got %v", err)
@@ -155,6 +88,7 @@ func TestInstallGitHubUsesCloneAndBranch(t *testing.T) {
 		Method:      InstallMethodGitHub,
 		RepoURL:     "https://github.com/example/mongod-seed.git",
 		Branch:      "main",
+		Ref:         "v1.2.3",
 		Destination: "seed.mongod",
 	}); err != nil {
 		t.Fatalf("install github: %v", err)
@@ -245,5 +179,21 @@ func TestInstallBrewBootstrapsAndInstalls(t *testing.T) {
 	}
 	if got := strings.Join(runner.commands[4], " "); got != "brew install mongodb-community@7.0" {
 		t.Fatalf("unexpected install command: %q", got)
+	}
+}
+
+func TestNewInstallerDefaultRunnerUsesEnvRunner(t *testing.T) {
+	workspace := t.TempDir()
+	installer, err := NewInstaller(InstallerConfig{
+		WorkspaceRoot: workspace,
+		InstallRoot:   "local/seeds",
+		BinRoot:       "local/bin",
+		Whitelist:     []string{"seed.flow"},
+	})
+	if err != nil {
+		t.Fatalf("new installer: %v", err)
+	}
+	if _, ok := installer.runner.(tools.EnvRunner); !ok {
+		t.Fatalf("expected default runner type tools.EnvRunner, got %T", installer.runner)
 	}
 }

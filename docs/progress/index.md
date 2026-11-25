@@ -24,6 +24,11 @@ The canonical high-level MVP phase schedule is [`mvp_buildplan.md`](mvp_buildpla
 - [x] P4 conformance verification report: [`p4_conformance_report.md`](p4_conformance_report.md)
 - [x] Build logs (initial prompt + follow-up appends) and template: [`buildlog/README.md`](buildlog/README.md)
 - [x] Future API v1 proposal tracker: [`future_api_v1.md`](future_api_v1.md)
+- [x] Pi Homebrew bootstrap and ghost-local dependency control pass: [`pi_brew_bootstrap_validation.md`](pi_brew_bootstrap_validation.md)
+- [x] Claude policy hardening and repo-wide validation pass: [`claude_code_policy_validation.md`](claude_code_policy_validation.md)
+- [ ] Admin boundary security (mTLS identities, authorization, signed approvals; contract approved): [`admin_security.md`](admin_security.md)
+
+- [ ] Northbound api/v1 for a web GUI (v1 and the operator parity amendment implemented; tracker_suite module in progress): [`api_v1_gui.md`](api_v1_gui.md)
 
 ## Intended Read Order
 
@@ -46,3 +51,6 @@ The canonical high-level MVP phase schedule is [`mvp_buildplan.md`](mvp_buildpla
 17. [`p4_conformance_report.md`](p4_conformance_report.md)
 18. [`buildlog/README.md`](buildlog/README.md)
 19. [`future_api_v1.md`](future_api_v1.md)
+20. [`pi_brew_bootstrap_validation.md`](pi_brew_bootstrap_validation.md)
+21. [`claude_code_policy_validation.md`](claude_code_policy_validation.md)
+22. [`admin_security.md`](admin_security.md)

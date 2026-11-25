@@ -28,5 +28,7 @@ Code is never authoritative over contracts.
 - Record reasoning in `docs/progress/`
 - Log actions in `local/buildlogs/`
 - Treat undocumented behavior as invalid
+- Do not commit without explicit user approval in the active thread
+- For large feature implementations, pause after validation so the user can review and commit
 
 When in doubt, stop.

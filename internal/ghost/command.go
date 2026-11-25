@@ -23,6 +23,8 @@ type CommandEnv struct {
 	SeedSelector string
 	Operation    string
 	Args         map[string]string
+	// Sender identity for custody logging (admin client address, "local"); not a wire field.
+	Peer string
 }
 
 // Ghost command-envelope validator for required boundary fields.

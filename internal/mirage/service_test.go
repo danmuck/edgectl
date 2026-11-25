@@ -274,6 +274,8 @@ func TestServiceIngestEventEmitsReportHistory(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("submit issue: %v", err)
 	}
+	// The session event below stands for the result of a command Mirage already sent.
+	svc.server.loop.markDispatched("cmd.intent.1.1")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -372,8 +374,8 @@ func TestServiceRegistrationTLSMTLSIdentityBound(t *testing.T) {
 
 	dir := t.TempDir()
 	ca := tlstest.NewAuthority(t, dir, "edgectl-test-ca")
-	serverCert, serverKey := ca.IssueServerCert(t, dir, "mirage.local", []string{"mirage.local"}, []net.IP{net.ParseIP("127.0.0.1")})
-	clientCert, clientKey := ca.IssueClientCert(t, dir, "ghost.alpha")
+	serverCert, serverKey := ca.IssuePrincipalCert(t, dir, "edgectl://mirage/mirage.local", []string{"mirage.local"}, []net.IP{net.ParseIP("127.0.0.1")})
+	clientCert, clientKey := ca.IssuePrincipalCert(t, dir, "edgectl://ghost/ghost.alpha", nil, nil)
 
 	cfg := DefaultServiceConfig()
 	cfg.RequireIdentityBinding = true
@@ -420,7 +422,8 @@ func TestServiceRegistrationTLSMTLSIdentityBound(t *testing.T) {
 		SeedList: []session.SeedInfo{
 			{ID: "seed.flow", Name: "Flow", Description: "Deterministic control-flow seed"},
 		},
-		Session: clientSessionCfg,
+		Session:         clientSessionCfg,
+		MiragePrincipal: "edgectl://mirage/mirage.local",
 	})
 	if err != nil {
 		t.Fatalf("new client: %v", err)
@@ -445,8 +448,8 @@ func TestServiceRegistrationTLSIdentityMismatchRejected(t *testing.T) {
 
 	dir := t.TempDir()
 	ca := tlstest.NewAuthority(t, dir, "edgectl-test-ca")
-	serverCert, serverKey := ca.IssueServerCert(t, dir, "mirage.local", []string{"mirage.local"}, []net.IP{net.ParseIP("127.0.0.1")})
-	clientCert, clientKey := ca.IssueClientCert(t, dir, "ghost.beta")
+	serverCert, serverKey := ca.IssuePrincipalCert(t, dir, "edgectl://mirage/mirage.local", []string{"mirage.local"}, []net.IP{net.ParseIP("127.0.0.1")})
+	clientCert, clientKey := ca.IssuePrincipalCert(t, dir, "edgectl://ghost/ghost.beta", nil, nil)
 
 	cfg := DefaultServiceConfig()
 	cfg.RequireIdentityBinding = true
@@ -492,6 +495,7 @@ func TestServiceRegistrationTLSIdentityMismatchRejected(t *testing.T) {
 		PeerIdentity:       "ghost.alpha",
 		SeedList:           []session.SeedInfo{},
 		Session:            clientSessionCfg,
+		MiragePrincipal:    "edgectl://mirage/mirage.local",
 		MaxConnectAttempts: 1,
 	})
 	if err != nil {

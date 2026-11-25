@@ -104,34 +104,34 @@ func (s *Seed) Execute(action string, args map[string]string) (seeds.SeedResult,
 	case "put":
 		key := strings.TrimSpace(args["key"])
 		if key == "" {
-			return errorResult("missing key"), fmt.Errorf("seed.kv: missing key")
+			return seeds.ErrorResult("missing key"), fmt.Errorf("seed.kv: missing key")
 		}
 		val := args["value"]
 		s.mu.Lock()
 		s.store[key] = val
 		s.mu.Unlock()
-		return okResult(fmt.Sprintf("ok put key=%s\n", key)), nil
+		return seeds.OKResult(fmt.Sprintf("ok put key=%s\n", key)), nil
 	case "get":
 		key := strings.TrimSpace(args["key"])
 		if key == "" {
-			return errorResult("missing key"), fmt.Errorf("seed.kv: missing key")
+			return seeds.ErrorResult("missing key"), fmt.Errorf("seed.kv: missing key")
 		}
 		s.mu.RLock()
 		val, ok := s.store[key]
 		s.mu.RUnlock()
 		if !ok {
-			return errorResult(fmt.Sprintf("missing key=%s", key)), fmt.Errorf("seed.kv: missing key=%s", key)
+			return seeds.ErrorResult(fmt.Sprintf("missing key=%s", key)), fmt.Errorf("seed.kv: missing key=%s", key)
 		}
-		return okResult(val + "\n"), nil
+		return seeds.OKResult(val + "\n"), nil
 	case "delete":
 		key := strings.TrimSpace(args["key"])
 		if key == "" {
-			return errorResult("missing key"), fmt.Errorf("seed.kv: missing key")
+			return seeds.ErrorResult("missing key"), fmt.Errorf("seed.kv: missing key")
 		}
 		s.mu.Lock()
 		delete(s.store, key)
 		s.mu.Unlock()
-		return okResult(fmt.Sprintf("ok delete key=%s\n", key)), nil
+		return seeds.OKResult(fmt.Sprintf("ok delete key=%s\n", key)), nil
 	case "list":
 		prefix := strings.TrimSpace(args["prefix"])
 		s.mu.RLock()
@@ -143,24 +143,9 @@ func (s *Seed) Execute(action string, args map[string]string) (seeds.SeedResult,
 		}
 		s.mu.RUnlock()
 		sort.Strings(keys)
-		return okResult(strings.Join(keys, "\n") + "\n"), nil
+		return seeds.OKResult(strings.Join(keys, "\n") + "\n"), nil
 	default:
-		return errorResult("unknown action"), fmt.Errorf("seed.kv: unknown action=%q", action)
+		return seeds.ErrorResult("unknown action"), fmt.Errorf("seed.kv: unknown action=%q", action)
 	}
 }
 
-func okResult(stdout string) seeds.SeedResult {
-	return seeds.SeedResult{
-		Status:   "ok",
-		Stdout:   []byte(stdout),
-		ExitCode: 0,
-	}
-}
-
-func errorResult(msg string) seeds.SeedResult {
-	return seeds.SeedResult{
-		Status:   "error",
-		Stderr:   []byte(msg + "\n"),
-		ExitCode: 1,
-	}
-}

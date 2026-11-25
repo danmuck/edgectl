@@ -10,52 +10,44 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/danmuck/edgectl/internal/ghost"
 	"github.com/danmuck/edgectl/internal/protocol/session"
-	"github.com/danmuck/edgectl/internal/seeds"
+	"github.com/danmuck/edgectl/internal/tools"
 )
 
 // ghostctl config.toml key mapping to Ghost runtime settings.
 type fileConfig struct {
-	ID                   string            `toml:"id"`
-	ProjectRoot          string            `toml:"project_root"`
-	ProjectFetchOnBoot   bool              `toml:"project_fetch_on_boot"`
-	Seeds                []string          `toml:"seeds"`
-	Heartbeat            string            `toml:"heartbeat"`
-	HeartbeatInterval    string            `toml:"heartbeat_interval"`
-	HeartbeatIntervalMS  int64             `toml:"heartbeat_interval_ms"`
-	AdminListen          string            `toml:"admin_listen"`
-	MiragePolicy         string            `toml:"mirage_policy"`
-	MirageAddress        string            `toml:"mirage_address"`
-	MiragePeerIdentity   string            `toml:"mirage_peer_identity"`
-	MirageMaxAttempts    int               `toml:"mirage_max_connect_attempts"`
-	MirageSecurityMode   string            `toml:"mirage_security_mode"`
-	MirageTLSEnabled     bool              `toml:"mirage_tls_enabled"`
-	MirageTLSMutual      bool              `toml:"mirage_tls_mutual"`
-	MirageTLSCertFile    string            `toml:"mirage_tls_cert_file"`
-	MirageTLSKeyFile     string            `toml:"mirage_tls_key_file"`
-	MirageTLSCAFile      string            `toml:"mirage_tls_ca_file"`
-	MirageTLSServerName  string            `toml:"mirage_tls_server_name"`
-	MirageTLSInsecure    bool              `toml:"mirage_tls_insecure_skip_verify"`
-	SeedInstallEnabled   bool              `toml:"seed_install_enabled"`
-	SeedInstallRoot      string            `toml:"seed_install_root"`
-	SeedInstallBinRoot   string            `toml:"seed_install_bin_root"`
-	SeedInstallWhitelist []string          `toml:"seed_install_whitelist"`
-	SeedInstall          []fileSeedInstall `toml:"seed_install"`
-}
-
-// ghostctl seed-install table mapping from config.toml.
-type fileSeedInstall struct {
-	SeedID             string   `toml:"seed_id"`
-	Method             string   `toml:"method"`
-	Repo               string   `toml:"repo"`
-	Branch             string   `toml:"branch"`
-	Ref                string   `toml:"ref"`
-	Source             string   `toml:"source"`
-	Destination        string   `toml:"destination"`
-	Package            string   `toml:"package"`
-	Tap                string   `toml:"tap"`
-	BootstrapIfMissing bool     `toml:"bootstrap_if_missing"`
-	BootstrapCommand   []string `toml:"bootstrap_cmd"`
-	InstallToBin       bool     `toml:"install_to_bin"`
+	ID                  string   `toml:"id"`
+	ProjectRoot         string   `toml:"project_root"`
+	ProjectFetchOnBoot  bool     `toml:"project_fetch_on_boot"`
+	Seeds               []string `toml:"seeds"`
+	Heartbeat           string   `toml:"heartbeat"`
+	HeartbeatInterval   string   `toml:"heartbeat_interval"`
+	HeartbeatIntervalMS int64    `toml:"heartbeat_interval_ms"`
+	AdminListen         string   `toml:"admin_listen"`
+	// Removed (admin_security.toml replaces it with mTLS); present only so loading can refuse it.
+	AdminFrameAuthToken    string   `toml:"admin_frame_auth_token"`
+	AdminTLSCertFile       string   `toml:"admin_tls_cert_file"`
+	AdminTLSKeyFile        string   `toml:"admin_tls_key_file"`
+	AdminTLSCAFile         string   `toml:"admin_tls_ca_file"`
+	AdminTLSDeniedSerials  []string `toml:"admin_tls_denied_serials"`
+	MiragePrincipal        string   `toml:"mirage_principal"`
+	AdminOperatorAccess    bool     `toml:"admin_operator_access"`
+	MiragePolicy           string   `toml:"mirage_policy"`
+	MirageAddress          string   `toml:"mirage_address"`
+	MiragePeerIdentity     string   `toml:"mirage_peer_identity"`
+	MirageMaxAttempts      int      `toml:"mirage_max_connect_attempts"`
+	MirageSecurityMode     string   `toml:"mirage_security_mode"`
+	MirageTLSEnabled       bool     `toml:"mirage_tls_enabled"`
+	MirageTLSMutual        bool     `toml:"mirage_tls_mutual"`
+	MirageTLSCertFile      string   `toml:"mirage_tls_cert_file"`
+	MirageTLSKeyFile       string   `toml:"mirage_tls_key_file"`
+	MirageTLSCAFile        string   `toml:"mirage_tls_ca_file"`
+	MirageTLSServerName    string   `toml:"mirage_tls_server_name"`
+	MirageTLSInsecure      bool     `toml:"mirage_tls_insecure_skip_verify"`
+	MirageTLSDeniedSerials []string `toml:"mirage_tls_denied_serials"`
+	SeedInstallEnabled     bool     `toml:"seed_install_enabled"`
+	SeedInstallRoot        string   `toml:"seed_install_root"`
+	SeedInstallBinRoot     string   `toml:"seed_install_bin_root"`
+	SeedInstallWhitelist   []string `toml:"seed_install_whitelist"`
 }
 
 // ghostctl loader for TOML config with default overlay.
@@ -85,7 +77,7 @@ func loadServiceConfig(path string) (ghost.ServiceConfig, error) {
 	}
 
 	if meta.IsDefined("seeds") {
-		cfg.BuiltinSeedIDs = normalizeSeeds(raw.Seeds)
+		cfg.BuiltinSeedIDs = tools.NormalizeNonEmptyList(raw.Seeds)
 	}
 
 	if meta.IsDefined("heartbeat") {
@@ -147,8 +139,39 @@ func loadServiceConfig(path string) (ghost.ServiceConfig, error) {
 	if meta.IsDefined("mirage_tls_server_name") {
 		cfg.Mirage.SessionConfig.TLS.ServerName = strings.TrimSpace(raw.MirageTLSServerName)
 	}
+	// Revoked certificate serials (hex) rejected on every Mirage session handshake.
+	if meta.IsDefined("mirage_tls_denied_serials") {
+		cfg.Mirage.SessionConfig.TLS.DeniedSerials = tools.NormalizeNonEmptyList(raw.MirageTLSDeniedSerials)
+	}
 	if meta.IsDefined("mirage_tls_insecure_skip_verify") {
 		cfg.Mirage.SessionConfig.TLS.InsecureSkipVerify = raw.MirageTLSInsecure
+	}
+	// Admin endpoint mTLS identity edgectl://ghost/<id> (admin_security.toml [transport]).
+	if meta.IsDefined("admin_tls_cert_file") {
+		cfg.AdminTLS.CertFile = strings.TrimSpace(raw.AdminTLSCertFile)
+	}
+	if meta.IsDefined("admin_tls_key_file") {
+		cfg.AdminTLS.KeyFile = strings.TrimSpace(raw.AdminTLSKeyFile)
+	}
+	if meta.IsDefined("admin_tls_ca_file") {
+		cfg.AdminTLS.CAFile = strings.TrimSpace(raw.AdminTLSCAFile)
+	}
+	if meta.IsDefined("admin_tls_denied_serials") {
+		cfg.AdminTLS.DeniedSerials = tools.NormalizeNonEmptyList(raw.AdminTLSDeniedSerials)
+	}
+	// Pinned Mirage principal for session and admin peers (admin_security.toml ghost_pinning).
+	if meta.IsDefined("mirage_principal") {
+		cfg.MiragePrincipal = strings.TrimSpace(raw.MiragePrincipal)
+	}
+	// Honor operator principals on this Ghost's admin endpoint (off by default).
+	if meta.IsDefined("admin_operator_access") {
+		cfg.AdminOperatorAccess = raw.AdminOperatorAccess
+	}
+	// The shared admin token was removed; refuse configs that still carry it so no one relies on it.
+	if meta.IsDefined("admin_frame_auth_token") {
+		return ghost.ServiceConfig{}, fmt.Errorf("load ghost config: admin_frame_auth_token was removed " +
+			"(docs/architecture/definitions/admin_security.toml); delete it and set admin_tls_cert_file, " +
+			"admin_tls_key_file, admin_tls_ca_file, and mirage_principal")
 	}
 	if meta.IsDefined("seed_install_enabled") {
 		cfg.SeedInstall.Enabled = raw.SeedInstallEnabled
@@ -160,79 +183,14 @@ func loadServiceConfig(path string) (ghost.ServiceConfig, error) {
 		cfg.SeedInstall.BinRoot = strings.TrimSpace(raw.SeedInstallBinRoot)
 	}
 	if meta.IsDefined("seed_install_whitelist") {
-		cfg.SeedInstall.Whitelist = normalizeList(raw.SeedInstallWhitelist)
+		cfg.SeedInstall.Whitelist = tools.NormalizeNonEmptyList(raw.SeedInstallWhitelist)
 	}
+	// Install plans come only from Mirage-approved proposals (docs/progress/mvp_p8.md Slice F).
 	if meta.IsDefined("seed_install") {
-		specs, err := parseSeedInstallSpecs(raw.SeedInstall)
-		if err != nil {
-			return ghost.ServiceConfig{}, err
-		}
-		cfg.SeedInstall.Specs = specs
+		return ghost.ServiceConfig{}, fmt.Errorf("seed_install specs are no longer accepted in ghost config: dependency installs require a Mirage-approved proposal")
 	}
 
 	return cfg, nil
-}
-
-// ghostctl seed list normalizer that trims ids and drops empty entries.
-func normalizeSeeds(in []string) []string {
-	if len(in) == 0 {
-		return []string{}
-	}
-	out := make([]string, 0, len(in))
-	for _, seed := range in {
-		v := strings.TrimSpace(seed)
-		if v == "" {
-			continue
-		}
-		out = append(out, v)
-	}
-	return out
-}
-
-// ghostctl string-list normalizer that trims values and drops empty entries.
-func normalizeList(in []string) []string {
-	if len(in) == 0 {
-		return []string{}
-	}
-	out := make([]string, 0, len(in))
-	for _, raw := range in {
-		v := strings.TrimSpace(raw)
-		if v == "" {
-			continue
-		}
-		out = append(out, v)
-	}
-	return out
-}
-
-// ghostctl seed-install parser from config table entries into install specs.
-func parseSeedInstallSpecs(in []fileSeedInstall) ([]seeds.InstallSpec, error) {
-	out := make([]seeds.InstallSpec, 0, len(in))
-	for _, row := range in {
-		seedID := strings.TrimSpace(row.SeedID)
-		method := strings.TrimSpace(row.Method)
-		if seedID == "" {
-			return nil, fmt.Errorf("parse seed_install: missing seed_id")
-		}
-		if method == "" {
-			return nil, fmt.Errorf("parse seed_install seed_id=%q: missing method", seedID)
-		}
-		out = append(out, seeds.InstallSpec{
-			SeedID:             seedID,
-			Method:             seeds.InstallMethod(strings.ToLower(method)),
-			RepoURL:            strings.TrimSpace(row.Repo),
-			Branch:             strings.TrimSpace(row.Branch),
-			Ref:                strings.TrimSpace(row.Ref),
-			SourcePath:         strings.TrimSpace(row.Source),
-			Destination:        strings.TrimSpace(row.Destination),
-			Package:            strings.TrimSpace(row.Package),
-			Tap:                strings.TrimSpace(row.Tap),
-			BootstrapIfMissing: row.BootstrapIfMissing,
-			BootstrapCommand:   normalizeList(row.BootstrapCommand),
-			InstallToBin:       row.InstallToBin,
-		})
-	}
-	return out, nil
 }
 
 // ghostctl workspace-root resolver using nearest parent directory with go.mod.
@@ -251,7 +209,7 @@ func resolveWorkspaceRoot(configPath string) string {
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return dir
+			return start
 		}
 		dir = parent
 	}
