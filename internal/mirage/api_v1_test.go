@@ -79,6 +79,9 @@ func apiV1Do(t *testing.T, c *http.Client, method string, url string, body strin
 	if err != nil {
 		t.Fatal(err)
 	}
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	for i := 0; i+1 < len(headers); i += 2 {
 		req.Header.Set(headers[i], headers[i+1])
 	}
@@ -371,7 +374,59 @@ func TestAPIv1PlaintextLoopbackOnly(t *testing.T) {
 	}
 
 	base := serveAPIv1ForTest(t, svc)
-	if got := apiV1Do(t, &http.Client{Timeout: 5 * time.Second}, "GET", base+"/api/v1/status", ""); !got.OK {
+	plain := &http.Client{Timeout: 5 * time.Second}
+	if got := apiV1Do(t, plain, "GET", base+"/api/v1/status", ""); !got.OK {
 		t.Fatalf("loopback status: %+v", got.Error)
+	}
+	// Privileged endpoints need an mTLS peer even on loopback, decided before any Ghost is asked.
+	wantAPIv1Failure(t, apiV1Do(t, plain, "POST", base+"/api/v1/ghosts/spawn-local", `{"target_name":"a","admin_addr":"127.0.0.1:7031"}`),
+		http.StatusForbidden, schema.ErrCodeTransportFailure, "transport")
+}
+
+// A web page must not be able to drive the plaintext listener: cross-site requests, form-style
+// bodies and rebound hostnames are refused before any action runs.
+func TestAPIv1RefusesBrowserRequests(t *testing.T) {
+	testlog.Start(t)
+	cfg := DefaultServiceConfig()
+	cfg.LocalGhostID = ""
+	cfg.LocalGhostAdminAddr = ""
+	svc := NewServiceWithConfig(cfg)
+	base := serveAPIv1ForTest(t, svc)
+	plain := &http.Client{Timeout: 5 * time.Second}
+	denied := func(got apiV1TestReply) {
+		t.Helper()
+		wantAPIv1Failure(t, got, http.StatusForbidden, schema.ErrCodeTransportFailure, "transport")
+	}
+
+	denied(apiV1Do(t, plain, "GET", base+"/api/v1/status", "", "Origin", "http://evil.example"))
+	denied(apiV1Do(t, plain, "GET", base+"/api/v1/status", "", "Sec-Fetch-Site", "cross-site"))
+	denied(apiV1Do(t, plain, "GET", base+"/api/v1/status", "", "Sec-Fetch-Site", "same-origin"))
+	denied(apiV1Do(t, plain, "POST", base+"/api/v1/intents", apiV1TestIssue, "Origin", "null"))
+
+	// DNS rebinding: the connection reaches loopback but the Host header names another site.
+	req, err := http.NewRequest("GET", base+"/api/v1/status", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = "evil.example:7021"
+	resp, err := plain.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("rebound host: status %d", resp.StatusCode)
+	}
+
+	// A body a page can send without a preflight (text/plain) is not accepted as an issue.
+	wantAPIv1Failure(t, apiV1Do(t, plain, "POST", base+"/api/v1/intents", apiV1TestIssue, "Content-Type", "text/plain"),
+		http.StatusBadRequest, schema.ErrCodeSemanticValidation, "semantic")
+	if ids := svc.Server().ListIntentIDs(); len(ids) != 0 {
+		t.Fatalf("refused requests mutated state: %v", ids)
+	}
+
+	// Ordinary clients are unaffected.
+	if got := apiV1Do(t, plain, "GET", strings.Replace(base, "127.0.0.1", "localhost", 1)+"/api/v1/status", "", "Sec-Fetch-Site", "none"); !got.OK {
+		t.Fatalf("localhost client: %+v", got.Error)
 	}
 }

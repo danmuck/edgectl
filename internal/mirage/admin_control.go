@@ -96,7 +96,7 @@ func adminErrorCode(err error) uint32 {
 		return ghostErr.Code
 	}
 	if errors.Is(err, adminauth.ErrAuthRequired) || errors.Is(err, adminauth.ErrAuthorizationDenied) ||
-		errors.Is(err, ErrIntentActorMismatch) {
+		errors.Is(err, errAPIv1BrowserRequest) || errors.Is(err, ErrIntentActorMismatch) {
 		return schema.ErrCodeTransportFailure
 	}
 	switch {

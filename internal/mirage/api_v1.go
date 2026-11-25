@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"strconv"
@@ -34,6 +35,10 @@ const (
 	// Bound for the Ghost read behind GET /api/v1/executions/{command_id}.
 	apiV1ExecutionTimeout = 5 * time.Second
 )
+
+// Request came from, or could have been sent by, a web page; browsers are not api/v1 clients
+// (api_v1.toml [transport] cross_origin).
+var errAPIv1BrowserRequest = errors.New("mirage.api: browser-originated request refused")
 
 // Unknown api/v1 path or method.
 var errAPIv1NotFound = errors.New("mirage.api: no such endpoint")
@@ -70,6 +75,8 @@ type apiV1Call struct {
 type apiV1Endpoint struct {
 	// Admin action the endpoint maps to (api_v1.toml [endpoints.*] action).
 	action string
+	// Endpoint requires an mTLS peer in every security mode (api_v1.toml [endpoints.*] privileged).
+	privileged bool
 	// Fills the admin request from the HTTP request; nil when the action takes no parameters.
 	build func(r *http.Request, req *adminControlRequest) error
 	// Converts the admin action's data to the contract shape.
@@ -129,7 +136,7 @@ func (s *Service) apiV1Handler() http.Handler {
 	route("GET /api/v1/services", apiV1Endpoint{action: "available_services", shape: apiV1ShapeServices})
 	route("GET /api/v1/seeds", apiV1Endpoint{action: "seed_catalog", shape: apiV1ShapeSeedCatalogs})
 	route("POST /api/v1/ghosts/attach", apiV1Endpoint{action: "attach_ghost_admin", build: apiV1BuildAttach, shape: apiV1ShapeRouteRef})
-	route("POST /api/v1/ghosts/spawn-local", apiV1Endpoint{action: "spawn_local_ghost", build: apiV1BuildSpawn, shape: apiV1ShapeSpawn})
+	route("POST /api/v1/ghosts/spawn-local", apiV1Endpoint{action: "spawn_local_ghost", privileged: true, build: apiV1BuildSpawn, shape: apiV1ShapeSpawn})
 	mux.HandleFunc("GET /api/v1/executions/{command_id}", s.serveAPIv1Execution)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		call := apiV1NewCall(r)
@@ -137,7 +144,51 @@ func (s *Service) apiV1Handler() http.Handler {
 		adminauth.Audit("mirage", call.peer, "unknown", adminauth.DecisionDeny, resp.ErrorCode)
 		apiV1WriteFailure(w, call, resp)
 	})
-	return mux
+	// Every route, including unknown ones, passes the browser-request guard first.
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := apiV1GuardRequest(r); err != nil {
+			call := apiV1NewCall(r)
+			resp := failAdmin(err)
+			adminauth.Audit("mirage", call.peer, "guard", adminauth.DecisionDeny, resp.ErrorCode)
+			apiV1WriteFailure(w, call, resp)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+}
+
+// Refuses requests a web page could cause a browser to send, which matters most on the
+// development plaintext listener where the caller is unauthenticated: a page must not be able to
+// reach the API by cross-site request or by DNS rebinding.
+// - any Origin header, or a Sec-Fetch-Site other than none, marks a browser request
+// - a request body must be declared application/json, which a page cannot send cross-site
+// without a preflight this server never answers
+// - a plaintext caller must address the listener by a loopback literal or localhost
+func apiV1GuardRequest(r *http.Request) error {
+	if r.Header.Get("Origin") != "" {
+		return fmt.Errorf("%w: Origin header present", errAPIv1BrowserRequest)
+	}
+	if site := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site"))); site != "" && site != "none" {
+		return fmt.Errorf("%w: Sec-Fetch-Site %q", errAPIv1BrowserRequest, site)
+	}
+	if r.ContentLength != 0 {
+		mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if err != nil || mediaType != "application/json" {
+			return fmt.Errorf("%w: body requires Content-Type application/json", errAdminInvalidRequest)
+		}
+	}
+	if r.TLS == nil && !adminauth.IsLoopbackAddr(apiV1HostWithPort(r.Host)) {
+		return fmt.Errorf("%w: Host %q is not a loopback address", errAPIv1BrowserRequest, r.Host)
+	}
+	return nil
+}
+
+// Host header as host:port so the loopback check accepts a bare host.
+func apiV1HostWithPort(host string) string {
+	if _, _, err := net.SplitHostPort(host); err == nil {
+		return host
+	}
+	return net.JoinHostPort(strings.Trim(host, "[]"), "0")
 }
 
 // One mapped admin action: decode, authorize as the admin endpoint does, dispatch through the
@@ -152,6 +203,14 @@ func (s *Service) serveAPIv1Action(w http.ResponseWriter, r *http.Request, ep ap
 			apiV1WriteFailure(w, call, resp)
 			return
 		}
+	}
+	// Checked here as well as at the Ghost (spawn_ghost is privileged there) so the refusal does
+	// not depend on a downstream endpoint.
+	if ep.privileged && !call.peer.Authenticated {
+		resp := failAdmin(fmt.Errorf("%w: %s", adminauth.ErrAuthRequired, ep.action))
+		adminauth.Audit("mirage", call.peer, ep.action, adminauth.DecisionDeny, resp.ErrorCode)
+		apiV1WriteFailure(w, call, resp)
+		return
 	}
 	call.intentID = strings.TrimSpace(req.IntentID)
 	if ep.action == "submit_issue" {
@@ -333,6 +392,7 @@ func apiV1HTTPStatus(resp adminControlResponse) int {
 	switch {
 	case errors.Is(err, adminauth.ErrAuthRequired),
 		errors.Is(err, adminauth.ErrAuthorizationDenied),
+		errors.Is(err, errAPIv1BrowserRequest),
 		errors.Is(err, ErrIntentActorMismatch):
 		return http.StatusForbidden
 	case errors.Is(err, ErrIntentNotFound),

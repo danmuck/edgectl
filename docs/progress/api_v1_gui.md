@@ -1,6 +1,6 @@
 # Northbound api/v1 for a web GUI (2026-11-24)
 
-Status: contract approved by the user 2026-11-24. Mirage side implemented and verified, uncommitted.
+Status: contract approved by the user 2026-11-24. Mirage side implemented and verified (commit `3c3ad89`); the hardening pass below is uncommitted.
 The tracker_suite module is not started.
 
 ## Why
@@ -92,6 +92,27 @@ separate package would have needed those exported.
   before a non-lab GUI deployment.
 - Error messages can contain filesystem paths from the Mirage host. Fine for one local operator;
   review before any public exposure.
+
+## Hardening pass (2026-11-24, after an automated security review of the commit)
+
+Both findings were valid and are fixed in `internal/mirage/api_v1.go`, with tests.
+
+- **A web page could drive the development plaintext listener.** With no certificate configured the
+  API is unauthenticated on loopback, so a page in the operator's browser could have submitted an
+  `issue` by a cross-site request, or read state by DNS rebinding. Every request now passes a guard
+  first: any `Origin` header or a `Sec-Fetch-Site` other than `none` is refused (403, code 1000); a
+  body must be declared `application/json`, which a page cannot send cross-site without a preflight
+  this server never answers (400, code 1300); and a plaintext caller must address the listener by a
+  loopback literal or `localhost` (403). This enforces `api_v1.toml [transport]` `cross_origin` and
+  `content_type`. With mutual TLS the first two checks still apply; the handshake already excludes
+  a page.
+- **`spawn-local` relied on the Ghost to refuse plaintext callers.** The contract marks it
+  privileged. Mirage now refuses it for an unauthenticated peer itself, before anything is sent to a
+  Ghost. `adminauth`'s privileged set is unchanged, since that list is fixed by
+  `admin_security.toml`.
+
+Client impact: send `Content-Type: application/json` with every body and no `Origin` header. A
+server-side HTTPS client does both by default.
 
 ## Next
 
