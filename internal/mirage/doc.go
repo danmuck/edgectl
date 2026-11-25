@@ -34,6 +34,8 @@
 //
 // - admin request lines are size-capped and idle connections dropped (adminauth.ReadRequestLine)
 //
+// - spawn_local_ghost attaches the new Ghost like attach_ghost_admin: identity check, executor, bind, route
+//
 // - every request writes an admin.audit line (principal, role, action, decision, error_code), at any log level
 //
 // Identity binding (transport_security.toml [identity_binding], errors.toml):

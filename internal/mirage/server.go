@@ -43,17 +43,18 @@ type LifecycleStatus struct {
 	ReportCount      int
 }
 
-// SpawnGhostRequest defines one local Ghost provisioning request from Mirage.
+// SpawnGhostRequest defines one local Ghost provisioning request from Mirage. Field names on the
+// wire match Ghost's spawn_ghost request (ghost.SpawnGhostRequest), which Mirage forwards it to.
 type SpawnGhostRequest struct {
-	TargetName string
-	AdminAddr  string
+	TargetName string `json:"target_name"`
+	AdminAddr  string `json:"admin_addr"`
 }
 
-// SpawnGhostResult describes one provisioned local Ghost endpoint.
+// SpawnGhostResult describes one provisioned local Ghost endpoint; wire names match Ghost's reply.
 type SpawnGhostResult struct {
-	TargetName string
-	GhostID    string
-	AdminAddr  string
+	TargetName string `json:"target_name"`
+	GhostID    string `json:"ghost_id"`
+	AdminAddr  string `json:"admin_addr"`
 }
 
 // GhostSpawner provisions local Ghost nodes via a boundary adapter.

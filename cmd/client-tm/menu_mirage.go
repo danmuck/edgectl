@@ -297,13 +297,17 @@ func (a *App) submitMirageIssue(target MirageTarget) error {
 		return err
 	}
 
-	actorRaw, err := a.promptLine("actor (blank = user:client-tm)")
-	if err != nil {
-		return err
-	}
-	actor := strings.TrimSpace(actorRaw)
-	if actor == "" {
-		actor = "user:client-tm"
+	// With an operator certificate the actor is the certificate principal and Mirage refuses any
+	// other value (admin_security.toml [authorization] actor_source), so it is left empty.
+	actor := ""
+	if _, mtls := a.operatorCredentials(true); !mtls {
+		actorRaw, err := a.promptLine("actor (blank = user:client-tm)")
+		if err != nil {
+			return err
+		}
+		if actor = strings.TrimSpace(actorRaw); actor == "" {
+			actor = "user:client-tm"
+		}
 	}
 	intentID := fmt.Sprintf("intent.clienttm.%s.%d", normalizeSuffix(template.ID), time.Now().UnixMilli())
 	if template.Orchestrator == nil {

@@ -98,6 +98,9 @@ func (s *Service) SpawnManagedGhost(req SpawnGhostRequest) (SpawnGhostResult, er
 	cfg.Mirage.SessionConfig.SecurityMode = s.cfg.Mirage.SessionConfig.SecurityMode
 	cfg.AdminTLS = childTLS
 	cfg.MiragePrincipal = s.cfg.MiragePrincipal
+	// A child has no config file of its own: operator read access follows the parent's setting
+	// (admin_security.toml [authorization.ghost_admin] operator_access).
+	cfg.AdminOperatorAccess = s.cfg.AdminOperatorAccess
 
 	child := NewServiceWithConfig(cfg)
 	if err := child.bootstrap(); err != nil {

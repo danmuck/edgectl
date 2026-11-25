@@ -3,6 +3,7 @@ package ghost
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -638,4 +639,35 @@ func waitForCondition(timeout time.Duration, interval time.Duration, fn func() b
 		time.Sleep(interval)
 	}
 	return fn()
+}
+
+// A spawned child has no config of its own: operator read access follows the parent's setting
+// (admin_security.toml [authorization.ghost_admin] operator_access), on and off.
+func TestSpawnedGhostInheritsOperatorAccess(t *testing.T) {
+	testlog.Start(t)
+	for i, access := range []bool{true, false} {
+		root := NewServiceWithConfig(ServiceConfig{
+			GhostID:             "ghost.local",
+			BuiltinSeedIDs:      []string{"seed.flow"},
+			HeartbeatInterval:   time.Second,
+			AdminListenAddr:     fmt.Sprintf("127.0.0.1:%d", 7150+2*i),
+			EnableClusterHost:   true,
+			AdminOperatorAccess: access,
+			Mirage:              MirageSessionConfig{Policy: MiragePolicyHeadless, SessionConfig: session.DefaultConfig()},
+		})
+		if err := root.bootstrap(); err != nil {
+			t.Fatalf("bootstrap root: %v", err)
+		}
+		out, err := root.SpawnManagedGhost(SpawnGhostRequest{TargetName: "edge", AdminAddr: fmt.Sprintf("127.0.0.1:%d", 7151+2*i)})
+		if err != nil {
+			t.Fatalf("spawn: %v", err)
+		}
+		root.cluster.mu.Lock()
+		child := root.cluster.managed[out.TargetName]
+		root.cluster.mu.Unlock()
+		if child == nil || child.cfg.AdminOperatorAccess != access {
+			t.Fatalf("parent access=%v: child config %+v", access, child)
+		}
+		root.stopManagedGhosts()
+	}
 }

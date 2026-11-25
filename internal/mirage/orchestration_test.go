@@ -873,3 +873,36 @@ func TestSubmitIssueRejectsReplacementByAnotherActor(t *testing.T) {
 		t.Fatalf("expected error_code 1000, got %d", code)
 	}
 }
+
+// A reconcile that cannot dispatch (no executor for the ghost) must release the seed lock it took,
+// or every later intent for that seed waits forever.
+func TestReconcileWithoutExecutorReleasesSeedLock(t *testing.T) {
+	loop := NewOrchestrator()
+	issue := func(id string) IssueEnv {
+		return IssueEnv{
+			IntentID: id, Actor: "user:dan", TargetScope: "ghost:ghost.alpha", Objective: id,
+			Stages: []IssueStage{{ID: "stage.1", Commands: []IssueCommand{
+				{GhostID: "ghost.alpha", SeedSelector: "seed.kv", Operation: "put", Blocking: true},
+			}}},
+		}
+	}
+	if err := loop.SubmitIssue(issue("intent.first")); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if _, err := loop.ReconcileOnce(context.Background(), "intent.first"); err == nil {
+		t.Fatal("expected no-executor error")
+	}
+	if err := loop.RegisterExecutor("ghost.alpha", succeedingExecutor{}); err != nil {
+		t.Fatalf("register executor: %v", err)
+	}
+	if err := loop.SubmitIssue(issue("intent.second")); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	report, err := loop.ReconcileOnce(context.Background(), "intent.second")
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if report.CompletionState != "satisfied" {
+		t.Fatalf("second intent blocked by a leaked seed lock: %+v", report)
+	}
+}

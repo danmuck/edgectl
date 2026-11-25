@@ -298,10 +298,12 @@ func (s *Service) handleAdminControlRequest(req adminControlRequest) adminContro
 		if err != nil {
 			return failAdmin(err)
 		}
-		if err := s.bindGhostToMirage(out.GhostID, out.AdminAddr); err != nil {
+		// Same path as attach_ghost_admin: verify the child's identity, register its command
+		// executor, bind it to this Mirage and add the route. Without the executor a spawned
+		// Ghost is listed but cannot be sent commands.
+		if _, err := s.attachGhostAdmin(out.GhostID, out.AdminAddr); err != nil {
 			return failAdmin(err)
 		}
-		s.bindGhostAdmin(out.GhostID, out.AdminAddr)
 		logs.Warnf("mirage.admin spawned local ghost ghost_id=%q addr=%q", out.GhostID, out.AdminAddr)
 		return adminControlResponse{OK: true, Data: out}
 	case "deploy_ghost":

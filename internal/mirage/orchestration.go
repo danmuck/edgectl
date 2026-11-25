@@ -347,6 +347,10 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context, intentID string) (sess
 	exec := o.executors[next.Command.GhostID]
 	o.mu.Unlock()
 	if exec == nil {
+		// Nothing was dispatched, so the seed lock taken above must not outlive this attempt.
+		if next.Blocking {
+			o.releaseSeedLock(next.SeedKey, key, next.Command.CommandID)
+		}
 		return session.Report{}, fmt.Errorf("mirage: no executor registered for ghost_id=%q", next.Command.GhostID)
 	}
 

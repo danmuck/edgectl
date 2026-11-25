@@ -540,3 +540,22 @@ func mustJSON(t *testing.T, v any) json.RawMessage {
 	}
 	return out
 }
+
+// Mirage forwards spawn requests to Ghost's spawn_ghost and reads its reply; the JSON field names
+// must be the ones Ghost uses, or the request arrives empty.
+func TestSpawnGhostWireNamesMatchGhost(t *testing.T) {
+	raw, err := json.Marshal(SpawnGhostRequest{TargetName: "edge", AdminAddr: "127.0.0.1:7030"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(raw), `{"target_name":"edge","admin_addr":"127.0.0.1:7030"}`; got != want {
+		t.Fatalf("request wire shape: got %s want %s", got, want)
+	}
+	var out SpawnGhostResult
+	if err := json.Unmarshal([]byte(`{"target_name":"ghost.local.edge","ghost_id":"ghost.local.edge","admin_addr":"127.0.0.1:7030"}`), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.GhostID != "ghost.local.edge" || out.TargetName != "ghost.local.edge" || out.AdminAddr != "127.0.0.1:7030" {
+		t.Fatalf("result not decoded from ghost wire names: %+v", out)
+	}
+}

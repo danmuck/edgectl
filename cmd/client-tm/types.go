@@ -240,4 +240,6 @@ type App struct {
 	activeMirage  int
 	clearScreen   bool
 	launchMode    string
+	// Running local lab when launched with -mode lab; nil otherwise.
+	lab *labEnv
 }

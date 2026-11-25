@@ -3,6 +3,7 @@
 	test \
 	test-override \
 	run-client \
+	lab \
 	run-mirage \
 	run-ghost \
 	build-ghost \
@@ -32,6 +33,11 @@ test-override:
 	clear; go run ./cmd/testctl -mode run -pkg ./...
 
 ###  RUN
+# One-command local stack: throwaway certificates, a Mirage and a Ghost on loopback, and a menu
+# to add Ghosts and run commands. Everything lives in local/lab (docs/progress/lab_mode.md).
+lab:
+	@go run ./cmd/client-tm -mode lab
+
 run-mirage:
 	clear; go run ./cmd/miragectl
 

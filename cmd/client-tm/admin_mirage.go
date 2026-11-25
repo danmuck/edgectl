@@ -195,6 +195,15 @@ func (c *RemoteMirageAdmin) RoutingTable() ([]MirageRoute, error) {
 	return out, nil
 }
 
+// Per-Ghost seed capabilities and command templates as Mirage sees them (seed_catalog action).
+func (c *RemoteMirageAdmin) SeedCatalog() ([]mirage.GhostSeedCatalog, error) {
+	var out []mirage.GhostSeedCatalog
+	if err := c.call(mirageControlRequest{Action: "seed_catalog"}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *RemoteMirageAdmin) AvailableServices() ([]MirageAvailableService, error) {
 	var out []MirageAvailableService
 	if err := c.call(mirageControlRequest{Action: "available_services"}, &out); err != nil {

@@ -23,10 +23,20 @@ var (
 
 func main() {
 	var mode string
-	flag.StringVar(&mode, "mode", "mirage", "client mode: mirage (default) or ghost (headless operations)")
+	var labDir string
+	flag.StringVar(&mode, "mode", "mirage", "client mode: mirage (default), ghost (headless operations), or lab (start a local stack)")
+	flag.StringVar(&labDir, "lab-dir", labDefaultDir, "lab mode: directory for the throwaway stack's files")
 	flag.Parse()
 
 	logging.ConfigureRuntime()
+	// Lab mode owns its own Mirage process and configs (docs/progress/lab_mode.md).
+	if normalizeClientMode(mode) == "lab" {
+		if err := runLabMode(labDir); err != nil {
+			logs.Errf("client-tm lab: %v", err)
+			os.Exit(1)
+		}
+		return
+	}
 	app := NewApp(ghostConfigPath, mirageConfigPath, mode)
 	if err := app.Run(); err != nil {
 		logs.Errf("client-tm: %v", err)

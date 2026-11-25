@@ -12,6 +12,19 @@
 
 - `mirage` mode (default, primary): `go run ./cmd/client-tm -mode mirage`
 - `ghost` mode (headless-ghost operations): `go run ./cmd/client-tm -mode ghost`
+- `lab` mode (`make lab`): starts a throwaway local Mirage and Ghost with mutual TLS under `local/lab/`
+  and opens the lab menu. It does not read or rewrite `a.ghost.toml` / `a.mirage.toml`.
+
+## Lab Menu
+
+| Option | Functionality |
+| --- | --- |
+| `1) Overview` | Mirage and Ghost addresses, connection state, seeds per Ghost, and where logs, certificates and `seed.fs` data are. |
+| `2) Add a Ghost` | Issues a certificate for `ghost.local.<name>` and spawns it through Mirage on the next free port. |
+| `3) Run a command` | Pick a Ghost and a seed command, enter arguments; shows the report, exit code, stdout and stderr. |
+| `4) Recent activity` | Recent reports plus the latest admin decisions and custody-chain messages from the lab log. |
+| `5) Full admin console` | The Mirage admin console described below, connected to the lab. |
+| `6) Exit` | Stops the lab. |
 
 ## Main Menu (Ghost Mode, Headless Operations)
 

@@ -72,6 +72,8 @@
 //
 // - admin request lines are size-capped and idle connections dropped (adminauth.ReadRequestLine)
 //
+// - a spawned child Ghost inherits the parent's admin_operator_access (it has no config of its own)
+//
 // - every request writes an admin.audit line (principal, role, action, decision, error_code), at any log level
 //
 // Admin boundary errors (errors.toml):
