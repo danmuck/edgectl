@@ -149,3 +149,12 @@ Per the brief, these are permitted by the contract and were confirmed to behave 
 ## 6. Coverage / what was not reached
 - Covered: static baseline, full functional custody + reliability, the complete admin security boundary (identity, transport, authz, approvals, compromised-Mirage, session framing, removed token), production-mode config enforcement, decoder fuzzing, bounded resource probes, audit completeness.
 - Not reached: real cross-host deploy/SSH (fake-runner + review only), `seed.docker`/`seed.mongod`/`seed.host` live host effects (review only), `client-tm` interactive TUI (unit tests only), multi-host cluster (Phase 8 Slice E), sustained DoS/load (out of scope).
+
+---
+
+## Follow-up: local bring-up guide (2026-11-24)
+
+README "Local Development" was rewritten as a step-by-step guide; every command in it was run against a fresh clone of `e0e97fd`. Two things found while verifying it:
+
+- **The plaintext stack cannot execute commands.** With the default `make run-mirage` / `make run-ghost` configs (no admin TLS), status and catalog reads work and `submit_issue` is accepted, but reconcile ends `failed`: `execute_envelope` and `bind_mirage` are privileged and refused with 1000. This matches `admin_security.toml`; the README now says so and points to the certificate lab for end-to-end runs.
+- **No Mirage example config is tracked.** `cmd/*/config.toml` is gitignored and only `cmd/ghostctl/ex.config.toml` exists, so a fresh clone cannot run `make run-mirage` without hand-writing a config. Fixed: added `cmd/miragectl/ex.config.toml` (plaintext loopback by default, commented admin mTLS block); verified in a fresh clone in both modes.
