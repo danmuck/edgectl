@@ -1,6 +1,6 @@
 # Admin Security Test Brief (third-party tester)
 
-You are testing the admin security boundary of edgectl on branch `staging`. Your job is to find ways
+You are testing the admin security boundary of edgectl on branch `dev`. Your job is to find ways
 around it, not to confirm it works. Report what you find; do not fix code.
 
 ## What is under test
@@ -29,7 +29,7 @@ certificate identities:
 - Stay on loopback. Do not run `deploy_ghost` against real hosts, and do not set
   `seed_install_enabled = true` outside a disposable container or VM: an approved plan runs
   `brew`/`curl` installs on the Ghost's host.
-- Do not push to `staging` or `dev`. Deliver a report (format at the end).
+- Do not push to `dev`. Deliver a report (format at the end).
 
 ## Read first
 
@@ -42,8 +42,8 @@ certificate identities:
 ## Setup (verified on macOS with Go 1.27 and OpenSSL 3; needs `go`, `openssl`, `nc`, `python3`)
 
 ```bash
-git clone --branch staging git@github.com:danmuck/edgectl.git edgectl-staging
-cd edgectl-staging
+git clone --branch dev git@github.com:danmuck/edgectl.git edgectl-lab
+cd edgectl-lab
 go test ./...                       # baseline: all packages pass
 sh testutil/adminlab/setup.sh       # lab CA + certs in certs/, binaries in local/adminlab/
 sh testutil/adminlab/up.sh          # starts the lab; logs in local/adminlab/*.log

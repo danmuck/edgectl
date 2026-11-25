@@ -158,3 +158,7 @@ README "Local Development" was rewritten as a step-by-step guide; every command 
 
 - **The plaintext stack cannot execute commands.** With the default `make run-mirage` / `make run-ghost` configs (no admin TLS), status and catalog reads work and `submit_issue` is accepted, but reconcile ends `failed`: `execute_envelope` and `bind_mirage` are privileged and refused with 1000. This matches `admin_security.toml`; the README now says so and points to the certificate lab for end-to-end runs.
 - **No Mirage example config is tracked.** `cmd/*/config.toml` is gitignored and only `cmd/ghostctl/ex.config.toml` exists, so a fresh clone cannot run `make run-mirage` without hand-writing a config. Fixed: added `cmd/miragectl/ex.config.toml` (plaintext loopback by default, commented admin mTLS block); verified in a fresh clone in both modes.
+
+## Follow-up: staging branch closed (2026-11-24)
+
+`origin/staging` was deleted at the user's request after confirming `dev` contained all of it (`951267f` is an ancestor of `dev`). Work continues on `dev`. `testutil/adminlab/README.md` now points testers at `dev`.
